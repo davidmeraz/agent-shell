@@ -68,7 +68,10 @@ class FakeService:
                     event({"type": "response.output_text.done", "item_id": item_id,
                            "content_index": 0, "text": text})
                     event({"type": "response.completed", "response": {
-                        "status": "completed", "output": [{"type": "message", "role": "assistant",
+                        "status": "completed", "usage": {"input_tokens": 12, "output_tokens": 8,
+                        "total_tokens": 20, "output_tokens_details": {"reasoning_tokens": 2},
+                        "input_tokens_details": {"cached_tokens": 4}},
+                        "output": [{"type": "message", "role": "assistant",
                         "id": item_id, "content": [{"type": "output_text", "text": text}]}]}})
                 except (BrokenPipeError, ConnectionResetError):
                     fixture.disconnected.set()

@@ -11,7 +11,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "backend"))
@@ -172,6 +172,101 @@ class ServerTests(unittest.TestCase):
         self.assertLess(self.server.history.save.call_count, 10)
         saved = self.server.history.load(self.server.conversation["chat_id"])
         self.assertEqual(saved["messages"][-1]["text"], "x" * 100)
+
+    def test_performance_counts_usage_context_and_saves_only_one_measurement_per_turn(self):
+        self.send("hola")
+        first = self.server.conversation["performance"][0]
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(first["characters"], len("Hola desde ChatGPT. 🎵"))
+        self.assertEqual(first["input_characters"], len("hola"))
+        self.assertEqual(first["context_messages"], 1)
+        self.assertEqual(first["usage"]["reasoning_tokens"], 2)
+        for key in ("prepare_ms", "session_ms", "headers_ms", "first_text_ms", "request_first_text_ms", "total_ms"):
+            self.assertGreaterEqual(first[key], 0)
+        self.assertGreaterEqual(first["first_text_ms"], first["prepare_ms"])
+        self.send("continúa")
+        self.assertEqual(len(self.server.conversation["performance"]), 2)
+        second = self.server.conversation["performance"][1]
+        self.assertEqual(second["context_messages"], 3)
+        self.assertNotEqual(first["turn_id"], second["turn_id"])
+        self.assertEqual(self.server.conversation["messages"][1]["turn_id"], first["turn_id"])
+        saved = self.server.history.load(self.server.conversation["chat_id"])
+        self.assertEqual(saved["performance"], self.server.conversation["performance"])
+        self.assertNotIn("test-only-access-token", str(saved["performance"]))
+
+    def test_failed_and_cancelled_turns_keep_distinct_metrics_and_partial_counts(self):
+        self.send("fail")
+        self.assertEqual(self.server.conversation["performance"][-1]["status"], "failed")
+        self.server.handle({"type": "chat.send", "prompt": "cancel"})
+        self.output.wait_for("chat.delta")
+        self.server.handle({"type": "chat.cancel"})
+        self.output.wait_for("chat.finished")
+        row = self.server.conversation["performance"][-1]
+        self.assertEqual(row["status"], "interrupted")
+        self.assertEqual(row["characters"], 5)
+        self.assertIsNone(row["usage"])
+        before = self.server.conversation["performance"].copy()
+        self.server._response_event({"type": "response.output_text.delta", "item_id": "late", "delta": "ignore"}, self.server._generation)
+        self.assertEqual(self.server.conversation["performance"], before)
+
+    def test_presentation_ack_is_saved_after_completion_and_stale_ack_is_ignored(self):
+        self.send("hola")
+        turn = self.server.conversation["performance"][-1]["turn_id"]
+        self.server.handle({"type": "performance.presented", "turn_id": turn, "first_visible_ms": 250, "ui_frame_ms": 12})
+        saved = self.server.history.load(self.server.conversation["chat_id"])
+        self.assertEqual(saved["performance"][-1]["ui_frame_ms"], 12)
+        self.send("continúa")
+        self.server.handle({"type": "performance.presented", "turn_id": turn, "first_visible_ms": 900, "ui_frame_ms": 50})
+        row = self.server.conversation["performance"][-1]
+        self.assertIsNone(row["first_visible_ms"])
+        self.server.handle({"type": "performance.list"})
+        listed = self.output.wait_for("performance.list")["measurements"]
+        self.assertEqual(len(listed), 2)
+        self.assertNotIn("continúa", str(listed))
+
+    def test_performance_list_can_be_read_offline_and_does_not_call_service(self):
+        self.send("hola")
+        self.server.authenticated = False
+        before = len(self.service.requests)
+        self.server.handle({"type": "performance.list"})
+        self.assertEqual(len(self.output.wait_for("performance.list")["measurements"]), 1)
+        self.assertEqual(len(self.service.requests), before)
+
+    def test_performance_without_deltas_measures_final_text_and_no_invented_speed(self):
+        self.server.client = Mock()
+        self.server.client.stream.return_value = iter([{"type": "response.completed", "response": {
+            "status": "completed", "output": [{"id": "final-only", "type": "message", "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hola"}]}]}}])
+        self.send("hola")
+        row = self.server.conversation["performance"][-1]
+        self.assertEqual(row["characters"], 4)
+        self.assertIsNotNone(row["first_text_ms"])
+        self.assertIsNone(row["characters_per_second"])
+        self.assertIsNone(row["usage"])
+
+    def test_failure_before_text_keeps_unknown_timings_and_initial_measurement_is_persisted(self):
+        self.server._spawn = Mock()
+        self.server.handle({"type": "chat.send", "prompt": "hola"})
+        saved = self.server.history.load(self.server.conversation["chat_id"])
+        self.assertEqual(saved["performance"][-1]["status"], "streaming")
+        self.assertEqual(saved["performance"][-1]["input_characters"], 4)
+        self.server.client = Mock()
+        self.server.client.stream.side_effect = ServiceError("Sin conexión")
+        self.server._start_turn([], self.server.model, self.server._stream, self.server._generation)
+        row = self.server.conversation["performance"][-1]
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["characters"], 0)
+        self.assertIsNone(row["first_text_ms"])
+        self.assertIsNone(row["headers_ms"])
+
+    def test_failed_initial_save_does_not_leave_phantom_measurement_or_call_openai(self):
+        self.send("hola")
+        before = self.server.conversation["performance"].copy()
+        requests = len(self.service.requests)
+        with patch.object(self.server.history, "save", side_effect=OSError("disk full")):
+            self.assertEqual(self.send("otra")["status"], "failed")
+        self.assertEqual(self.server.conversation["performance"], before)
+        self.assertEqual(len(self.service.requests), requests)
 
 
 class SSETests(unittest.TestCase):

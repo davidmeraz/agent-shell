@@ -48,11 +48,16 @@ def service_error(status: int = 0, error: dict | None = None) -> ServiceError:
 class StreamControl:
     """Despierta lecturas bloqueadas sin cerrar un BufferedReader desde otro hilo."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_phase=None) -> None:
         self.cancelled = threading.Event()
+        self.on_phase = on_phase
         self._lock = threading.Lock()
         self._connection: http.client.HTTPConnection | None = None
         self._socket: socket.socket | None = None
+
+    def mark(self, phase: str) -> None:
+        if self.on_phase:
+            self.on_phase(phase)
 
     def check(self) -> None:
         if self.cancelled.is_set():
@@ -100,6 +105,8 @@ class HttpClient:
         try:
             if control:
                 control.attach(connection)
+            if control:
+                control.mark("request")
             connection.request(method, parsed.path + ("?" + parsed.query if parsed.query else ""),
                                body=body, headers=headers)
             if control:
@@ -107,6 +114,8 @@ class HttpClient:
                 control.attach(connection)
                 control.check()
             response = connection.getresponse()
+            if control:
+                control.mark("headers")
             if response.status >= 300:
                 error = None
                 try:

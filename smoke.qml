@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import "ui"
+import "ui/Performance.js" as Performance
 
 // Escenario con backend real y HTTP/SSE local. Nunca inicia OAuth ni un modelo.
 ShellRoot {
@@ -20,7 +21,11 @@ ShellRoot {
                 agent.submit("hola");
             } else if (event.type === "chat.finished" && test.stage === 1) {
                 if (agent.busy || agent.messages.count !== 2
-                    || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵") {
+                    || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵"
+                    || !agent.messages.get(1).performanceJson
+                    || agent.latestPerformance.status !== "completed"
+                    || agent.latestPerformance.first_text_ms === null
+                    || agent.latestPerformance.usage.output_tokens !== 8) {
                     test.fail("respuesta o reconciliación de deltas incorrecta");
                     return;
                 }
@@ -49,16 +54,55 @@ ShellRoot {
                     || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵") {
                     test.fail("historial no restaurado");
                 } else {
-                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación e historial persistente (sin Codex)");
-                    Qt.quit();
+                    if (!agent.messages.get(1).performanceJson || !agent.messages.get(3).performanceJson) {
+                        test.fail("mediciones no restauradas");
+                        return;
+                    }
+                    test.stage = 6;
+                    chatWindow.openPerformance();
                 }
+            } else if (event.type === "performance.list" && test.stage === 6) {
+                const summary = agent.modelPerformance[0];
+                if (agent.performanceHistory.length !== 2 || summary.completed !== 1
+                    || summary.interrupted !== 1 || summary.totalP95 !== null
+                    || summary.totalMedian === null) {
+                    test.fail("historial o comparación de rendimiento incorrectos");
+                    return;
+                }
+                const samples = [];
+                for (let i = 1; i <= 20; ++i)
+                    samples.push({ model: "test", status: "completed", first_text_ms: i, total_ms: i * 10 });
+                samples.push({ model: "test", status: "failed", first_text_ms: 999, total_ms: 9999 });
+                const statistics = Performance.models(samples)[0];
+                if (statistics.totalMedian !== 105 || statistics.totalP95 !== 190 || statistics.failed !== 1) {
+                    test.fail("estadísticas mezclan fallos o calculan mal p95");
+                    return;
+                }
+                chatWindow.showPerformance(agent.performanceHistory[0]);
+                finishRun.start();
             } else if (event.type === "error" || event.type === "backend.disconnected") {
                 test.fail(event.data.message);
             }
         }
     }
-    Timer { id: nextRun; interval: 50; onTriggered: agent.submit("cancel") }
-    ChatWindow { bridge: agent }
+    Timer {
+        id: nextRun
+        interval: 100
+        onTriggered: {
+            if (agent.latestPerformance.first_visible_ms === null || agent.latestPerformance.ui_frame_ms === null)
+                test.fail("presentación del primer texto no medida");
+            else agent.submit("cancel");
+        }
+    }
+    Timer {
+        id: finishRun
+        interval: 100
+        onTriggered: {
+            console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial y rendimiento con presentación Qt");
+            Qt.quit();
+        }
+    }
+    ChatWindow { id: chatWindow; bridge: agent }
     function fail(message) {
         console.error("SMOKE_FAILED: " + message);
         Qt.quit();

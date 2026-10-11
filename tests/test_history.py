@@ -94,8 +94,10 @@ class RestartTests(unittest.TestCase):
                 session.send({"type": "chat.open", "chat_id": chat_id})
                 loaded = session.wait_for("chat.loaded")["data"]["chat"]
                 self.assertEqual(loaded["messages"], first["messages"])
+                self.assertEqual(loaded["performance"], first["performance"])
                 session.send({"type": "chat.send", "prompt": "continúa"})
                 self.assertEqual(session.wait_for("chat.finished")["data"]["status"], "completed")
             final = HistoryStore(root / "chats").load(chat_id)
             self.assertEqual(len(final["messages"]), 4)
+            self.assertEqual(len(final["performance"]), 2)
             self.assertEqual(len(list((root / "chats").glob("*.json"))), 1)

@@ -1,7 +1,7 @@
 # Protocolo de interfaz NDJSON v1
 
 Contrato UTF-8 entre Qt y Python, con un objeto por línea y terminador `\n`.
-Límite de línea: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
+Límite de línea de entrada Qt → Python: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
 Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 
 ## Instrucciones Qt → Python
@@ -18,6 +18,8 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 | `auth.refresh` | Ninguno | Leer sesión y actualizar catálogo |
 | `auth.logout` | Ninguno | Revocar y cerrar la sesión local |
 | `model.select` | `model` | Seleccionar un slug del catálogo de la cuenta |
+| `performance.list` | Ninguno | Consultar los últimos 200 turnos medidos de todos los chats, sin llamadas a OpenAI |
+| `performance.presented` | `turn_id`, `first_visible_ms`, `ui_frame_ms` | Confirmar la aproximación de presentación del primer texto en Qt |
 
 Sólo una respuesta o operación de cuenta a la vez. El historial puede leerse sin
 autenticación y mientras se descubre el catálogo. Cambiar de chat se rechaza
@@ -42,13 +44,15 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `auth.refresh.finished` | Objeto vacío |
 | `models.list` | `models`: slug y display_name; `selected` |
 | `model.selected` | `model`: slug |
-| `chat.busy` | Objeto vacío |
+| `chat.busy` | `turn_id` del mensaje de usuario y la medición |
 | `chat.thread` | `thread_id`: id del chat local; `model` |
 | `chat.saved` | `chat_id`, `title` |
 | `chat.loaded` | `chat`: registro local completo |
-| `chat.delta` | `item_id`, `text` que amplía el mensaje |
-| `chat.message` | `item_id`, `text` final que reemplaza fragmentos |
-| `chat.finished` | `status: completed/failed/interrupted`, `message` |
+| `chat.delta` | `item_id`, `text` que amplía el mensaje, `turn_id` |
+| `chat.message` | `item_id`, `text` final que reemplaza fragmentos, `turn_id` |
+| `chat.finished` | `status: completed/failed/interrupted`, `message`, `turn_id` |
+| `performance.updated` | `measurement`: instantánea del turno con `chat_id` |
+| `performance.list` | `measurements`: últimas 200 instantáneas, más recientes primero |
 | `chat.reset` | Objeto vacío |
 | `error` | `message` apto para mostrar al usuario |
 
@@ -61,6 +65,19 @@ Un texto final puede llegar sin deltas previos. Un mensaje usa item_id y parte
 de contenido para reconciliarse sin duplicados. Recibir texto final no confirma
 el éxito del turno: eso lo indica `chat.finished`. Eventos tardíos de respuestas
 canceladas se descartan.
+
+El registro del chat tiene un array opcional `performance`, compatible con los
+chats anteriores. Las instantáneas contienen identidad del turno, modelo, fecha,
+estado, tiempos en milisegundos, caracteres, contexto y uso de tokens disponible.
+Un campo desconocido es `null`; no se transforma en cero. Las definiciones exactas
+de cada campo están en [rendimiento](performance.md).
+
+`performance.presented` sólo se acepta para el turno actual con texto recibido,
+con tiempos finitos y no negativos, `ui_frame_ms <= first_visible_ms` y un límite
+de 24 horas. Se acepta una sola confirmación, también después de terminar para
+guardar el dato de Qt. Los identificadores de turnos anteriores se ignoran.
+`performance.list` funciona sin sesión y durante una respuesta; se lee en un
+trabajador y la medición activa se toma de memoria para evitar datos atrasados.
 
 El formato de eventos sigue en v1. Los eventos y campos nuevos son aditivos.
 En 0.3.0 cambian el proveedor de backend.ready y el significado de thread_id:

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "Performance.js" as Performance
 
 // Estado del chat. Python administra la sesión y el streaming directo con ChatGPT.
 QtObject {
@@ -23,6 +24,14 @@ QtObject {
     property string currentChatId: ""
     property string currentTitle: ""
     property var messageRows: ({})
+    property var performanceHistory: []
+    property bool performanceBusy: false
+    property var latestPerformance: ({})
+    property string activeTurnId: ""
+    property double submittedAt: 0
+    property double firstReceivedAt: 0
+    property bool framePending: false
+    readonly property var modelPerformance: Performance.models(performanceHistory)
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
     readonly property ListModel availableModels: ListModel {}
@@ -44,7 +53,12 @@ QtObject {
             status = "El mensaje puede tener como máximo 16000 caracteres.";
             return;
         }
-        messages.append({ author: "TÚ", body: text });
+        submittedAt = Date.now();
+        firstReceivedAt = 0;
+        framePending = false;
+        activeTurnId = "";
+        latestPerformance = ({});
+        messages.append({ author: "TÚ", body: text, turnId: "", performanceJson: "" });
         busy = true;
         status = "Preparando la respuesta…";
         sendCommand({ type: "chat.send", prompt: text });
@@ -93,11 +107,48 @@ QtObject {
 
     function selectModel(slug) { if (canSend) sendCommand({ type: "model.select", model: slug }); }
 
-    function updateMessage(itemId, text, append) {
+    function refreshPerformance() {
+        if (!ready || performanceBusy) return;
+        performanceBusy = true;
+        sendCommand({ type: "performance.list" });
+    }
+
+    function updatePerformance(measurement) {
+        const rows = performanceHistory.filter(row => row.turn_id !== measurement.turn_id);
+        rows.push(measurement);
+        rows.sort((a, b) => b.started_at.localeCompare(a.started_at));
+        performanceHistory = rows.slice(0, 200);
+        if (measurement.turn_id === activeTurnId) latestPerformance = measurement;
+        let target = -1;
+        for (let i = 0; i < messages.count; ++i) {
+            if (messages.get(i).turnId === measurement.turn_id) {
+                messages.setProperty(i, "performanceJson", "");
+                target = i;
+            }
+        }
+        if (target >= 0) messages.setProperty(target, "performanceJson", JSON.stringify(measurement));
+    }
+
+    function recordFirstText(turnId, text) {
+        if (turnId !== activeTurnId || !text || firstReceivedAt || !submittedAt) return;
+        firstReceivedAt = Date.now();
+        framePending = true;
+    }
+
+    function confirmPresentation() {
+        if (!framePending) return;
+        framePending = false;
+        const now = Date.now();
+        if (now < firstReceivedAt || now < submittedAt) return;
+        sendCommand({ type: "performance.presented", turn_id: activeTurnId,
+                      first_visible_ms: now - submittedAt, ui_frame_ms: now - firstReceivedAt });
+    }
+
+    function updateMessage(itemId, text, append, turnId) {
         const row = messageRows[itemId];
         if (row === undefined) {
             messageRows[itemId] = messages.count;
-            messages.append({ author: "CHATGPT", body: text });
+            messages.append({ author: "CHATGPT", body: text, turnId: turnId || "", performanceJson: "" });
         } else {
             messages.setProperty(row, "body", append ? messages.get(row).body + text : text);
         }
@@ -129,11 +180,17 @@ QtObject {
             messages.clear();
             messageRows = ({});
             const chat = data.chat;
+            activeTurnId = "";
+            framePending = false;
+            latestPerformance = ({});
             for (const message of chat.messages) {
                 if (message.role === "assistant") messageRows[message.id] = messages.count;
                 messages.append({ author: message.role === "user" ? "TÚ"
-                                 : message.role === "assistant" ? "CHATGPT" : "SISTEMA", body: message.text });
+                                 : message.role === "assistant" ? "CHATGPT" : "SISTEMA", body: message.text,
+                                 turnId: message.turn_id || "", performanceJson: "" });
             }
+            for (const measurement of chat.performance || [])
+                updatePerformance(Object.assign({}, measurement, { chat_id: chat.chat_id }));
             currentChatId = chat.chat_id;
             currentTitle = chat.title;
             openingChat = false;
@@ -182,30 +239,43 @@ QtObject {
             if (data.success && data.show_plan_welcome) planConnected();
         } else if (event.type === "chat.busy") {
             busy = true;
+            activeTurnId = data.turn_id || "";
+            if (messages.count && messages.get(messages.count - 1).author === "TÚ")
+                messages.setProperty(messages.count - 1, "turnId", activeTurnId);
         } else if (event.type === "chat.thread") {
             modelName = data.model || "";
         } else if (event.type === "chat.delta") {
-            updateMessage(data.item_id, data.text, true);
+            recordFirstText(data.turn_id, data.text);
+            updateMessage(data.item_id, data.text, true, data.turn_id);
             status = "ChatGPT está respondiendo…";
         } else if (event.type === "chat.message") {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
-            updateMessage(data.item_id, data.text, false);
+            recordFirstText(data.turn_id, data.text);
+            updateMessage(data.item_id, data.text, false, data.turn_id);
         } else if (event.type === "chat.finished") {
             busy = false;
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? "Respuesta detenida."
                      : data.message || "No se pudo completar la respuesta.";
-            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status });
+            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status, turnId: "", performanceJson: "" });
+        } else if (event.type === "performance.updated") {
+            updatePerformance(data.measurement);
+        } else if (event.type === "performance.list") {
+            performanceHistory = data.measurements;
+            performanceBusy = false;
         } else if (event.type === "chat.reset") {
             messages.clear();
             messageRows = ({});
             currentChatId = "";
             currentTitle = "";
+            activeTurnId = "";
+            framePending = false;
+            latestPerformance = ({});
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
             status = data.message;
-            messages.append({ author: "SISTEMA", body: data.message });
+            messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
             ready = false;
@@ -213,6 +283,8 @@ QtObject {
             busy = false;
             loginBusy = false;
             accountBusy = false;
+            performanceBusy = false;
+            framePending = false;
             status = data.message;
         }
         eventReceived(event);
@@ -232,6 +304,8 @@ QtObject {
             bridge.busy = false;
             bridge.loginBusy = false;
             bridge.accountBusy = false;
+            bridge.performanceBusy = false;
+            bridge.framePending = false;
             bridge.historyReady = false;
             bridge.openingChat = false;
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";

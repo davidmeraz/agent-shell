@@ -4,8 +4,8 @@ Aplicación de chat para Linux con **Quickshell y Qt Quick**, sesión propia de
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.3.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` y `v0.2.0` conservan las versiones anteriores.
+**Versión: 0.4.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0`, `v0.2.0` y `v0.3.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -32,6 +32,18 @@ y seleccionar; actualmente se presentan como texto sin formato Markdown.
 catálogo y consulta la sesión local. **Salir** cierra la sesión de Agent Shell e
 intenta revocarla en OpenAI; si la revocación no se confirma, se informa para que
 puedas desconectar la aplicación desde los ajustes de ChatGPT.
+
+## Rendimiento
+
+Cada respuesta muestra tiempo hasta el primer texto, duración y velocidad de
+texto cuando hay una muestra suficiente. **Detalles** abre tiempos de preparación,
+sesión, red y presentación en Qt, tamaño del contexto y tokens entregados por OpenAI.
+
+**Rendimiento** reúne los últimos 200 turnos medidos de todos los chats. Permite
+filtrar por modelo y comparar medianas y p95, con fallos y cancelaciones aparte.
+Las mediciones quedan guardadas junto al historial y se recuperan al reiniciar.
+Los tiempos de red incluyen el servicio y los de presentación son aproximados.
+Consulta [definiciones y límites de las métricas](docs/performance.md).
 
 ## Sesión independiente
 
@@ -95,7 +107,8 @@ explícita; el lanzamiento normal usa `backend/main.py` y el servicio real.
 
 Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTTP
 usa un servidor loopback de prueba y el cliente de streaming real. La integración
-Qt offscreen comprueba cuenta, modelos, streaming, cancelación e historial.
+Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
+presentación del primer texto y el panel de rendimiento.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto
@@ -113,6 +126,8 @@ backend/harness/http.py      HTTP y streaming SSE cancelable
 backend/harness/chatgpt.py   Modelos e inferencia con tu plan
 backend/harness/server.py    Traducción a eventos Qt y contexto local
 backend/harness/history.py   Historial atómico compatible con 0.2.0
+backend/harness/performance.py Tiempos y conteos por turno
+ui/Performance.js            Formato y comparación de mediciones
 tests/                       OAuth, HTTP y procesos de prueba
 scripts/                     Instalación, ejecución y comprobaciones
 ```

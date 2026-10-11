@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from .events import EventEmitter
 from .history import HistoryStore
 from .http import Cancelled, ServiceError, StreamControl, service_error
+from .performance import TurnPerformance, safe_usage
 from .version import get_version
 
 MAX_REQUEST_BYTES = 65536
@@ -44,6 +45,8 @@ class HarnessServer:
         self._generation = 0
         self._last_saved = 0.0
         self._workers: list[threading.Thread] = []
+        self._performance: TurnPerformance | None = None
+        self._last_metrics_emitted = 0.0
 
     def _emit(self, event_type: str, **data) -> None:
         if not self._closing.is_set():
@@ -151,7 +154,12 @@ class HarnessServer:
         for message in record["messages"]:
             if message["status"] == "streaming":
                 message["status"] = "interrupted"
+        for measurement in record["performance"]:
+            if measurement["status"] == "streaming":
+                measurement["status"] = "interrupted"
+                measurement["total_ms"] = measurement["elapsed_ms"]
         self.conversation = record
+        self._performance = None
         if record.get("model") in {row["slug"] for row in self.models}:
             self.model = record["model"]
         self._emit("chat.loaded", chat=record)
@@ -169,21 +177,67 @@ class HarnessServer:
         messages = self.conversation["messages"]
         row = next((entry for entry in messages if entry["id"] == item_id), None)
         if row is None:
-            row = {"id": item_id, "role": "assistant", "text": "", "status": "streaming"}
+            row = {"id": item_id, "role": "assistant", "text": "", "status": "streaming",
+                   "turn_id": self._performance.turn_id if self._performance else ""}
             messages.append(row)
         row["text"] = row["text"] + text if append else text
-        self._emit("chat.delta" if append else "chat.message", item_id=item_id, text=text)
+        first_text = bool(self._performance and self._performance.first_text is None and row["text"])
+        if self._performance:
+            self._performance.text(item_id, row["text"])
+        self._emit("chat.delta" if append else "chat.message", item_id=item_id, text=text,
+                   turn_id=row.get("turn_id", ""))
+        self._update_performance(force=first_text)
         if time.monotonic() - self._last_saved >= 0.5:
             self._save()
 
+    def _update_performance(self, force: bool = False) -> None:
+        if not self._performance or self.conversation is None:
+            return
+        snapshot = self._performance.snapshot()
+        measurements = self.conversation.setdefault("performance", [])
+        index = next((i for i, row in enumerate(measurements)
+                      if row["turn_id"] == snapshot["turn_id"]), None)
+        if index is None:
+            measurements.append(snapshot)
+        else:
+            measurements[index] = snapshot
+        now = time.monotonic()
+        if force or not self._last_metrics_emitted or now - self._last_metrics_emitted >= 0.25:
+            self._last_metrics_emitted = now
+            self._emit("performance.updated", measurement={**snapshot, "chat_id": self.conversation["chat_id"]})
+
+    def _mark_phase(self, phase: str, generation: int) -> None:
+        with self._lock:
+            if self.busy and generation == self._generation and self._performance:
+                self._performance.mark(phase)
+
+    def _publish_performance(self) -> None:
+        try:
+            measurements = self.history.performance()
+        except OSError:
+            self._emit("performance.list", measurements=[])
+            self._emit("history.notice", message="No se pudieron leer las mediciones guardadas. Vuelve a actualizar el panel.")
+            return
+        with self._lock:
+            if self._performance and self.conversation is not None:
+                snapshot = {**self._performance.snapshot(), "chat_id": self.conversation["chat_id"]}
+                measurements = [row for row in measurements if row["turn_id"] != snapshot["turn_id"]]
+                measurements.append(snapshot)
+                measurements.sort(key=lambda row: row["started_at"], reverse=True)
+            self._emit("performance.list", measurements=measurements[:200])
+
     def _finish(self, status: str, message: str = "") -> None:
         self.busy = False
+        if self._performance and self._performance.status == "streaming":
+            self._performance.finish(status)
+            self._update_performance(force=True)
         if self.conversation is not None:
             for entry in self.conversation["messages"]:
                 if entry["status"] == "streaming":
                     entry["status"] = status
             self._save()
-        self._emit("chat.finished", status=status, message=message)
+        self._emit("chat.finished", status=status, message=message,
+                   turn_id=self._performance.turn_id if self._performance else "")
         self._publish_history()
 
     def _response_event(self, event: dict, generation: int) -> bool:
@@ -203,6 +257,8 @@ class HarnessServer:
                 response = event.get("response") or {}
                 if response.get("status") != "completed":
                     raise ServiceError("El servicio no confirmó que la respuesta terminara")
+                if self._performance:
+                    self._performance.usage = safe_usage(response.get("usage"))
                 for item in response.get("output", []):
                     if item.get("type") == "message" and item.get("role") == "assistant":
                         for index, content in enumerate(item.get("content", [])):
@@ -213,6 +269,8 @@ class HarnessServer:
                 return True
             elif kind in ("response.failed", "response.incomplete", "error"):
                 response = event.get("response") or {}
+                if self._performance:
+                    self._performance.usage = safe_usage(response.get("usage"))
                 if kind == "response.incomplete":
                     raise ServiceError("La respuesta quedó incompleta. Puedes pedir que continúe.")
                 raise service_error(error=response.get("error") or event.get("error") or event)
@@ -238,11 +296,23 @@ class HarnessServer:
                     self._publish_account()
 
     def handle(self, request: Any) -> None:
+        received = time.perf_counter()
         if not isinstance(request, dict):
             self._emit("error", message="La instrucción debe ser un objeto JSON")
             return
         with self._lock:
             action = request.get("type")
+            if action == "performance.list":
+                self._spawn(self._publish_performance)
+                return
+            if action == "performance.presented":
+                if (self._performance and request.get("turn_id") == self._performance.turn_id
+                        and self.conversation is not None
+                        and self._performance.presented(request.get("first_visible_ms"), request.get("ui_frame_ms"))):
+                    self._update_performance(force=True)
+                    if not self.busy:
+                        self._save()
+                return
             if action == "chat.cancel":
                 if self.busy:
                     self._stream.cancel()
@@ -258,6 +328,7 @@ class HarnessServer:
                 try:
                     if action == "chat.new":
                         self.conversation = None
+                        self._performance = None
                         self._emit("chat.reset")
                         self._emit("model.selected", model=self.model)
                     elif action == "chat.open":
@@ -300,8 +371,16 @@ class HarnessServer:
                     if self.conversation is None:
                         self.conversation = self.history.create(prompt.strip())
                     snapshot = copy.deepcopy(self.conversation)
-                    self.conversation["messages"].append({"id": uuid.uuid4().hex, "role": "user",
-                                                         "text": prompt.strip(), "status": "completed"})
+                    turn_id = uuid.uuid4().hex
+                    self.conversation["messages"].append({"id": turn_id, "role": "user",
+                                                         "text": prompt.strip(), "status": "completed",
+                                                         "turn_id": turn_id})
+                    messages = [{"role": row["role"], "content": row["text"]}
+                                for row in self.conversation["messages"] if row["text"]]
+                    turn_performance = TurnPerformance(turn_id, self.model, received)
+                    turn_performance.input_characters = sum(len(row["content"]) for row in messages)
+                    turn_performance.context_messages = len(messages)
+                    self.conversation.setdefault("performance", []).append(turn_performance.snapshot())
                     self.conversation["model"] = self.model
                     self.history.save(self.conversation)
                 except OSError:
@@ -313,13 +392,16 @@ class HarnessServer:
                 self._emit("chat.saved", chat_id=self.conversation["chat_id"], title=self.conversation["title"])
                 self._publish_history()
                 self.busy = True
-                self._stream = StreamControl()
                 self._generation += 1
-                generation, control, model = self._generation, self._stream, self.model
-                messages = [{"role": row["role"], "content": row["text"]}
-                            for row in self.conversation["messages"] if row["text"]]
-                self._emit("chat.busy")
+                generation, model = self._generation, self.model
+                self._performance = turn_performance
+                self._last_metrics_emitted = 0.0
+                self._stream = StreamControl(lambda phase: self._mark_phase(phase, generation))
+                control = self._stream
+                self._emit("chat.busy", turn_id=turn_id)
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
+                self._performance.mark("prepared")
+                self._update_performance(force=True)
                 self._spawn(lambda: self._start_turn(messages, model, control, generation))
 
     def serve(self, source: TextIO) -> None:

@@ -29,7 +29,9 @@ class ChatGPTClient:
 
     def stream(self, model: str, messages: list[dict], instructions: str, control: StreamControl):
         control.check()
+        control.mark("session_start")
         token = self.session.access_token()
+        control.mark("session_end")
         control.check()
         # El contexto es local. store=false impide depender de threads o respuestas remotas guardadas.
         payload = {"model": model, "instructions": instructions, "input": messages,

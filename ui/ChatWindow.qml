@@ -1,8 +1,10 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import Quickshell
 import "components"
+import "Performance.js" as Performance
 
 // Cliente de conversación: cuenta, texto progresivo y controles de turno.
 FloatingWindow {
@@ -14,6 +16,30 @@ FloatingWindow {
     minimumSize: Qt.size(560, 560)
     color: "#0d1420"
     visible: true
+    property var selectedPerformance: ({})
+    property string performanceModel: ""
+    property double elapsedMs: 0
+
+    function showPerformance(measurement) {
+        selectedPerformance = measurement;
+        performanceDetails.open();
+    }
+
+    function openPerformance() {
+        performancePanel.open();
+        bridge.refreshPerformance();
+    }
+
+    Timer {
+        interval: 250
+        repeat: true
+        running: window.bridge.busy
+        onTriggered: window.elapsedMs = Math.max(0, Date.now() - window.bridge.submittedAt)
+    }
+    Connections {
+        target: window.contentItem.Window.window
+        function onFrameSwapped() { window.bridge.confirmPresentation(); }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -29,6 +55,11 @@ FloatingWindow {
                 Text { text: "Conversa con ChatGPT"; color: "#edf4fa"; font.pixelSize: 27; font.bold: true }
             }
             Item { Layout.fillWidth: true }
+            ActionButton {
+                text: "Rendimiento"
+                enabled: window.bridge.historyReady
+                onClicked: window.openPerformance()
+            }
             ActionButton {
                 text: "Historial"
                 enabled: window.bridge.historyReady
@@ -173,6 +204,8 @@ FloatingWindow {
                 delegate: Column {
                     required property string author
                     required property string body
+                    required property string performanceJson
+                    readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
                     width: conversation.width - 16
                     spacing: 6
                     Text {
@@ -193,6 +226,21 @@ FloatingWindow {
                         padding: 0
                         background: null
                     }
+                    RowLayout {
+                        width: parent.width
+                        visible: !!parent.measurement.turn_id
+                        Text {
+                            Layout.fillWidth: true
+                            text: Performance.summary(parent.parent.measurement)
+                            color: "#96a9bb"
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                        }
+                        ActionButton {
+                            text: "Detalles"
+                            onClicked: window.showPerformance(parent.parent.measurement)
+                        }
+                    }
                 }
             }
         }
@@ -204,6 +252,17 @@ FloatingWindow {
             font.pixelSize: 12
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: window.bridge.busy
+            text: (window.bridge.latestPerformance.first_text_ms === null
+                   || window.bridge.latestPerformance.first_text_ms === undefined
+                   ? "Esperando el primer texto" : "Recibiendo respuesta")
+                  + " · " + Performance.duration(window.elapsedMs)
+            color: "#72e5c0"
+            font.pixelSize: 11
         }
 
         ScrollView {
@@ -253,6 +312,12 @@ FloatingWindow {
     Connections {
         target: window.bridge
         function onPlanConnected() { planWelcome.open(); }
+        function onBusyChanged() { window.elapsedMs = 0; }
+        function onEventReceived(event) {
+            if (event.type === "performance.updated"
+                && event.data.measurement.turn_id === window.selectedPerformance.turn_id)
+                window.selectedPerformance = event.data.measurement;
+        }
     }
     Dialog {
         id: planWelcome
@@ -264,6 +329,148 @@ FloatingWindow {
         contentItem: Text {
             text: "Estás usando tu plan de ChatGPT. Las respuestas de Agent Shell consumen sus límites disponibles. Puedes administrar el uso y desconectar la aplicación en los ajustes de ChatGPT."
             wrapMode: Text.Wrap
+        }
+    }
+
+    Dialog {
+        id: performanceDetails
+        title: "Detalles de rendimiento"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(580, window.width - 40)
+        height: Math.min(650, window.height - 40)
+        standardButtons: Dialog.Close
+        contentItem: ScrollView {
+            TextArea {
+                text: Performance.details(window.selectedPerformance)
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                textFormat: TextEdit.PlainText
+            }
+        }
+    }
+
+    Drawer {
+        id: performancePanel
+        width: Math.min(560, window.width - 40)
+        height: window.height
+        edge: Qt.RightEdge
+        background: Rectangle { color: "#111d2a"; border.color: "#314155" }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 12
+            Text { text: "Rendimiento"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+            Text {
+                Layout.fillWidth: true
+                text: "Últimos 200 turnos guardados. Las medianas y el p95 usan sólo respuestas completadas y tiempos del backend. Compara mensajes y contextos similares."
+                color: "#96a9bb"
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ComboBox {
+                    Layout.fillWidth: true
+                    model: ["Todos los modelos"].concat(window.bridge.modelPerformance.map(row => row.model))
+                    onActivated: window.performanceModel = currentIndex ? currentText : ""
+                    onModelChanged: {
+                        currentIndex = window.performanceModel ? model.indexOf(window.performanceModel) : 0;
+                        if (currentIndex < 0) { window.performanceModel = ""; currentIndex = 0; }
+                    }
+                }
+                ActionButton {
+                    text: window.bridge.performanceBusy ? "Cargando…" : "Actualizar"
+                    enabled: window.bridge.ready && !window.bridge.performanceBusy
+                    onClicked: window.bridge.refreshPerformance()
+                }
+            }
+            ListView {
+                id: performanceList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 10
+                model: window.bridge.performanceHistory.filter(row => !window.performanceModel || row.model === window.performanceModel)
+                ScrollBar.vertical: ScrollBar {}
+                header: Column {
+                    width: performanceList.width
+                    spacing: 10
+                    Repeater {
+                        model: window.bridge.modelPerformance.filter(row => !window.performanceModel || row.model === window.performanceModel)
+                        delegate: Rectangle {
+                            id: modelCard
+                            required property var modelData
+                            width: performanceList.width
+                            implicitHeight: modelStats.implicitHeight + 24
+                            radius: 8
+                            color: "#192535"
+                            Column {
+                                id: modelStats
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 6
+                                Text { text: modelCard.modelData.model; color: "#72e5c0"; font.bold: true }
+                                Text {
+                                    width: parent.width
+                                    text: "Primer texto (mediana): " + Performance.duration(modelCard.modelData.firstMedian)
+                                          + "\nTotal (mediana): " + Performance.duration(modelCard.modelData.totalMedian)
+                                          + "\nTotal p95: " + (modelCard.modelData.totalP95 === null
+                                              ? "Disponible desde 20 respuestas completadas" : Performance.duration(modelCard.modelData.totalP95))
+                                    color: "#d8e5ee"
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: modelCard.modelData.completed + " completadas · " + modelCard.modelData.failed
+                                          + " fallidas · " + modelCard.modelData.interrupted + " interrumpidas"
+                                    color: "#96a9bb"
+                                    font.pixelSize: 11
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        text: window.bridge.performanceHistory.length ? "Mediciones por respuesta" : "Envía un mensaje para registrar la primera medición. Los chats antiguos no tienen datos de rendimiento."
+                        color: "#96a9bb"
+                        wrapMode: Text.Wrap
+                    }
+                    Item { width: 1; height: 6 }
+                }
+                delegate: ItemDelegate {
+                    id: measurementRow
+                    required property var modelData
+                    width: performanceList.width
+                    onClicked: window.showPerformance(modelData)
+                    contentItem: Column {
+                        spacing: 6
+                        Text {
+                            width: parent.width
+                            text: measurementRow.modelData.model + " · " + Performance.status(measurementRow.modelData.status)
+                            color: "#d8e5ee"
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: Performance.summary(measurementRow.modelData)
+                            color: "#96a9bb"
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                        }
+                        Text {
+                            text: new Date(measurementRow.modelData.started_at).toLocaleString()
+                            color: "#788da2"
+                            font.pixelSize: 10
+                        }
+                    }
+                    background: Rectangle { radius: 8; color: "#192535" }
+                }
+            }
         }
     }
 

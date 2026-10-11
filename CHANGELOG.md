@@ -5,6 +5,13 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Pendiente de publicar
 
+## [0.4.0] — 2026-10-11
+
+- Métricas por respuesta: primer texto, duración, velocidad de caracteres y tiempos de preparación, sesión, HTTP y presentación Qt.
+- Historial de las últimas 200 mediciones y comparación por modelo con mediana y p95; fallos y cancelaciones separados.
+- Conteos reales de tokens cuando OpenAI los entrega, conservación de métricas al reiniciar y compatibilidad con chats anteriores.
+- 58 pruebas, revisión QML e integración Qt con reloj controlado, persistencia, cancelación, estadísticas y presentación; solicitud real completada con métricas del backend.
+
 ## [0.3.0] — 2026-10-11
 
 - Conexión directa con ChatGPT sin Codex CLI ni App Server.

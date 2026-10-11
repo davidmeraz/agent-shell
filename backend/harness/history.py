@@ -13,6 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .performance import safe_measurement
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -83,7 +85,26 @@ class HistoryStore:
             if (not isinstance(message, dict) or message.get("role") not in ("user", "assistant", "system")
                 or not all(isinstance(message.get(key), str) for key in ("id", "text", "status"))):
                 raise ValueError("Mensaje del historial inválido")
+        measurements = record.get("performance")
+        record["performance"] = []
+        if isinstance(measurements, list):
+            record["performance"] = [clean for row in measurements if (clean := safe_measurement(row))]
         return record
+
+    def performance(self, limit: int = 200) -> list[dict]:
+        """Últimos turnos medidos, sin títulos, prompts ni datos de cuenta."""
+        result = []
+        for path in self.root.glob("*.json"):
+            try:
+                record = self.load(path.stem)
+                for row in record["performance"]:
+                    if row["status"] == "streaming":
+                        row["status"] = "interrupted"
+                        row["total_ms"] = row["elapsed_ms"]
+                    result.append({**row, "chat_id": record["chat_id"]})
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return sorted(result, key=lambda row: row["started_at"], reverse=True)[:limit]
 
     def list(self) -> list[dict]:
         """Devuelve títulos recientes primero; un JSON dañado no oculta el resto."""

@@ -28,6 +28,8 @@ flowchart LR
   diagnósticos privados, lectura SSE y cierre de sockets al cancelar.
 - `ChatGPTClient`: descubre modelos de la cuenta y solicita respuestas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
+- `TurnPerformance`: reloj monotónico, etapas del turno, conteos y uso reportado por OpenAI.
+- `Performance.js`: formato de métricas y estadísticas por modelo en Qt.
 - `EventEmitter`: secuencia global y escritura serializada entre trabajadores.
 
 ## Autenticación
@@ -70,6 +72,14 @@ reconstruirse. Las conversaciones demasiado largas pueden superar el contexto;
 todavía no hay compactación.
 
 ## Persistencia y ciclo de vida
+
+Las mediciones se guardan en el array opcional `performance` del chat. Un `turn_id`
+vincula mensajes y medición; una generación evita actualizaciones de turnos cancelados.
+`StreamControl` informa inicio/fin de sesión, solicitud HTTP y cabeceras al servidor.
+Qt confirma la aproximación de presentación del primer texto con `frameSwapped`.
+Los eventos de rendimiento durante streaming se agrupan cada 250 ms sin añadir
+escrituras por fragmento. El panel consulta como máximo 200 turnos de archivos locales.
+Las definiciones y límites se describen en [rendimiento](performance.md).
 
 El primer mensaje crea el chat y se guarda antes de solicitar inferencia. El
 streaming actualiza Qt antes del guardado y agrupa escrituras cada medio segundo.
