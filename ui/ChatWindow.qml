@@ -13,32 +13,41 @@ FloatingWindow {
     id: window
     required property AgentBridge bridge
     title: "Agent Shell · ChatGPT"
-    implicitWidth: 1040
-    implicitHeight: 800
+    implicitWidth: 600
+    implicitHeight: 1000
     minimumSize: Qt.size(560, 560)
     color: "transparent"
     visible: true
     BackgroundEffect.blurRegion: Region { item: glassSurface; radius: glassSurface.radius }
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
-    readonly property bool overlayVisible: narrowSidebar.visible || historyPanel.visible || performancePanel.visible
+    readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
-                                           || shellSettings.visible || shellApproval.visible
+                                           || shellSettings.visible
                                            || commandHelp.visible
+    readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
-    property bool sidebarExpanded: true
-    readonly property bool sidebarVisible: wideLayout && sidebarExpanded
+    property bool sidebarKeyboardOpen: false
     readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy
     property string performanceModel: ""
     property double elapsedMs: 0
 
-    function toggleSidebar() {
-        if (wideLayout) sidebarExpanded = !sidebarExpanded;
-        else if (narrowSidebar.visible) narrowSidebar.close();
-        else narrowSidebar.open();
+    Shortcut {
+        sequence: "Ctrl+B"
+        enabled: !window.dialogVisible
+        onActivated: {
+            if (narrowSidebar.visible) narrowSidebar.close();
+            else {
+                window.sidebarKeyboardOpen = true;
+                narrowSidebar.open();
+                narrowSidebar.contentItem.forceActiveFocus();
+            }
+        }
     }
-    onWideLayoutChanged: {
-        if (narrowSidebar) narrowSidebar.close();
+    Shortcut {
+        sequence: "Esc"
+        enabled: narrowSidebar.visible && !window.dialogVisible
+        onActivated: narrowSidebar.close()
     }
 
     function showPerformance(measurement) {
@@ -80,6 +89,7 @@ FloatingWindow {
     }
 
     RowLayout {
+        id: mainLayout
         anchors.fill: parent
         anchors.margins: 16
         spacing: 20
@@ -94,64 +104,11 @@ FloatingWindow {
             autoPaddingEnabled: false
         }
 
-        ChatSidebar {
-            Layout.preferredWidth: 232
-            Layout.fillHeight: true
-            visible: window.sidebarVisible
-            bridge: window.bridge
-            onHistoryRequested: historyPanel.open()
-            onPerformanceRequested: window.openPerformance()
-            onAccountRequested: accountPanel.open()
-            onShellRequested: shellSettings.open()
-            onDeleteRequested: (chatId, title) => window.requestDeleteChat(chatId, title)
-        }
-
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumWidth: 0
             spacing: 14
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 16
-                SidebarToggle {
-                    expanded: window.sidebarVisible || narrowSidebar.visible
-                    onClicked: window.toggleSidebar()
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    spacing: 5
-                    Text {
-                        text: "CONVERSACIÓN"
-                        color: "#aaaaaa"
-                        font.pixelSize: 10
-                        font.letterSpacing: 1.5
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: window.bridge.currentTitle || "Nueva conversación"
-                        color: "#f5f5f5"
-                        font.pixelSize: window.wideLayout ? 24 : 21
-                        font.bold: true
-                        elide: Text.ElideRight
-                        textFormat: Text.PlainText
-                    }
-                }
-                RowLayout {
-                    spacing: 7
-                    Rectangle {
-                        implicitWidth: 6; implicitHeight: 6; radius: 3
-                        color: window.bridge.ready && window.bridge.authenticated ? "#ffffff" : "#777777"
-                    }
-                    Text {
-                        text: !window.bridge.ready ? "Conectando…" : window.bridge.authenticated ? "ChatGPT conectado" : "Sin sesión"
-                        color: "#bbbbbb"
-                        font.pixelSize: 11
-                    }
-                }
-            }
 
             GlassPanel {
                 Layout.fillWidth: true
@@ -195,30 +152,41 @@ FloatingWindow {
                 Layout.fillWidth: true
                 bridge: window.bridge
                 compact: window.height < 680
+                statusText: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
+                onPerformanceRequested: measurement => window.showPerformance(measurement)
             }
+        }
+    }
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                Text {
-                    Layout.fillWidth: true
-                    text: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
-                    color: window.bridge.busy || window.bridge.loginBusy ? "#cccccc" : "#bbbbbb"
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                    ToolTip.visible: statusHover.hovered
-                    ToolTip.text: text
-                    HoverHandler { id: statusHover }
-                }
-                Text {
-                    text: window.wideLayout ? "Enter envía · Shift+Enter salto de línea" : "Enter · Shift+Enter"
-                    color: "#aaaaaa"
-                    font.pixelSize: 10
-                }
+    // Zona invisible: el panel se superpone sin cambiar el tamaño del chat.
+    Item {
+        objectName: "chatSidebarEdge"
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 12
+        z: 3
+        HoverHandler {
+            id: edgeHover
+            enabled: !window.overlayVisible
+            onHoveredChanged: {
+                if (hovered) sidebarOpenDelay.restart();
+                else sidebarOpenDelay.stop();
             }
+        }
+    }
+    Timer {
+        id: sidebarOpenDelay
+        interval: 160
+        onTriggered: {
+            if (edgeHover.hovered && !window.overlayVisible) narrowSidebar.open();
+        }
+    }
+    Timer {
+        id: sidebarCloseDelay
+        interval: 450
+        onTriggered: {
+            if (!sidebarHover.hovered && !window.sidebarKeyboardOpen) narrowSidebar.close();
         }
     }
 
@@ -232,10 +200,8 @@ FloatingWindow {
             else if (command === "/terminal") shellSettings.open();
         }
         function onPlanConnected() { accountPanel.close(); planWelcome.open(); }
-        function onBusyChanged() { window.elapsedMs = 0; if (!window.bridge.busy) shellApproval.close(); }
+        function onBusyChanged() { window.elapsedMs = 0; }
         function onEventReceived(event) {
-            if (event.type === "tool.approval") shellApproval.open();
-            if (event.type === "tool.approval.resolved") shellApproval.close();
             if (event.type === "chat.loaded" || event.type === "chat.reset") narrowSidebar.close();
             if (event.type === "chat.deleted" && event.data.chat_id === window.selectedPerformance.chat_id) {
                 performanceDetails.close();
@@ -253,24 +219,34 @@ FloatingWindow {
     }
     Drawer {
         id: narrowSidebar
+        objectName: "chatSidebarDrawer"
         width: Math.min(280, window.width - 40)
         height: window.height
         edge: Qt.LeftEdge
         padding: 0
+        modal: false
+        dim: false
+        focus: window.sidebarKeyboardOpen
+        onOpened: {
+            if (!sidebarHover.hovered && !window.sidebarKeyboardOpen) sidebarCloseDelay.restart();
+        }
+        onClosed: {
+            sidebarCloseDelay.stop();
+            window.sidebarKeyboardOpen = false;
+        }
         background: MattePanel { overlay: true; radius: 18 }
-        Overlay.modal: Rectangle { color: "#66000000" }
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 12
-            spacing: 10
-            RowLayout {
-                Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Navegación"; color: "#bbbbbb"; font.pixelSize: 12 }
-                ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: narrowSidebar.close() }
+        contentItem: Item {
+            HoverHandler {
+                id: sidebarHover
+                onHoveredChanged: {
+                    if (hovered) sidebarCloseDelay.stop();
+                    else if (narrowSidebar.visible && !window.sidebarKeyboardOpen) sidebarCloseDelay.restart();
+                }
             }
             ChatSidebar {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                objectName: "chatSidebar"
+                anchors.fill: parent
+                anchors.margins: 12
                 topColor: "#18333333"
                 bottomColor: "#20292929"
                 waterReflection: false
@@ -279,7 +255,10 @@ FloatingWindow {
                 onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
                 onAccountRequested: { narrowSidebar.close(); accountPanel.open(); }
                 onShellRequested: { narrowSidebar.close(); shellSettings.open(); }
-                onDeleteRequested: (chatId, title) => window.requestDeleteChat(chatId, title)
+                onDeleteRequested: (chatId, title) => {
+                    narrowSidebar.close();
+                    window.requestDeleteChat(chatId, title);
+                }
             }
         }
     }
@@ -339,12 +318,6 @@ FloatingWindow {
         bridge: window.bridge
         anchors.centerIn: parent
         width: Math.min(480, window.width - 40)
-    }
-    ShellApprovalDialog {
-        id: shellApproval
-        bridge: window.bridge
-        anchors.centerIn: parent
-        width: Math.min(560, window.width - 40)
     }
 
     GlassDialog {
@@ -452,6 +425,7 @@ FloatingWindow {
 
     GlassDialog {
         id: performanceDetails
+        objectName: "chatPerformanceDetails"
         title: "Detalles de rendimiento"
         modal: true
         anchors.centerIn: parent
@@ -459,6 +433,8 @@ FloatingWindow {
         height: Math.min(650, window.height - 40)
         standardButtons: Dialog.Close
         contentItem: ScrollView {
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             TextArea {
                 selectionColor: "#ffffff"
                 selectedTextColor: "#000000"
@@ -521,7 +497,7 @@ FloatingWindow {
                 clip: true
                 spacing: 10
                 model: window.bridge.performanceHistory.filter(row => !window.performanceModel || row.model === window.performanceModel)
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                 header: Column {
                     width: performanceList.width
                     spacing: 10
@@ -637,7 +613,7 @@ FloatingWindow {
                 clip: true
                 spacing: 8
                 model: window.bridge.conversations
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                 delegate: ConversationRow {
                     width: savedChats.width
                     font.pixelSize: 13

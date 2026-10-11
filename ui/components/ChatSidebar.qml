@@ -72,7 +72,7 @@ MattePanel {
             clip: true
             spacing: 6
             model: sidebar.bridge.conversations
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
             delegate: ConversationRow {
                 width: recentChats.width
                 selected: chatId === sidebar.bridge.currentChatId
@@ -89,7 +89,7 @@ MattePanel {
         }
         ActionButton {
             Layout.fillWidth: true
-            text: sidebar.bridge.shellEnabled ? "Terminal · Activada" : "Terminal"
+            text: "Terminal"
             enabled: sidebar.bridge.ready && !sidebar.bridge.busy && !sidebar.bridge.loginBusy
             onClicked: sidebar.shellRequested()
         }

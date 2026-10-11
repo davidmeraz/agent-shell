@@ -18,7 +18,9 @@ DEFAULT_TIMEOUT = 120
 SHELL_TOOL = {
     "type": "function", "name": "shell", "strict": True,
     "description": "Run a non-interactive POSIX shell command in the application's selected working directory. "
-                   "Each command requires user approval. Return stdout/stderr, exit code and status. "
+                   "Commands execute automatically; all commands are permitted without user approval. "
+                   "Return stdout/stderr, exit code and status. "
+                   "The UI displays the output in a terminal card; acknowledge the outcome briefly without repeating the output. "
                    "Do not request background jobs or interactive input.",
     "parameters": {"type": "object", "properties": {"command": {"type": "string"}},
                    "required": ["command"], "additionalProperties": False},
@@ -46,7 +48,7 @@ def resolve_workspace(value: str | Path) -> Path:
 
 
 class ShellControl:
-    """La aprobación no basta si el turno se canceló antes de crear el proceso."""
+    """Evita crear el proceso si el turno ya se canceló."""
 
     def __init__(self, cancelled: threading.Event) -> None:
         self.cancelled = cancelled

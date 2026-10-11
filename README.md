@@ -4,7 +4,7 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.8.0.** No requiere Codex CLI ni App Server.
+**Versión: 0.9.0.** No requiere Codex CLI ni App Server.
 Las etiquetas locales `v0.1.0` a `v0.7.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
@@ -68,13 +68,17 @@ identificador del modelo sin cambiarlo hasta que confirmes.
 | `/nuevo` | Preparar una conversación nueva; la anterior queda en el historial |
 | `/historial` | Abrir las conversaciones guardadas |
 | `/modelos` | Elegir modelo dentro del editor |
-| `/terminal` | Abrir la configuración de terminal; no ejecuta ni activa comandos automáticamente |
+| `/terminal` | Cambiar el directorio de la terminal, que permanece disponible; abrir este panel no ejecuta comandos |
 | `/detener` | Cancelar la respuesta o ejecución en curso |
+| `/shell comando` | Ejecutar directamente un comando local, por ejemplo `/shell pwd`, sin consultar a la IA |
 
 Se procesan localmente y no se envían a ChatGPT ni se guardan como mensajes.
-`/modelos` acepta el identificador de un modelo; los demás no aceptan argumentos.
+`/modelos` acepta el identificador de un modelo y `/shell` requiere un comando;
+los demás no aceptan argumentos. Completar `/shell` prepara `/shell ` para escribir
+la orden; la ejecución empieza al enviar el comando completo. Las sugerencias
+se ocultan al escribir los argumentos.
 Un comando desconocido o no disponible muestra un aviso
-y conserva el borrador. `/ayuda` y `/historial` funcionan sin sesión; elegir modelo
+y conserva el borrador. `/ayuda`, `/historial` y `/shell` funcionan sin sesión; elegir modelo
 requiere una cuenta conectada. Puedes seguir escribiendo un borrador durante una
 respuesta y usar `/detener`; el envío de mensajes espera a que termine el turno.
 
@@ -83,11 +87,25 @@ respuesta y usar `/detener`; el envío de mensajes espera a que termine el turno
 La barra lateral reúne nuevo chat, historial, rendimiento y cuenta. Estos accesos
 se concentran en ese panel. El centro muestra la conversación y el editor inferior
 ofrece las acciones de envío y detención. Una etiqueta discreta a la izquierda de
-Enviar muestra el modelo activo; al pasar el cursor indica su identificador y
-recuerda el comando `/modelos`. Las sugerencias ocupan ese mismo espacio al usar
+Enviar muestra el modelo activo y, a su lado, el estado de la respuesta; los textos
+largos se recortan y pueden consultarse completos al pasar el cursor. El modelo
+recuerda el comando `/modelos` al pasar el cursor. Las sugerencias ocupan ese mismo espacio al usar
 comandos, manteniendo estable la altura del editor.
-El botón junto al título permite ocultar y mostrar la barra lateral. En ventanas
-pequeñas la abre como un panel superpuesto, que puedes cerrar con **Cerrar** o **Esc**.
+El chat no tiene cabecera con título ni estado de conexión. La barra lateral se
+abre al mantener el puntero en los primeros 12 píxeles del borde izquierdo durante
+160 ms y se oculta 450 ms después de salir del panel. Se superpone al chat sin
+desplazar la conversación ni el editor, también en ventanas pequeñas.
+**Ctrl+B** permite abrirla y cerrarla con el teclado; **Esc** también la cierra.
+Al abrirla con el teclado permanece abierta para poder navegar por sus controles.
+Los mensajes propios usan burbujas compactas y las respuestas muestran Markdown,
+listas y bloques de código. Cada respuesta indica el modelo utilizado cuando la
+medición está disponible, permite copiar el texto original con una confirmación
+y muestra tiempo total y velocidad; al pulsar las métricas se abren sus detalles.
+Mientras llega el primer texto aparece una indicación de espera. Al desplazarte
+para leer mensajes anteriores, el chat conserva tu posición aunque llegue texto
+nuevo; una flecha permite volver al último mensaje y reanudar el seguimiento.
+Las barras de desplazamiento permanecen ocultas; puedes recorrer el contenido con
+la rueda, gestos o teclado.
 Las sugerencias de bienvenida preparan un mensaje que puedes editar antes de enviar.
 El panel lateral, Historial, Cuenta, Rendimiento y sus diálogos usan el mismo vidrio
 mate translúcido más marcado, con ondas de luz suaves que evocan un reflejo de agua.
@@ -108,9 +126,18 @@ Sin ese soporte se conservan la transparencia y los bordes de cristal.
 
 ## Rendimiento
 
-Cada respuesta muestra tiempo hasta el primer texto, duración y velocidad de
-texto cuando hay una muestra suficiente. **Detalles** abre tiempos de preparación,
-sesión, red y presentación en Qt, tamaño del contexto y tokens entregados por OpenAI.
+Cada respuesta muestra un resumen discreto con duración y velocidad media en
+`tok/s`, cuando hay datos suficientes. El contexto de la última llamada aparece
+junto a **Enviar**, con el conteo exacto al pasar el cursor y acceso al desglose
+al pulsarlo. Se recupera al abrir una conversación del historial.
+El contexto usa la entrada de la última llamada; el consumo del turno se acumula
+por separado. La media usa los tokens de salida y el tiempo HTTP de todas las
+llamadas a la IA: incluye red y razonamiento y excluye ejecución de terminal.
+No se estima a partir de caracteres ni se muestra un porcentaje sin conocer el
+límite del modelo. Los caracteres por segundo quedan como alternativa con su
+unidad explícita cuando falta la velocidad en tokens. Pulsar el resumen abre
+tiempos de preparación, sesión, red y presentación en Qt, contexto exacto y
+consumo acumulado de entrada, salida, razonamiento y caché.
 
 **Rendimiento** reúne los últimos 200 turnos medidos de todos los chats. Permite
 filtrar por modelo y comparar medianas y p95, con fallos y cancelaciones aparte.
@@ -138,23 +165,40 @@ anterior como pista de cuenta: tampoco debe registrarse o compartirse.
 
 ## Terminal con IA
 
-Abre **Terminal** en la barra lateral, actívala, indica el directorio de trabajo y
-pulsa **Aplicar**. Luego puedes pedir, por ejemplo: «Usa la terminal para decirme
-en qué directorio estamos». Antes de ejecutar, la aplicación muestra el comando
-exacto y su directorio: elige **Ejecutar** o **Rechazar**. **Esc** también rechaza.
+La terminal es una función principal y está siempre disponible desde el inicio.
+La IA la usa cuando la tarea lo requiere; una conversación normal puede responderse
+directamente. Todos los comandos se permiten y ejecutan automáticamente, sin
+confirmación. Puedes pedir, por ejemplo: «Usa la terminal para decirme en qué
+directorio estamos». **Terminal** en la barra lateral o `/terminal` permite cambiar
+el directorio de trabajo y aplicar el cambio entre turnos.
+
+Para ejecutar sin IA, escribe `/shell pwd`, `/shell ls -la` o `/shell git status`
+en el chat. El resultado aparece en una tarjeta de **Terminal local**, con salida,
+directorio, estado, duración y código de salida. Las tarjetas muestran una vista
+compacta de las salidas largas, con opciones para ampliar y copiar toda la salida;
+el directorio completo aparece al pasar el cursor por su ruta abreviada.
+Funciona sin cuenta de ChatGPT y no genera
+solicitudes al modelo ni mediciones de IA. El comando y su salida quedan en el
+historial local, sin incorporarse al contexto que recibe la IA.
 
 La shell se ejecuta localmente con `/bin/sh -c`. La IA recibe el resultado real y
 continúa la respuesta; el chat muestra comando, salida y estado en una tarjeta.
-**Detener** cancela tanto la espera de confirmación como el proceso y su grupo.
-La terminal comienza desactivada en cada lanzamiento y cada comando requiere
-una confirmación nueva. Recuperar un chat no vuelve a ejecutar comandos guardados.
+Las instrucciones de la IA indican que, ante una petición simple de ejecutar un
+comando, confirme brevemente el resultado sin repetir la salida de la tarjeta.
+Si la tarea requiere análisis, interpreta los resultados sin transcribirlos;
+un fallo, timeout o interrupción debe comunicarse como tal.
+**Detener** cancela el proceso y su grupo, además de la respuesta en curso.
+Recuperar un chat no vuelve a ejecutar comandos guardados.
 
 Cada comando tiene un máximo de 120 segundos y devuelve hasta 16000 caracteres
 de stdout/stderr combinados. Un turno admite hasta ocho solicitudes al modelo y
 ocho comandos, ejecutados en orden. No hay terminal interactiva ni gestión de
 trabajos en segundo plano. El directorio es el punto de partida, no un aislamiento
 del sistema: los comandos tienen los permisos de tu usuario. Su salida se comparte
-con ChatGPT como parte de la conversación.
+con ChatGPT cuando la ejecución la solicita la IA; `/shell` conserva su salida local.
+Cada envío usa un proceso independiente: `cd` no cambia el directorio de envíos
+posteriores. Usa `/terminal` para cambiarlo o combina, por ejemplo,
+`/shell cd carpeta && pwd`.
 
 Consulta [diseño, permisos y límites de la integración](docs/terminal.md).
 
@@ -210,10 +254,13 @@ Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTT
 usa un servidor loopback de prueba y el cliente de streaming real. La integración
 Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
 presentación del primer texto, rendimiento, borrado y el ciclo de shell con
-confirmación, ejecución real de `pwd` en una carpeta temporal y recuperación.
-El escenario `commands-smoke.qml` comprueba los seis comandos, sugerencias
+ejecución automática real de `pwd` en una carpeta temporal y recuperación.
+El escenario `commands-smoke.qml` comprueba los siete comandos, sugerencias
 compactas, activación al completar `/modelos`, filtros, teclado y ratón,
-validación y borradores sin sesión. Las comprobaciones
+validación y borradores sin sesión. `conversation-smoke.qml` comprueba Markdown,
+copia, métricas y desplazamiento sin saltos, con las barras ocultas.
+`shell-command-smoke.qml` verifica `/shell` desde el editor sin sesión: completado,
+salida real, argumentos, errores, cancelación e historial. Las comprobaciones
 de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte

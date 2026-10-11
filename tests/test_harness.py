@@ -70,9 +70,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(request["authorization"], "Bearer test-only-access-token")
         self.assertFalse(request["body"]["store"])
         self.assertTrue(request["body"]["stream"])
-        self.assertNotIn("tools", request["body"])
+        self.assertEqual(request["body"]["tools"][0]["name"], "shell")
         self.assertEqual([item["role"] for item in request["body"]["input"]], ["user", "assistant", "user"])
-        self.assertEqual(request["body"]["input"][1]["content"], "Hola desde ChatGPT. 🎵")
+        self.assertEqual(request["body"]["input"][1]["content"][0]["text"], "Hola desde ChatGPT. 🎵")
         self.assertEqual(len(self.server.conversation["messages"]), 4)
 
     def test_login_for_another_account_passes_flag_and_preserves_chat(self):

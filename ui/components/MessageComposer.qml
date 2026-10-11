@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import ".."
 import "../ChatCommands.js" as ChatCommands
+import "../Performance.js" as Performance
 
 // Editor con sugerencias de comandos y acciones de envío.
 GlassPanel {
@@ -10,7 +11,15 @@ GlassPanel {
     objectName: "chatComposer"
     required property AgentBridge bridge
     property bool compact: false
+    property string statusText: bridge.status
     property bool commandsDismissed: false
+    signal performanceRequested(var measurement)
+    readonly property var contextMeasurement: bridge.latestPerformance
+    readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
+        && contextMeasurement.chat_id === bridge.currentChatId
+        && (!bridge.modelName || contextMeasurement.model === bridge.modelName)
+        && typeof contextMeasurement.context_tokens === "number"
+        && isFinite(contextMeasurement.context_tokens) && contextMeasurement.context_tokens >= 0
     readonly property var commandMatches: ChatCommands.suggestions(prompt.text)
     readonly property var modelQuery: ChatCommands.modelQuery(prompt.text)
     readonly property bool modelMode: modelQuery !== null
@@ -29,7 +38,7 @@ GlassPanel {
     readonly property bool showCommands: prompt.activeFocus && !commandsDismissed && (completions.length > 0 || modelMode)
     readonly property bool canSubmit: prompt.text.trim().startsWith("/") || bridge.canSend
     readonly property string activeModelLabel: {
-        if (!bridge.authenticated || !bridge.modelName) return "";
+        if (bridge.shellRunning || !bridge.authenticated || !bridge.modelName) return "";
         for (let i = 0; i < bridge.availableModels.count; ++i) {
             const model = bridge.availableModels.get(i);
             if (model.slug === bridge.modelName) return model.displayName || model.slug;
@@ -60,6 +69,11 @@ GlassPanel {
             else openModels();
             return;
         }
+        if (!modelMode && option.value === "/shell") {
+            prepare("/shell ");
+            commandsDismissed = true;
+            return;
+        }
         if (bridge.submit(modelMode ? "/modelos " + option.value : option.value)) prompt.clear();
     }
     function openModels() {
@@ -72,6 +86,8 @@ GlassPanel {
         anchors.margins: 12
         spacing: 10
         ScrollView {
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Layout.fillWidth: true
             Layout.preferredHeight: composer.compact ? 64 : 88
             clip: true
@@ -80,7 +96,7 @@ GlassPanel {
                 selectedTextColor: "#000000"
                 id: prompt
                 objectName: "chatPrompt"
-                placeholderText: composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /ayuda o conecta ChatGPT…"
+                placeholderText: composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
                 placeholderTextColor: "#aaaaaa"
                 color: "#f5f5f5"
                 font.pixelSize: 14
@@ -107,7 +123,7 @@ GlassPanel {
                         }
                         if (event.key === Qt.Key_Tab && composer.completions.length) {
                             const option = composer.completions[completionList.currentIndex];
-                            prompt.text = composer.modelMode ? "/modelos " + option.value : option.value;
+                            prompt.text = composer.modelMode ? "/modelos " + option.value : option.value + (option.value === "/shell" ? " " : "");
                             prompt.cursorPosition = prompt.length;
                             composer.commandsDismissed = true;
                             event.accepted = true;
@@ -140,23 +156,47 @@ GlassPanel {
                 objectName: "chatCommandSlot"
                 Layout.fillWidth: true
                 implicitHeight: 40
-                Text {
-                    objectName: "chatActiveModel"
+                RowLayout {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: !composer.showCommands && composer.activeModelLabel !== ""
-                    text: composer.activeModelLabel
-                    textFormat: Text.PlainText
-                    color: "#aaaaaa"
-                    font.pixelSize: 11
-                    elide: Text.ElideRight
-                    Accessible.role: Accessible.StaticText
-                    Accessible.name: "Modelo activo: " + text
-                    HoverHandler { id: modelHover }
-                    ToolTip.visible: visible && modelHover.hovered
-                    ToolTip.delay: 400
-                    ToolTip.text: composer.bridge.modelName + " · Cambia con /modelos"
+                    visible: !composer.showCommands
+                    spacing: 6
+                    Text {
+                        objectName: "chatActiveModel"
+                        Layout.preferredWidth: Math.min(implicitWidth, parent.width * 0.4)
+                        visible: composer.activeModelLabel !== ""
+                        text: composer.activeModelLabel
+                        textFormat: Text.PlainText
+                        color: "#aaaaaa"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: "Modelo activo: " + text
+                        HoverHandler { id: modelHover }
+                        ToolTip.visible: visible && modelHover.hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: composer.bridge.modelName + " · Cambia con /modelos"
+                    }
+                    Text {
+                        visible: composer.activeModelLabel !== "" && composer.statusText !== ""
+                        text: "·"
+                        color: "#888888"
+                        font.pixelSize: 11
+                    }
+                    Text {
+                        objectName: "chatComposerStatus"
+                        Layout.fillWidth: true
+                        text: composer.statusText
+                        textFormat: Text.PlainText
+                        color: composer.bridge.busy || composer.bridge.loginBusy ? "#cccccc" : "#aaaaaa"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        HoverHandler { id: statusHover }
+                        ToolTip.visible: visible && statusHover.hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: text
+                    }
                 }
                 RowLayout {
                     id: inlineSuggestions
@@ -180,7 +220,7 @@ GlassPanel {
                         model: composer.completions
                         currentIndex: 0
                         onCountChanged: { if (currentIndex < 0 || currentIndex >= count) currentIndex = 0; }
-                        ScrollIndicator.horizontal: ScrollIndicator {}
+                        ScrollIndicator.horizontal: ScrollIndicator { visible: false }
                         delegate: Button {
                             id: optionButton
                             required property var modelData
@@ -232,7 +272,32 @@ GlassPanel {
                 visible: composer.bridge.busy
                 onClicked: composer.bridge.cancel()
             }
+            Button {
+                id: contextButton
+                objectName: "chatComposerContext"
+                visible: composer.hasContext
+                text: "Contexto: " + Performance.tokens(composer.contextMeasurement.context_tokens) + " tokens"
+                hoverEnabled: true
+                padding: 4
+                Accessible.name: "Ver contexto de la última llamada: " + composer.contextMeasurement.context_tokens + " tokens"
+                ToolTip.visible: visible && hovered
+                ToolTip.delay: 400
+                ToolTip.text: composer.contextMeasurement.context_tokens + " tokens de entrada en la última llamada medida.\nVer detalles de rendimiento."
+                onClicked: composer.performanceRequested(composer.contextMeasurement)
+                contentItem: Text {
+                    text: contextButton.text
+                    color: contextButton.hovered ? "#dddddd" : "#999999"
+                    font.pixelSize: 11
+                }
+                background: Rectangle {
+                    radius: 6
+                    color: contextButton.hovered ? "#12ffffff" : "transparent"
+                    border.width: contextButton.visualFocus ? 1 : 0
+                    border.color: "#60ffffff"
+                }
+            }
             ActionButton {
+                objectName: "chatSendButton"
                 text: "Enviar  ↑"
                 accent: true
                 enabled: composer.canSubmit && prompt.text.trim().length > 0 && prompt.text.length <= 16000

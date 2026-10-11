@@ -3,6 +3,23 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.9.0] — 2026-10-11
+
+- Contexto junto a Enviar, con conteo exacto al pasar el cursor y acceso a los detalles; duración y velocidad permanecen bajo la respuesta, y la última medición se recupera al abrir el historial.
+- Indicadores discretos de contexto en tokens de la última llamada y velocidad media en tok/s, basada en conteos reales y tiempos HTTP por solicitud; separación de consumo acumulado, razonamiento, caché y ejecución de terminal en Rendimiento, con datos desconocidos sin estimaciones.
+- Instrucciones de la IA para confirmar brevemente el resultado de comandos simples sin duplicar la salida de las tarjetas de terminal, distinguiendo éxito, error, timeout e interrupción y conservando la interpretación en tareas de análisis.
+- Tarjetas de terminal más discretas: comando en la cabecera, estado y duración real, directorio abreviado con ruta completa al pasar el cursor, vista ampliable de salidas largas y copia de la salida original; aclaración cuando sudo necesita entrada interactiva.
+- Comando `/shell comando` para ejecutar directamente sin IA ni sesión de ChatGPT, con tarjetas de Terminal local, salida, estado, cancelación e historial; sin enviar resultados al contexto del modelo ni crear mediciones de IA.
+- Barras de desplazamiento ocultas sin perder navegación por rueda, gestos ni acceso al último mensaje.
+- Terminal siempre disponible como función principal: la IA la usa según la tarea y todos los comandos se ejecutan automáticamente sin confirmación; el panel Terminal configura el directorio y Detener cancela los procesos.
+- Protocolo NDJSON v2: eliminación de decisiones y eventos de aprobación; conservación de conversaciones anteriores y resultados de herramientas.
+- Cabecera del chat eliminada para dar más espacio a la conversación.
+- Estado de la respuesta junto al modelo en el editor, con texto completo al pasar el cursor; eliminación del pie separado y de la indicación Enter / Shift+Enter.
+- Conversación más compacta sin avatares repetidos, separación más contenida y burbujas ajustadas al texto del usuario sin saltos de línea innecesarios; respuestas con Markdown, código, modelo utilizado, copia con confirmación y métricas discretas que abren sus detalles.
+- Indicación mientras la IA prepara la respuesta y seguimiento del texto que respeta la lectura de mensajes anteriores, con acceso para volver al último mensaje.
+- Barra lateral sin botón: aparece al acercar el puntero al borde izquierdo y se oculta al salir, con esperas breves para evitar aperturas accidentales; se superpone sin desplazar el chat en ventanas grandes y pequeñas y admite Ctrl+B y Esc para navegar con el teclado.
+- 118 pruebas del motor, revisión QML y cuatro escenarios de interfaz con procesos locales reales y servicio HTTP de prueba; validación de contexto, velocidad en tokens, cancelación, historial y navegación sin desplazamientos.
+
 ## [0.8.0] — 2026-10-11
 
 - Botón «Usar otra cuenta» con registro OAuth separado, selector de cuentas guardadas y cierre de sesión por cuenta; conservación del host, registros anteriores y conversaciones.

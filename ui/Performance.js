@@ -9,6 +9,24 @@ function rate(value) {
     return value === null || value === undefined ? "—" : value.toFixed(1) + " car./s";
 }
 
+function tokens(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0) return "—";
+    return value >= 1000 ? (value / 1000).toFixed(1) + "k" : value.toFixed(0);
+}
+
+function tokenRate(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0 ? value.toFixed(1) + " tok/s" : "—";
+}
+
+function tokenSummary(row) {
+    const parts = [];
+    if (row.context_tokens !== null && row.context_tokens !== undefined)
+        parts.push("Contexto: " + tokens(row.context_tokens) + " tokens");
+    if (row.tokens_per_second !== null && row.tokens_per_second !== undefined)
+        parts.push("Media: " + tokenRate(row.tokens_per_second));
+    return parts.join(" · ");
+}
+
 function status(value) {
     return ({ streaming: "En curso", completed: "Completada", failed: "Fallida",
               interrupted: "Interrumpida" })[value] || value;
@@ -20,7 +38,19 @@ function summary(row) {
                                       ? row.first_visible_ms : row.first_text_ms)
            + " · " + (row.status === "streaming" ? "Transcurrido: " : "Total: ")
            + duration(row.status === "streaming" ? row.elapsed_ms : row.total_ms)
-           + " · " + rate(row.characters_per_second);
+           + (tokenSummary(row) ? " · " + tokenSummary(row) : " · " + rate(row.characters_per_second));
+}
+
+function compactSummary(row) {
+    if (!row || !row.turn_id) return "";
+    if (row.status === "streaming") return "En curso";
+    const parts = [];
+    if (row.total_ms !== null && row.total_ms !== undefined) parts.push(duration(row.total_ms));
+    if (row.tokens_per_second !== null && row.tokens_per_second !== undefined)
+        parts.push("Media: " + tokenRate(row.tokens_per_second));
+    else if (row.characters_per_second !== null && row.characters_per_second !== undefined)
+        parts.push(rate(row.characters_per_second));
+    return parts.join(" · ") || status(row.status);
 }
 
 function details(row) {
@@ -33,6 +63,9 @@ function details(row) {
         "Primer texto recibido por el backend: " + duration(row.first_text_ms),
         "Enviar → primer texto en Qt (aprox.): " + duration(row.first_visible_ms),
         "Total del backend: " + duration(row.total_ms),
+        "Contexto de la última llamada: " + (row.context_tokens === null || row.context_tokens === undefined ? "—" : row.context_tokens + " tokens"),
+        "Velocidad media de las llamadas a la IA: " + tokenRate(row.tokens_per_second),
+        "Tiempo HTTP acumulado de la IA: " + duration(row.model_request_ms),
         "Solicitudes al modelo: " + (row.model_calls === undefined || row.model_calls === null ? "—" : row.model_calls),
         "Comandos solicitados: " + (row.tool_calls || 0),
         "Ejecución de terminal: " + duration(row.tool_ms),
@@ -46,12 +79,14 @@ function details(row) {
         "Velocidad entre fragmentos de texto: " + rate(row.characters_per_second),
         "Caracteres de respuesta: " + (row.characters === null ? "—" : row.characters),
         "Contexto visible inicial: " + row.context_messages + " mensajes · " + row.input_characters + " caracteres",
+        "Consumo acumulado reportado del turno:",
         "Tokens de entrada: " + (usage.input_tokens === undefined ? "—" : usage.input_tokens),
         "Tokens de salida: " + (usage.output_tokens === undefined ? "—" : usage.output_tokens),
+        "Tokens totales: " + (usage.total_tokens === undefined ? "—" : usage.total_tokens),
         "Tokens de razonamiento: " + (usage.reasoning_tokens === undefined ? "—" : usage.reasoning_tokens),
         "Tokens de entrada en caché: " + (usage.cached_tokens === undefined ? "—" : usage.cached_tokens),
         "",
-        "Los tiempos HTTP incluyen red y servicio. La medida de Qt aproxima la presentación del primer texto; no mide el monitor. Los tokens de salida pueden incluir razonamiento. Un fragmento no equivale a un token."
+        "Contexto corresponde a la entrada de la última llamada, no a la suma del turno ni a un porcentaje del límite del modelo. Media usa todos los tokens de salida reportados / tiempo HTTP observado de las llamadas a la IA; incluye red, razonamiento y recepción local, y excluye terminal, preparación entre llamadas y renovación de sesión. Se muestra al completar el turno con conteos y tiempos de todas las llamadas. El consumo puede ser parcial si OpenAI omite datos. Un fragmento no equivale a un token. La medida de Qt aproxima el primer fotograma; no mide el monitor."
     ];
     return lines.join("\n");
 }

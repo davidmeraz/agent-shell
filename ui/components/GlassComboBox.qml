@@ -66,7 +66,7 @@ ComboBox {
             implicitHeight: Math.min(contentHeight, 280)
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
-            ScrollIndicator.vertical: ScrollIndicator {}
+            ScrollIndicator.vertical: ScrollIndicator { visible: false }
         }
         background: GlassPanel {
             topColor: "#f0333333"

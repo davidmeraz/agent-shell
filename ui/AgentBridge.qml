@@ -16,10 +16,9 @@ QtObject {
     property bool historyReady: false
     property bool openingChat: false
     property string deletingChatId: ""
-    property bool shellEnabled: false
+    readonly property bool shellEnabled: true
     property string workspace: ""
     property int shellTimeout: 120
-    property var pendingTool: ({})
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
     property string email: ""
@@ -34,6 +33,7 @@ QtObject {
     property bool performanceBusy: false
     property var latestPerformance: ({})
     property string activeTurnId: ""
+    property bool shellRunning: false
     property double submittedAt: 0
     property double firstReceivedAt: 0
     property bool framePending: false
@@ -46,6 +46,8 @@ QtObject {
     readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId
     readonly property bool canSend: ready && authenticated && availableModels.count > 0
                                    && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId
+    readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy
+                                      && !openingChat && !deletingChatId
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
@@ -57,10 +59,20 @@ QtObject {
 
     function submit(prompt) {
         const text = prompt.trim();
-        const command = ChatCommands.parse(text);
+        const command = ChatCommands.parse(prompt);
         if (command) {
             const reason = command.error || ChatCommands.blockedReason(command.name, bridge);
             if (reason) { status = reason; return false; }
+            if (command.name === "/shell") {
+                submittedAt = Date.now();
+                activeTurnId = "";
+                framePending = false;
+                shellRunning = true;
+                busy = true;
+                status = "Ejecutando comando local…";
+                sendCommand({ type: "shell.execute", command: command.command });
+                return true;
+            }
             if (command.name === "/modelos" && command.model) {
                 for (let i = 0; i < availableModels.count; ++i) {
                     if (availableModels.get(i).slug === command.model) {
@@ -97,7 +109,7 @@ QtObject {
 
     function cancel() {
         if (!busy) return;
-        status = "Deteniendo la respuesta…";
+        status = shellRunning ? "Deteniendo comando local…" : "Deteniendo la respuesta…";
         sendCommand({ type: "chat.cancel" });
     }
 
@@ -122,14 +134,9 @@ QtObject {
         sendCommand({ type: "chat.delete", chat_id: chatId });
     }
 
-    function configureShell(workdir, enabled) {
+    function configureShell(workdir) {
         if (!ready || busy || loginBusy) return;
-        sendCommand({ type: "shell.configure", workdir: workdir, enabled: enabled });
-    }
-
-    function decideTool(approved) {
-        if (!busy || !pendingTool.request_id) return;
-        sendCommand({ type: "tool.decide", request_id: pendingTool.request_id, approved: approved });
+        sendCommand({ type: "shell.configure", workdir: workdir });
     }
 
     function updateTool(call) {
@@ -222,7 +229,7 @@ QtObject {
         let event;
         try {
             event = JSON.parse(line);
-            if (event.version !== 1 || !event.data || typeof event.type !== "string")
+            if (event.version !== 2 || !event.data || typeof event.type !== "string")
                 throw new Error("Versión o formato incompatible");
         } catch (error) {
             status = "Error de comunicación: " + error.message;
@@ -230,18 +237,12 @@ QtObject {
         }
         const data = event.data;
         if (event.type === "shell.state") {
-            shellEnabled = data.enabled;
             workspace = data.workdir;
             shellTimeout = data.timeout_seconds;
-            status = shellEnabled ? "Terminal activada. Cada comando requiere confirmación." : "Terminal desactivada.";
+            status = "Terminal disponible · ejecución automática.";
         } else if (event.type === "tool.updated") {
             updateTool(data.call);
-            if (data.call.status === "running") status = "Ejecutando comando…";
-        } else if (event.type === "tool.approval") {
-            pendingTool = data;
-            status = "Confirma o rechaza el comando propuesto.";
-        } else if (event.type === "tool.approval.resolved") {
-            if (pendingTool.request_id === data.request_id) pendingTool = ({});
+            if (data.call.status === "running") status = data.call.source === "local" ? "Ejecutando comando local…" : "Ejecutando comando…";
         } else if (event.type === "history.ready") {
             historyDirectory = data.directory;
             historyReady = true;
@@ -265,7 +266,6 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
-            pendingTool = ({});
             for (let index = 0; index <= chat.messages.length; ++index) {
                 for (const call of chat.tool_calls || [])
                     if ((call.message_index === undefined ? chat.messages.length : call.message_index) === index)
@@ -279,6 +279,8 @@ QtObject {
             }
             for (const measurement of chat.performance || [])
                 updatePerformance(Object.assign({}, measurement, { chat_id: chat.chat_id }));
+            if (chat.performance && chat.performance.length)
+                latestPerformance = Object.assign({}, chat.performance[chat.performance.length - 1], { chat_id: chat.chat_id });
             currentChatId = chat.chat_id;
             currentTitle = chat.title;
             openingChat = false;
@@ -332,6 +334,23 @@ QtObject {
             authUrl = "";
             status = data.success ? "Comprobando la cuenta…" : data.message || "Inicio de sesión cancelado.";
             if (data.success && data.show_plan_welcome) planConnected();
+        } else if (event.type === "shell.started") {
+            busy = true;
+            shellRunning = true;
+            activeTurnId = data.turn_id;
+        } else if (event.type === "shell.finished") {
+            if (shellRunning && (!data.turn_id || !activeTurnId || data.turn_id === activeTurnId)) {
+                busy = false;
+                shellRunning = false;
+                status = data.message || ({ completed: "Comando local completado.", interrupted: "Comando local detenido.",
+                    timeout: "Comando local: tiempo agotado.", error: "El comando local terminó con error." })[data.status];
+            }
+        } else if (event.type === "shell.rejected") {
+            if (shellRunning && !activeTurnId) {
+                shellRunning = false;
+                busy = false;
+            }
+            status = data.message;
         } else if (event.type === "chat.busy") {
             busy = true;
             activeTurnId = data.turn_id || "";
@@ -349,7 +368,6 @@ QtObject {
             updateMessage(data.item_id, data.text, false, data.turn_id);
         } else if (event.type === "chat.finished") {
             busy = false;
-            pendingTool = ({});
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? data.message || "Respuesta detenida."
                      : data.message || "No se pudo completar la respuesta.";
@@ -367,7 +385,6 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
-            pendingTool = ({});
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
@@ -376,6 +393,7 @@ QtObject {
             messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
+            shellRunning = false;
             ready = false;
             authenticated = false;
             busy = false;
@@ -384,7 +402,6 @@ QtObject {
             performanceBusy = false;
             framePending = false;
             deletingChatId = "";
-            pendingTool = ({});
             status = data.message;
         }
         eventReceived(event);
@@ -402,6 +419,7 @@ QtObject {
             bridge.ready = false;
             bridge.authenticated = false;
             bridge.busy = false;
+            bridge.shellRunning = false;
             bridge.loginBusy = false;
             bridge.accountBusy = false;
             bridge.performanceBusy = false;
@@ -409,7 +427,6 @@ QtObject {
             bridge.historyReady = false;
             bridge.openingChat = false;
             bridge.deletingChatId = "";
-            bridge.pendingTool = ({});
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";
         }
     }

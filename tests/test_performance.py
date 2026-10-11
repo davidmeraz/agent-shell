@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from harness.history import HistoryStore
-from harness.performance import TurnPerformance, safe_usage
+from harness.performance import TurnPerformance, safe_measurement, safe_usage
 
 
 class PerformanceTests(unittest.TestCase):
@@ -90,8 +90,133 @@ class PerformanceTests(unittest.TestCase):
             {"input_tokens": 0, "output_tokens": 20, "total_tokens": 20, "reasoning_tokens": 4})
         self.assertIsNone(safe_usage({"input_tokens": True, "output_tokens": -2, "total_tokens": 1.5}))
 
+    def test_context_is_latest_call_and_token_rate_excludes_time_between_requests(self):
+        self.metric.begin_model_call()
+        self.now = 11
+        self.metric.mark("request")
+        self.now = 13
+        self.metric.complete_model_call({"input_tokens": 100, "output_tokens": 40, "total_tokens": 140,
+                                        "output_tokens_details": {"reasoning_tokens": 12}})
+        self.assertEqual(self.metric.snapshot()["context_tokens"], 100)
+        self.assertIsNone(self.metric.snapshot()["tokens_per_second"])
+        # Treinta segundos de terminal y un segundo de sesión/guardados no son tiempo HTTP.
+        self.now = 43
+        self.metric.tool_calls = 1
+        self.metric.tool_ms = 30000
+        self.metric.begin_model_call()
+        self.assertIsNone(self.metric.snapshot()["context_tokens"])
+        self.now = 44
+        self.metric.mark("request")
+        self.now = 47
+        self.metric.complete_model_call({"input_tokens": 180, "output_tokens": 60, "total_tokens": 240})
+        self.metric.finish("completed")
+        row = self.metric.snapshot()
+        self.assertEqual(row["context_tokens"], 180)
+        self.assertEqual(row["usage"]["input_tokens"], 280)
+        self.assertEqual(row["usage"]["output_tokens"], 100)
+        self.assertEqual(row["model_request_ms"], 5000)
+        self.assertEqual(row["tokens_per_second"], 20)
+        self.assertEqual(row["total_ms"], 37000)
+        self.now = 100
+        self.assertEqual(self.metric.snapshot(), row)
+
+    def test_missing_latest_usage_does_not_reuse_old_context_or_partial_token_rate(self):
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 1
+        self.metric.complete_model_call({"input_tokens": 100, "output_tokens": 20})
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 1
+        self.metric.complete_model_call(None)
+        self.metric.finish("completed")
+        row = self.metric.snapshot()
+        self.assertIsNone(row["context_tokens"])
+        self.assertIsNone(row["tokens_per_second"])
+        self.assertEqual(row["usage"]["output_tokens"], 20)
+        self.assertEqual(row["model_request_ms"], 2000)
+
+    def test_missing_output_count_does_not_invent_speed_from_input_tokens(self):
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 1
+        self.metric.complete_model_call({"input_tokens": 12400})
+        self.metric.finish("completed")
+        self.assertEqual(self.metric.snapshot()["context_tokens"], 12400)
+        self.assertIsNone(self.metric.snapshot()["tokens_per_second"])
+
+    def test_unknown_or_very_short_request_time_does_not_invent_token_speed(self):
+        for seconds, timed in ((1, False), (0, True), (0.001, True)):
+            with self.subTest(seconds=seconds, timed=timed):
+                metric = TurnPerformance("turn", "model", self.now, clock=lambda: self.now)
+                metric.begin_model_call()
+                if timed:
+                    metric.mark("request")
+                self.now += seconds
+                metric.complete_model_call({"input_tokens": 10, "output_tokens": 10})
+                metric.finish("completed")
+                self.assertIsNone(metric.snapshot()["tokens_per_second"])
+                if not timed:
+                    self.assertIsNone(metric.snapshot()["model_request_ms"])
+
+    def test_cancelled_request_preserves_partial_time_but_has_no_token_rate(self):
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 1
+        self.metric.complete_model_call({"input_tokens": 100, "output_tokens": 20})
+        self.now += 30
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 4
+        self.metric.finish("interrupted")
+        row = self.metric.snapshot()
+        self.assertEqual(row["model_request_ms"], 5000)
+        self.assertIsNone(row["context_tokens"])
+        self.assertIsNone(row["tokens_per_second"])
+        self.assertEqual(row["usage"]["output_tokens"], 20)
+
+    def test_zero_reported_tokens_are_valid_and_failed_calls_have_no_rate(self):
+        for status in ("completed", "failed"):
+            with self.subTest(status=status):
+                metric = TurnPerformance("turn", "model", self.now, clock=lambda: self.now)
+                metric.begin_model_call()
+                metric.mark("request")
+                self.now += 1
+                metric.complete_model_call({"input_tokens": 0, "output_tokens": 0})
+                metric.finish(status)
+                self.assertEqual(metric.snapshot()["context_tokens"], 0)
+                self.assertEqual(metric.snapshot()["tokens_per_second"], 0 if status == "completed" else None)
+
+    def test_duplicate_response_cannot_double_usage_and_context_must_be_an_integer(self):
+        self.metric.begin_model_call()
+        self.metric.mark("request")
+        self.now += 1
+        self.metric.complete_model_call({"input_tokens": 12, "output_tokens": 20})
+        self.metric.complete_model_call({"input_tokens": 12, "output_tokens": 20})
+        self.metric.finish("completed")
+        self.assertEqual(self.metric.snapshot()["usage"]["output_tokens"], 20)
+        for invalid in (True, 1.5, -1, math.inf):
+            row = dict(self.metric.snapshot(), context_tokens=invalid, tokens_per_second=math.nan)
+            self.assertIsNone(safe_measurement(row)["context_tokens"])
+            self.assertIsNone(safe_measurement(row)["tokens_per_second"])
+
 
 class PerformanceHistoryTests(unittest.TestCase):
+    def test_context_and_token_rate_survive_restart_and_legacy_values_remain_unknown(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = HistoryStore(Path(temporary))
+            record = store.create("Example")
+            legacy = TurnPerformance("old", "model", 0, clock=lambda: 1).snapshot()
+            for key in ("context_tokens", "tokens_per_second", "model_request_ms"):
+                legacy.pop(key)
+            current = dict(legacy, turn_id="new", context_tokens=12400, tokens_per_second=45.5, model_request_ms=3000)
+            record["performance"] = [legacy, current]
+            store.save(record)
+            restored = HistoryStore(Path(temporary)).load(record["chat_id"])["performance"]
+            for key in ("context_tokens", "tokens_per_second", "model_request_ms"):
+                self.assertIsNone(restored[0][key])
+                self.assertEqual(restored[1][key], current[key])
+
     def test_optional_corrupt_measurements_do_not_hide_legacy_messages(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = HistoryStore(Path(temporary))

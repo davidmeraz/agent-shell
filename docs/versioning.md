@@ -3,17 +3,19 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.8.0`, con comandos locales del chat, selección
-mediante `/modelos`, etiqueta del modelo activo y registros separados de cuentas.
-Las sugerencias comparten la fila de envío sin desplazar el chat y se recorren
-con las flechas izquierda/derecha. Conserva la integración de shell de `0.7.0`,
-con directorio configurable y confirmación por comando, y la interfaz
-monocromática de vidrio mate, reflejos de agua y borrado de conversaciones de `0.6.0`.
-La navegación lateral reúne los accesos y se puede ocultar; el editor muestra
-el modelo activo y las acciones de envío.
-Conserva las métricas de `0.4.0`, la sesión propia de ChatGPT y la conexión HTTP
-directa de `0.3.0`. Mantiene el formato NDJSON v1 y la compatibilidad con chats
-anteriores.
+La última versión etiquetada es `0.9.0`, con chat más compacto, Markdown y copia,
+barra lateral al acercar el puntero y contexto junto a Enviar. La terminal está
+siempre disponible para la IA y ejecuta automáticamente; `/shell comando`
+ejecuta directamente sin IA ni sesión, con tarjetas de salida ampliables.
+Las métricas separan contexto de la última llamada, consumo acumulado y velocidad
+media en tokens por segundo, excluyendo el tiempo de terminal de esa media.
+Conserva los comandos, selección mediante `/modelos` y cuentas de `0.8.0`, la
+interfaz monocromática de vidrio mate y borrado de chats de `0.6.0`, y la sesión
+propia y conexión directa con ChatGPT de `0.3.0`.
+Usa NDJSON v2, que elimina decisiones y eventos de aprobación y la opción de
+desactivar la terminal. Backend e interfaz deben actualizarse juntos. La ruptura
+del protocolo durante `0.x` sigue la convención local de incrementar MENOR;
+el historial conserva el esquema 1 y la compatibilidad con conversaciones anteriores.
 El formato es `MAYOR.MENOR.PARCHE`. El prefijo `v` pertenece a la etiqueta Git,
 por ejemplo `v0.1.0`; el número de versión de la aplicación es `0.1.0`.
 
@@ -27,7 +29,7 @@ El contrato público es el [protocolo NDJSON](protocol.md) y las opciones de la
 línea de comandos documentadas en el README y en `backend/main.py --help`. Las
 clases Python internas y la composición de QML no son una API pública estable.
 
-El campo `version: 1` de los eventos identifica el formato del protocolo y tiene
+El campo `version` de los eventos identifica el formato del protocolo (actualmente 2) y tiene
 su propio ciclo de evolución. Una corrección de la aplicación puede cambiar de
 `0.1.0` a `0.1.1` manteniendo el protocolo v1.
 

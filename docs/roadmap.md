@@ -1,7 +1,7 @@
 # Próximos pasos
 
 La base actual conecta directamente con ChatGPT, con sesión propia, catálogo de
-modelos, historial local y shell con confirmación por comando. Incluye comandos
+modelos, historial local y shell siempre disponible con ejecución automática. Incluye comandos
 del chat y cambio entre cuentas guardadas; el usuario confirmó un inicio de
 sesión real con una cuenta nueva.
 

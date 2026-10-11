@@ -38,7 +38,7 @@ class ExecutorTests(unittest.TestCase):
             state = stat.read_text().split()[2]
         except (FileNotFoundError, ProcessLookupError):
             return
-        self.assertEqual(state, "Z", f"Proceso {pid} sobrevivió")
+        self.assertIn(state, ("Z", "X"), f"Proceso {pid} sobrevivió")
 
     def test_pwd_uses_selected_directory_and_returns_exit_code(self):
         result = self.execute("pwd")
@@ -126,26 +126,126 @@ class AgentShellTests(unittest.TestCase):
             worker.join(3)
 
     def start(self):
-        self.server.handle({"type": "shell.configure", "workdir": str(self.root), "enabled": True})
-        self.output.wait_for("shell.state")
         self.server.handle({"type": "chat.send", "prompt": "shell-pwd"})
 
-    def decide(self, approval, approved=True):
-        self.server.handle({"type": "tool.decide", "request_id": approval["request_id"], "approved": approved})
+    def finished(self):
+        return self.output.wait_for("chat.finished")
 
-    def test_complete_tool_cycle_returns_actual_result_and_preserves_provider_items(self):
-        self.service.tool_preface = "Voy a consultar el directorio."
-        self.start()
-        approval = self.output.wait_for("tool.approval")
-        self.assertTrue(self.server.busy)
-        self.assertEqual(approval["call"]["command"], "pwd")
-        self.assertEqual(approval["call"]["workdir"], str(self.root))
-        self.assertIsNone(self.server._shell_control._process)
-        self.decide(approval)
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
+    def test_local_shell_works_without_auth_models_or_provider_requests(self):
+        self.server.authenticated = False
+        self.server.models = []
+        self.server.model = ""
+        requests = len(self.service.requests)
+        self.server.handle({"type": "shell.execute", "command": "pwd"})
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "completed")
         record = self.server.history.load(self.server.conversation["chat_id"])
-        self.assertEqual(record["tool_calls"][0]["output"].strip(), str(self.root))
+        call = record["tool_calls"][0]
+        self.assertEqual(call["output"].strip(), str(self.root))
+        self.assertEqual(call["source"], "local")
+        self.assertEqual(call["message_index"], 0)
+        self.assertEqual(call["exit_code"], 0)
+        self.assertEqual(record["messages"], [])
+        self.assertFalse(record.get("context"))
+        self.assertFalse(record.get("performance"))
+        self.assertEqual(len(self.service.requests), requests)
+        self.assertIsNone(self.server._performance)
+        events = [json.loads(line) for line in self.output.getvalue().splitlines()]
+        self.assertFalse(any(event["type"] in ("chat.busy", "chat.delta", "performance.updated") for event in events))
+
+    def test_local_shell_preserves_quotes_pipelines_newlines_and_exit_status(self):
+        command = "printf '%s\\n' 'a b' | tr a-z A-Z\nprintf 'failure' >&2; exit 7 "
+        self.server.handle({"type": "shell.execute", "command": command})
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "error")
+        call = self.server.conversation["tool_calls"][0]
+        self.assertEqual(call["command"], command)
+        self.assertEqual(call["output"], "A B\nfailure")
+        self.assertEqual(call["exit_code"], 7)
+
+    def test_local_shell_does_not_change_existing_ai_context_or_metrics(self):
+        self.start()
+        self.assertEqual(self.finished()["status"], "completed")
+        original = json.loads(json.dumps(self.server.conversation))
+        requests = len(self.service.requests)
+        self.server.handle({"type": "shell.execute", "command": "printf private-local-output"})
+        self.output.wait_for("shell.finished")
+        for key in ("messages", "context", "performance", "model"):
+            self.assertEqual(self.server.conversation[key], original[key])
+        self.assertEqual(len(self.service.requests), requests)
+        self.assertEqual(self.server.conversation["tool_calls"][-1]["message_index"], len(original["messages"]))
+        self.server.handle({"type": "chat.send", "prompt": "Hola"})
+        self.finished()
+        self.assertNotIn("private-local-output", json.dumps(self.service.requests[-1]["body"]["input"]))
+
+    def test_local_shell_invalid_or_busy_requests_never_start_a_process(self):
+        with patch("harness.shell.subprocess.Popen") as spawn:
+            for command in (None, "", " ", "pwd\0", "x" * 8001, 7):
+                self.server.handle({"type": "shell.execute", "command": command})
+                self.output.wait_for("shell.rejected")
+            for flag in ("busy", "login_pending", "account_pending"):
+                setattr(self.server, flag, True)
+                self.server.handle({"type": "shell.execute", "command": "pwd"})
+                self.output.wait_for("shell.rejected")
+                self.assertTrue(getattr(self.server, flag))
+                setattr(self.server, flag, False)
+            spawn.assert_not_called()
+        self.assertIsNone(self.server.conversation)
+
+    def test_local_shell_persistence_failure_prevents_execution_and_restores_chat(self):
+        self.server.conversation = self.server.history.create("Existing chat")
+        original = json.loads(json.dumps(self.server.conversation))
+        with patch.object(self.server.history, "save", side_effect=OSError("test disk failure")), \
+                patch("harness.shell.subprocess.Popen") as spawn:
+            self.server.handle({"type": "shell.execute", "command": "pwd"})
+            self.output.wait_for("shell.rejected")
+            spawn.assert_not_called()
+        self.assertEqual(self.server.conversation, original)
+        self.assertFalse(self.server.busy)
+
+    def test_local_shell_cancel_keeps_output_and_late_updates_cannot_overwrite_next_run(self):
+        self.server.handle({"type": "shell.execute", "command": "printf ready; sleep 30"})
+        while not self.output.wait_for("tool.updated")["call"]["output"]:
+            pass
+        old_call = self.server.conversation["tool_calls"][0]
+        old_generation = self.server._generation
+        self.server.handle({"type": "chat.cancel"})
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "interrupted")
+        self.assertEqual(old_call["output"], "ready")
+        self.server.handle({"type": "shell.execute", "command": "printf next"})
+        self.server._tool_output(old_call, "late", old_generation)
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "completed")
+        self.assertEqual(old_call["output"], "ready")
+        self.assertEqual(old_call["status"], "interrupted")
+        self.assertEqual(self.server.conversation["tool_calls"][-1]["output"], "next")
+        self.assertFalse(self.server.busy)
+
+    def test_local_shell_timeout_and_history_load_do_not_execute_again(self):
+        with patch("harness.server.ShellExecutor", side_effect=lambda workdir: ShellExecutor(workdir, timeout=0.1)):
+            self.server.handle({"type": "shell.execute", "command": "printf partial; sleep 30"})
+            self.assertEqual(self.output.wait_for("shell.finished")["status"], "timeout")
+        chat_id = self.server.conversation["chat_id"]
+        with patch("harness.shell.subprocess.Popen") as spawn:
+            self.server.handle({"type": "chat.new"})
+            self.server.handle({"type": "chat.open", "chat_id": chat_id})
+            call = self.output.wait_for("chat.loaded")["chat"]["tool_calls"][0]
+            self.assertEqual(call["status"], "timeout")
+            self.assertEqual(call["output"], "partial")
+            self.assertEqual(call["source"], "local")
+            spawn.assert_not_called()
+
+    def test_complete_tool_cycle_executes_automatically_and_preserves_provider_items(self):
+        self.service.tool_preface = "Voy a consultar el directorio."
+        self.service.response_delay = 0.12
+        self.start()
+        self.assertEqual(self.finished()["status"], "completed")
+        record = self.server.history.load(self.server.conversation["chat_id"])
+        call = record["tool_calls"][0]
+        self.assertEqual(call["command"], "pwd")
+        self.assertEqual(call["workdir"], str(self.root))
+        self.assertEqual(call["output"].strip(), str(self.root))
         self.assertIn(str(self.root), record["messages"][-1]["text"])
+        events = [json.loads(line) for line in self.output.getvalue().splitlines()]
+        self.assertTrue(all(event["version"] == 2 for event in events))
+        self.assertFalse(any(event["type"].startswith("tool.approval") for event in events))
         request = self.service.requests[-1]["body"]
         self.assertFalse(request["store"])
         self.assertFalse(request["parallel_tool_calls"])
@@ -164,28 +264,30 @@ class AgentShellTests(unittest.TestCase):
         self.assertEqual(metrics["model_calls"], 2)
         self.assertEqual(metrics["tool_calls"], 1)
         self.assertEqual(metrics["usage"]["total_tokens"], 40)
-        self.assertGreaterEqual(metrics["approval_ms"], 0)
+        self.assertEqual(metrics["usage"]["input_tokens"], 24)
+        self.assertEqual(metrics["context_tokens"], 12)
+        self.assertIsNotNone(metrics["model_request_ms"])
+        self.assertGreaterEqual(metrics["model_request_ms"], 240)
+        self.assertAlmostEqual(metrics["tokens_per_second"],
+                               metrics["usage"]["output_tokens"] * 1000 / metrics["model_request_ms"], places=1)
+        self.assertEqual(metrics["approval_ms"], 0)
         self.assertGreater(metrics["tool_ms"], 0)
         self.assertIsNone(metrics["characters_per_second"])
 
-    def test_denied_command_has_no_side_effect_and_stops_model_loop(self):
-        self.service.tool_batches = [[{"command": "touch forbidden"}]]
+    def test_commands_have_no_allowlist_and_support_changes_and_pipelines(self):
+        self.service.tool_batches = [[{"command": "printf 'hello' > example; cat example | tr a-z A-Z; rm example"}]]
         self.start()
-        approval = self.output.wait_for("tool.approval")
-        self.decide(approval, False)
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "interrupted")
-        self.assertFalse((self.root / "forbidden").exists())
-        self.assertEqual(len(self.service.requests), 1)
-        self.assertEqual(self.server.conversation["tool_calls"][0]["status"], "denied")
-        self.assertEqual(json.loads(self.server.conversation["context"][-1]["output"])["status"], "denied")
+        self.assertEqual(self.finished()["status"], "completed")
+        call = self.server.conversation["tool_calls"][0]
+        self.assertEqual(call["status"], "completed")
+        self.assertEqual(call["output"], "HELLO")
+        self.assertFalse((self.root / "example").exists())
 
     def test_empty_completed_output_replays_full_stream_items_after_completion(self):
         self.service.tool_stream_items = True
         self.service.tool_preface = "Consultaré la carpeta."
         self.start()
-        approval = self.output.wait_for("tool.approval")
-        self.decide(approval)
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
+        self.assertEqual(self.finished()["status"], "completed")
         context = self.server.conversation["context"]
         self.assertEqual(sum(item.get("type") == "function_call" for item in context), 1)
         self.assertEqual(sum(item.get("type") == "function_call_output" for item in context), 1)
@@ -200,116 +302,106 @@ class AgentShellTests(unittest.TestCase):
         self.start()
         self.assertTrue(self.service.started.wait(2))
         self.server.handle({"type": "chat.cancel"})
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "interrupted")
-        self.assertIsNone(self.server._pending_approval)
+        self.assertEqual(self.finished()["status"], "interrupted")
         self.assertFalse(self.server.conversation.get("tool_calls"))
+        self.assertIsNone(self.server._shell_control._process)
 
-    def test_cancel_while_awaiting_approval_rejects_late_decision(self):
-        self.service.tool_batches = [[{"command": "touch forbidden"}]]
-        self.start()
-        approval = self.output.wait_for("tool.approval")
-        self.server.handle({"type": "chat.cancel"})
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "interrupted")
-        self.decide(approval)
-        self.assertIn("ya no", self.output.wait_for("error")["message"])
-        self.assertFalse((self.root / "forbidden").exists())
-        self.assertEqual(self.server.conversation["tool_calls"][0]["status"], "interrupted")
+    def test_cancel_before_process_creation_prevents_execution(self):
+        self.service.tool_batches = [[{"command": "touch unexpected"}]]
+        save = self.server.history.save
+        def cancel_before_start(record):
+            if any(call["status"] == "running" for call in record.get("tool_calls", [])):
+                self.server._shell_control.cancel()
+            save(record)
+        with patch.object(self.server.history, "save", side_effect=cancel_before_start):
+            self.start()
+            self.assertEqual(self.finished()["status"], "interrupted")
+        self.assertFalse((self.root / "unexpected").exists())
 
-    def test_wrong_nonce_and_non_boolean_decisions_cannot_approve(self):
-        self.start()
-        approval = self.output.wait_for("tool.approval")
-        for request in ({"request_id": "wrong", "approved": True},
-                        {"request_id": approval["request_id"], "approved": "true"}):
-            self.server.handle({"type": "tool.decide", **request})
+    def test_obsolete_decisions_do_not_spawn_a_process(self):
+        with patch("harness.shell.subprocess.Popen") as spawn:
+            self.server.handle({"type": "tool.decide", "request_id": "old-id", "approved": True})
             self.output.wait_for("error")
-            self.assertIsNone(self.server._shell_control._process)
-        self.decide(approval, False)
-        self.output.wait_for("chat.finished")
+            spawn.assert_not_called()
 
     def test_partial_tool_arguments_never_execute_before_completed_response(self):
-        self.service.tool_completion_gate = threading.Event()
+        gate = self.service.tool_completion_gate = threading.Event()
+        self.addCleanup(gate.set)
         self.start()
         self.assertTrue(self.service.started.wait(2))
-        self.assertIsNone(self.server._pending_approval)
         self.assertIsNone(self.server._shell_control._process)
-        self.service.tool_completion_gate.set()
-        self.decide(self.output.wait_for("tool.approval"))
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
+        self.assertFalse(self.server.conversation.get("tool_calls"))
+        gate.set()
+        self.assertEqual(self.finished()["status"], "completed")
 
-    def test_unknown_tool_or_permission_spoof_is_returned_as_error_without_execution(self):
-        for spec in ({"name": "other", "command": "touch forbidden"},
-                     {"arguments": json.dumps({"command": "touch forbidden", "approved": True})}):
+    def test_unknown_tool_or_extra_arguments_are_returned_as_error_without_execution(self):
+        for spec in ({"name": "other", "command": "touch unexpected"},
+                     {"arguments": json.dumps({"command": "touch unexpected", "approved": True})}):
             self.service.tool_batches = [[spec]]
             self.start()
-            self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
-            self.assertFalse((self.root / "forbidden").exists())
-            self.assertIsNone(self.server._pending_approval)
+            self.assertEqual(self.finished()["status"], "completed")
+            self.assertFalse((self.root / "unexpected").exists())
             self.assertEqual(self.server.conversation["tool_calls"][-1]["status"], "error")
 
-    def test_multiple_commands_are_approved_and_executed_sequentially(self):
+    def test_multiple_commands_execute_automatically_in_order(self):
         self.service.tool_batches = [[{"command": "printf first > state"}, {"command": "cat state"}]]
         self.start()
-        first = self.output.wait_for("tool.approval")
-        self.assertFalse((self.root / "state").exists())
-        self.decide(first)
-        second = self.output.wait_for("tool.approval")
+        self.assertEqual(self.finished()["status"], "completed")
         self.assertEqual((self.root / "state").read_text(), "first")
-        self.decide(second)
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
         self.assertEqual(self.server.conversation["tool_calls"][-1]["output"], "first")
 
     def test_step_limit_does_not_execute_excess_commands(self):
         self.service.tool_batches = [[{"command": "pwd"}]] * 9
         self.start()
-        for _ in range(7):
-            self.decide(self.output.wait_for("tool.approval"))
-        finished = self.output.wait_for("chat.finished")
+        finished = self.finished()
         self.assertEqual(finished["status"], "failed")
         self.assertIn("límite", finished["message"])
         self.assertEqual(len(self.server.conversation["tool_calls"]), 7)
 
     def test_workspace_changes_are_validated_and_blocked_during_a_turn(self):
-        self.server.handle({"type": "shell.configure", "workdir": str(self.root / "missing"), "enabled": True})
+        self.server.handle({"type": "shell.configure", "workdir": str(self.root / "missing")})
         self.output.wait_for("error")
-        self.assertFalse(self.server.shell_enabled)
+        self.assertEqual(self.server.workspace, self.root)
+        self.server.handle({"type": "shell.configure", "workdir": str(self.root), "enabled": False})
+        self.assertIn("permanece activa", self.output.wait_for("error")["message"])
+        gate = self.service.tool_completion_gate = threading.Event()
+        self.addCleanup(gate.set)
         self.start()
-        approval = self.output.wait_for("tool.approval")
-        self.server.handle({"type": "shell.configure", "workdir": "/", "enabled": False})
+        self.assertTrue(self.service.started.wait(2))
+        self.server.handle({"type": "shell.configure", "workdir": "/"})
         self.output.wait_for("error")
         self.assertEqual(self.server.workspace, self.root)
         self.assertTrue(self.server.shell_enabled)
-        self.decide(approval, False)
-        self.output.wait_for("chat.finished")
+        gate.set()
+        self.assertEqual(self.finished()["status"], "completed")
 
     def test_cancel_running_shell_keeps_output_and_allows_new_turn(self):
         self.service.tool_batches = [[{"command": "printf partial; sleep 30"}]]
         self.start()
-        self.decide(self.output.wait_for("tool.approval"))
         while True:
             call = self.output.wait_for("tool.updated")["call"]
             if call["status"] == "running" and call["output"]:
                 break
         self.server.handle({"type": "chat.cancel"})
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "interrupted")
+        self.assertEqual(self.finished()["status"], "interrupted")
         record = self.server.history.load(self.server.conversation["chat_id"])
         self.assertEqual(record["tool_calls"][0]["output"], "partial")
         self.assertEqual(record["tool_calls"][0]["status"], "interrupted")
         self.server.handle({"type": "chat.send", "prompt": "hola"})
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
+        self.assertEqual(self.finished()["status"], "completed")
         self.assertEqual(self.server.conversation["tool_calls"][0]["output"], "partial")
 
-    def test_shell_is_off_by_default_and_plain_text_does_not_execute(self):
-        self.assertFalse(self.server.shell_enabled)
-        self.server.handle({"type": "chat.send", "prompt": "shell-pwd"})
-        self.assertEqual(self.output.wait_for("chat.finished")["status"], "completed")
-        self.assertNotIn("tools", self.service.requests[-1]["body"])
-        self.assertNotIn("tool_calls", self.server.conversation)
+    def test_shell_is_always_available_and_conversation_needs_no_command(self):
+        self.assertTrue(self.server.shell_enabled)
+        self.server.handle({"type": "chat.send", "prompt": "hola"})
+        self.assertEqual(self.finished()["status"], "completed")
+        self.assertEqual(self.service.requests[-1]["body"]["tools"][0]["name"], "shell")
+        self.assertFalse(self.server.conversation.get("tool_calls"))
         self.assertIsNone(self.server._shell_control._process)
 
-    def test_completed_context_survives_new_backend_and_can_continue_without_tools(self):
+    def test_completed_context_survives_restart_with_shell_still_available(self):
         self.start()
-        self.decide(self.output.wait_for("tool.approval"))
-        self.output.wait_for("chat.finished")
+        self.finished()
         record = self.server.history.load(self.server.conversation["chat_id"])
         output = QueueOutput()
         restarted = HarnessServer(self.root / "chats", output, self.session, self.server.client, workspace=self.root)
@@ -320,7 +412,7 @@ class AgentShellTests(unittest.TestCase):
         restarted.handle({"type": "chat.send", "prompt": "continúa"})
         self.assertEqual(output.wait_for("chat.finished")["status"], "completed")
         request = self.service.requests[-1]["body"]
-        self.assertEqual(request["tools"], [])
+        self.assertEqual(request["tools"][0]["name"], "shell")
         self.assertTrue(any(item.get("type") == "function_call_output" for item in request["input"]))
         self.assertEqual(len(restarted.conversation["tool_calls"]), 1)
 
@@ -332,26 +424,33 @@ class AgentShellTests(unittest.TestCase):
         self.assertNotIn("private reasoning", str(items))
         self.assertEqual(items[0]["encrypted_content"], "opaque")
 
-    def test_persistence_failure_after_approval_prevents_execution(self):
-        self.service.tool_batches = [[{"command": "touch forbidden"}]]
-        self.start()
-        approval = self.output.wait_for("tool.approval")
-        with patch.object(self.server.history, "save", side_effect=OSError("disk full")):
-            self.decide(approval)
-            self.assertEqual(self.output.wait_for("chat.finished")["status"], "failed")
-        self.assertFalse((self.root / "forbidden").exists())
+    def test_persistence_failure_before_execution_prevents_process_creation(self):
+        self.service.tool_batches = [[{"command": "touch unexpected"}]]
+        save = self.server.history.save
+        def fail_before_start(record):
+            if any(call["status"] == "running" for call in record.get("tool_calls", [])):
+                raise OSError("disk full")
+            save(record)
+        with patch.object(self.server.history, "save", side_effect=fail_before_start):
+            self.start()
+            self.assertEqual(self.finished()["status"], "failed")
+        self.assertFalse((self.root / "unexpected").exists())
 
-    def test_recovered_pending_calls_are_interrupted_and_never_reexecuted(self):
-        self.service.tool_batches = [[{"command": "touch forbidden"}]]
+    def test_recovered_running_calls_are_interrupted_and_never_reexecuted(self):
         self.start()
-        self.output.wait_for("tool.approval")
-        saved_id = self.server.conversation["chat_id"]
+        self.finished()
+        record = self.server.history.load(self.server.conversation["chat_id"])
+        call = record["tool_calls"][0]
+        call.update(status="running", output="", exit_code=None)
+        record["context"] = [item for item in record["context"]
+                             if item.get("type") != "function_call_output"]
+        self.server.history.save(record)
         output = QueueOutput()
         restarted = HarnessServer(self.root / "chats", output, self.session, self.server.client, workspace=self.root)
-        restarted.handle({"type": "chat.open", "chat_id": saved_id})
-        loaded = output.wait_for("chat.loaded")["chat"]
+        with patch("harness.server.ShellExecutor.execute") as execute:
+            restarted.handle({"type": "chat.open", "chat_id": record["chat_id"]})
+            loaded = output.wait_for("chat.loaded")["chat"]
+            execute.assert_not_called()
         self.assertEqual(loaded["tool_calls"][0]["status"], "interrupted")
-        self.assertFalse((self.root / "forbidden").exists())
-        self.assertFalse(restarted.shell_enabled)
-        self.assertIsNone(restarted._pending_approval)
+        self.assertTrue(restarted.shell_enabled)
         self.assertEqual(json.loads(restarted.conversation["context"][-1]["output"])["status"], "interrupted")

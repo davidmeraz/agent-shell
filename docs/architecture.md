@@ -6,14 +6,14 @@ OpenAI. Quickshell inicia únicamente el backend Python; no hay proceso de Codex
 ```mermaid
 flowchart LR
     Qt[Chat Qt Quick] --> Bridge[AgentBridge]
-    Bridge -->|NDJSON v1| Python[HarnessServer]
+    Bridge -->|NDJSON v2| Python[HarnessServer]
     Python --> Session[Sesión OAuth local]
     Python --> Client[Cliente ChatGPT]
     Session -->|OAuth y claves públicas| Auth[auth.openai.com]
     Client -->|HTTPS y SSE| API[Responses API con permiso de plan]
     API -->|Fragmentos de texto| Client
     Python --> History[Historial JSON local]
-    Python -->|Llamada validada y aprobada| Shell[Ejecutor local de shell]
+    Python -->|Comando validado, ejecución automática| Shell[Ejecutor local de shell]
     Shell -->|Salida y estado| Python
 ```
 
@@ -27,7 +27,8 @@ flowchart LR
   abre sus paneles y `MessageComposer` ofrece sugerencias en la fila de envío,
   dentro de un espacio reservado de altura fija para evitar desplazar el chat.
   `/modelos` filtra modelos de la cuenta y confirma su selección localmente;
-  el editor no incluye un selector de modelos adicional.
+  el editor no incluye un selector de modelos adicional. `/shell comando` envía
+  `shell.execute` para ejecutar directamente sin solicitar una respuesta de IA.
 - `HarnessServer`: valida instrucciones, construye contexto local, coordina
   operaciones en trabajadores y emite el contrato NDJSON.
 - `ChatGPTSession`: registro dinámico de cliente, callback loopback, validación
@@ -35,10 +36,11 @@ flowchart LR
 - `HttpClient`: HTTPS verificado sin redirecciones automáticas, errores sin
   diagnósticos privados, lectura SSE y cierre de sockets al cancelar.
 - `ChatGPTClient`: descubre modelos de la cuenta y solicita respuestas.
-- `ShellExecutor`: ejecuta comandos aprobados, acota la salida y termina grupos de procesos.
+- `ShellExecutor`: ejecuta automáticamente comandos validados, acota la salida y termina grupos de procesos.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
-- `TurnPerformance`: reloj monotónico, etapas del turno, conteos y uso reportado por OpenAI.
+- `TurnPerformance`: reloj monotónico, etapas del turno, contexto de la última llamada,
+  conteos acumulados y velocidad en tokens basada en uso reportado y tiempo HTTP por solicitud.
 - `Performance.js`: formato de métricas y estadísticas por modelo en Qt.
 - `EventEmitter`: secuencia global y escritura serializada entre trabajadores.
 
@@ -81,8 +83,12 @@ Se muestran entradas con `visibility: list`, se conserva su orden y se envía el
 
 Cada turno envía instrucciones y los mensajes locales mediante
 `POST https://api.openai.com/v1/responses`, con `store: false` y `stream: true`.
-Con Terminal activada se anuncia la función `shell`; el backend espera confirmación
-antes de ejecutarla y devuelve el resultado con su `call_id` para continuar.
+La función `shell` se anuncia en todas las solicitudes. Tras recibir una llamada
+completa y validada, el backend la guarda y ejecuta automáticamente, devolviendo
+el resultado con su `call_id` para continuar. La IA confirma brevemente comandos
+simples sin duplicar la salida de la tarjeta, o interpreta los resultados cuando
+la tarea requiere análisis. `/shell` utiliza el mismo ejecutor sin inferencia;
+sus resultados se conservan localmente y no entran en el contexto del modelo.
 Los fragmentos y el texto final se reconcilian por
 item y parte de contenido. Sólo `response.completed` con estado confirmado
 marca el final de una solicitud al modelo. Si contiene herramientas, el turno
@@ -105,12 +111,13 @@ Los eventos de rendimiento durante streaming se agrupan cada 250 ms sin añadir
 escrituras por fragmento. El panel consulta como máximo 200 turnos de archivos locales.
 Las definiciones y límites se describen en [rendimiento](performance.md).
 
-El primer mensaje crea el chat y se guarda antes de solicitar inferencia. El
+El primer mensaje o comando directo crea el chat y se guarda antes de inferencia
+o ejecución. El
 streaming actualiza Qt antes del guardado y agrupa escrituras cada medio segundo.
 Al terminar, cancelar o recibir SIGTERM se guarda el estado final y el texto pendiente.
 
 Cancelar cierra el socket de streaming y marca inmediatamente el turno como
-interrumpido, cerrando también la aprobación y el grupo de shell activo.
+interrumpido, terminando también el grupo de shell activo.
 Una generación impide que eventos tardíos contaminen el siguiente
 turno. El backend sigue disponible después de errores de red para reintentar.
 Cerrar stdin o SIGTERM cancela operaciones; los trabajadores de red tienen timeout.
@@ -121,6 +128,6 @@ La prueba Qt usa un backend real con cuenta de prueba y servicio HTTP local.
 El usuario confirmó la autenticación real desde el escritorio. También se verificó
 una respuesta real con el backend y la sesión propia de Agent Shell, hasta recibir
 texto y `response.completed`.
-La integración de shell también se comprobó con la sesión real: solicitud de
+En `0.7.0`, la integración de shell también se comprobó con la sesión real: solicitud de
 `pwd`, ejecución aprobada en una carpeta temporal y respuesta basada en su salida,
 seguida de continuación desde ese contexto con la terminal desactivada.

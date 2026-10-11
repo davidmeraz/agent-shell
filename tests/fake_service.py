@@ -17,6 +17,7 @@ class FakeService:
         self.tool_completion_gate = None
         self.tool_preface = ""
         self.tool_stream_items = False
+        self.response_delay = 0.0
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -37,6 +38,8 @@ class FakeService:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fixture.requests.append({"path": self.path, "body": body,
                                          "authorization": self.headers.get("Authorization")})
+                if fixture.response_delay:
+                    time.sleep(fixture.response_delay)
                 self.send_response(200)
                 if fixture.stream_content_type is not None:
                     self.send_header("Content-Type", fixture.stream_content_type)

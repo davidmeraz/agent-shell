@@ -6,21 +6,18 @@ import ".."
 GlassDialog {
     id: dialog
     required property AgentBridge bridge
-    property bool enabledDraft: false
     title: "Terminal"
     modal: true
     onOpened: {
-        enabledDraft = bridge.shellEnabled;
         directory.text = bridge.workspace;
     }
     contentItem: ColumnLayout {
         spacing: 12
-        ActionButton {
+        Text {
             Layout.fillWidth: true
-            text: dialog.enabledDraft ? "Terminal activada" : "Activar terminal"
-            accent: dialog.enabledDraft
-            enabled: dialog.bridge.ready && !dialog.bridge.busy && !dialog.bridge.loginBusy
-            onClicked: dialog.enabledDraft = !dialog.enabledDraft
+            text: "Siempre disponible · ejecución automática"
+            color: "#cccccc"
+            font.pixelSize: 12
         }
         Text { text: "Directorio de trabajo"; color: "#ffffff"; font.pixelSize: 12 }
         GlassPanel {
@@ -43,8 +40,9 @@ GlassDialog {
         }
         Text {
             Layout.fillWidth: true
-            text: "Cada comando te pedirá confirmación y tendrá un máximo de " + dialog.bridge.shellTimeout
-                  + " segundos. Los comandos corren con los permisos de tu usuario; su salida se envía a ChatGPT."
+            text: "La IA usa la terminal cuando la tarea lo requiere. Los comandos se ejecutan sin confirmación "
+                  + "con los permisos de tu usuario; su salida se envía a ChatGPT. Máximo "
+                  + dialog.bridge.shellTimeout + " segundos por comando."
             color: "#bbbbbb"
             font.pixelSize: 12
             wrapMode: Text.Wrap
@@ -60,5 +58,5 @@ GlassDialog {
             DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
         }
     }
-    onAccepted: bridge.configureShell(directory.text.trim(), enabledDraft)
+    onAccepted: bridge.configureShell(directory.text.trim())
 }

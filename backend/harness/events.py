@@ -18,7 +18,7 @@ class EventEmitter:
         with self._lock:
             self._sequence += 1
             event = {
-                "version": 1,
+                "version": 2,
                 "seq": self._sequence,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "type": event_type,

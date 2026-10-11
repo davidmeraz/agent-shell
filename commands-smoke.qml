@@ -62,15 +62,47 @@ ShellRoot {
                     if (!scenario.check(!!scenario.prompt && !!scenario.menu && !!scenario.list, "controles ausentes")) return;
                     if (!scenario.check(!!scenario.activeModel && scenario.activeModel.visible
                         && scenario.activeModel.text === "Modelo de prueba", "modelo activo ausente o incorrecto")) return;
+                    const status = inspector.findChild(chat, "chatComposerStatus");
+                    if (!scenario.check(!!status && status.visible && status.text === agent.status
+                        && status.x > scenario.activeModel.x + scenario.activeModel.width,
+                        "estado ausente o superpuesto al modelo")) return;
                     if (!scenario.check(!inspector.findChild(chat, "chatModelSelector"), "el editor conserva el selector de modelo")) return;
+                    const drawer = inspector.findChild(chat, "chatSidebarDrawer");
+                    const edge = inspector.findChild(chat, "chatSidebarEdge");
+                    const sidebar = inspector.findChild(chat, "chatSidebar");
+                    if (!scenario.check(!!edge && !drawer.visible && !inspector.findChild(chat, "chatSidebarToggle"),
+                        "zona lateral ausente o botón anterior presente")) return;
                     scenario.initialLayout = { height: scenario.composer.height,
                         y: scenario.composer.mapToItem(chat.contentItem, 0, 0).y,
                         conversationHeight: scenario.conversation.height };
                     chat.contentItem.Window.window.requestActivate();
+                    inspector.mouseMove(chat.contentItem, chat.width / 2, chat.height / 2);
+                    inspector.mouseMove(edge, 2, edge.height / 2);
+                    inspector.wait(80);
+                    if (!scenario.check(!drawer.visible, "pasar rápidamente abre el panel")) return;
+                    inspector.wait(350);
+                    if (!scenario.check(drawer.visible, "el borde no abre el panel compacto")) return;
+                    inspector.mouseMove(sidebar, 20, 20); inspector.wait(500);
+                    if (!scenario.check(drawer.visible, "panel se cierra mientras se recorren sus controles")) return;
+                    if (!scenario.checkLayout()) return;
+                    inspector.mouseMove(chat.contentItem, chat.width - 40, chat.height / 2); inspector.wait(100);
+                    if (!scenario.check(drawer.visible, "panel se cierra inmediatamente al salir")) return;
+                    inspector.mouseMove(sidebar, 20, 20); inspector.wait(450);
+                    if (!scenario.check(drawer.visible, "volver al panel no cancela el cierre")) return;
+                    inspector.mouseMove(chat.contentItem, chat.width - 40, chat.height / 2); inspector.wait(700);
+                    inspector.tryCompare(drawer, "visible", false, 500);
+                    if (!scenario.check(!drawer.visible && agent.messages.count === 0, "salir no cierra el panel o altera el chat")) return;
+                    if (!scenario.checkLayout()) return;
+                    scenario.prompt.forceActiveFocus();
+                    inspector.keyClick(Qt.Key_B, Qt.ControlModifier); inspector.wait(700);
+                    if (!scenario.check(drawer.visible, "Ctrl+B no mantiene abierto el panel para navegar")) return;
+                    inspector.keyClick(Qt.Key_Escape); inspector.wait(250);
+                    inspector.tryCompare(drawer, "visible", false, 500);
+                    if (!scenario.check(!drawer.visible, "Esc no cierra el panel")) return;
                     scenario.prompt.forceActiveFocus(); scenario.prompt.text = "/";
                     scenario.stage = 1;
                 } else if (scenario.stage === 1) {
-                    if (!scenario.check(scenario.menu.visible && scenario.menu.height <= 28 && scenario.list.count === 6, "sugerencias no compactas o incompletas")) return;
+                    if (!scenario.check(scenario.menu.visible && scenario.menu.height <= 28 && scenario.list.count === 7, "sugerencias no compactas o incompletas")) return;
                     if (!scenario.checkLayout()) return;
                     if (!scenario.check(!scenario.activeModel.visible, "modelo activo se superpone a sugerencias")) return;
                     const actions = inspector.findChild(chat, "chatComposerActions");
@@ -81,7 +113,7 @@ ShellRoot {
                     inspector.wait(20);
                     if (!scenario.check(scenario.list.itemAtIndex(3).modelData.label === "/modelos", "nombre de comando incorrecto")) return;
                     inspector.keyClick(Qt.Key_Left);
-                    if (!scenario.check(scenario.list.currentIndex === 5, "flecha izquierda no recorre el menú")) return;
+                    if (!scenario.check(scenario.list.currentIndex === 6, "flecha izquierda no recorre el menú")) return;
                     inspector.keyClick(Qt.Key_Right);
                     if (!scenario.check(scenario.list.currentIndex === 0, "flecha derecha no vuelve al inicio")) return;
                     inspector.keyClick(Qt.Key_Right);
@@ -100,6 +132,10 @@ ShellRoot {
                     scenario.typeCommand("/ayu");
                     const help = inspector.findChild(chat, "commandHelp");
                     if (!scenario.check(help.visible && scenario.prompt.text === "" && !agent.messages.count && !agent.currentChatId && !agent.performanceHistory.length, "ayuda enviada al modelo o no abierta")) return;
+                    inspector.mouseMove(chat.contentItem, 2, chat.height / 2); inspector.wait(200);
+                    if (!scenario.check(!inspector.findChild(chat, "chatSidebarDrawer").visible,
+                        "el borde abre el panel sobre un diálogo")) return;
+                    inspector.mouseMove(chat.contentItem, chat.width - 40, chat.height / 2);
                     help.close();
                     scenario.typeCommand("/desconocido");
                     if (!scenario.check(scenario.prompt.text === "/desconocido" && agent.status.indexOf("desconocido") >= 0 && !agent.messages.count, "comando desconocido perdido o enviado")) return;
@@ -116,7 +152,8 @@ ShellRoot {
                     history.close();
                     scenario.typeCommand("/terminal");
                     const settings = inspector.findChild(chat, "shellSettings");
-                    if (!scenario.check(settings.visible && !agent.shellEnabled && !agent.pendingTool.request_id && !agent.busy, "terminal ejecutó o se activó automáticamente")) return;
+                    if (!scenario.check(settings.visible && agent.shellEnabled && !agent.busy,
+                        "terminal no está disponible o abrir configuración ejecutó un comando")) return;
                     settings.close();
                     inspector.wait(180);
                     scenario.prompt.forceActiveFocus();
@@ -211,6 +248,9 @@ ShellRoot {
                     if (agent.busy) return;
                     if (!scenario.check(agent.messages.count === 2 && agent.messages.get(1).body === "Hola desde ChatGPT. 🎵"
                         && agent.performanceHistory.length === 2 && scenario.prompt.text === "", "envío normal o métricas alterados")) return;
+                    const status = inspector.findChild(chat, "chatComposerStatus");
+                    if (!scenario.check(status.visible && status.text === "Respuesta completada.",
+                        "el estado junto al modelo no se actualiza al terminar")) return;
                     const account = inspector.findChild(chat, "chatAccount");
                     const picker = inspector.findChild(chat, "chatAccountSelector");
                     const add = inspector.findChild(chat, "chatAddAccount");
@@ -232,8 +272,32 @@ ShellRoot {
                     if (!scenario.check(agent.canSend && agent.messages.count === 2 && agent.registeredAccounts.count === 2,
                         "selección de cuenta no actualiza modelos o conserva chat")) return;
                     if (!scenario.check(agent.email === "second@example.invalid", "correo no corresponde a cuenta seleccionada")) return;
-                    console.log("COMMANDS_OK: sugerencias fijas, activación al completar /modelos, filtro, teclado, seis comandos y borradores");
+                    inspector.findChild(chat, "chatAccount").close(); inspector.wait(180);
+                    chat.contentItem.Window.window.width = 1040;
+                    scenario.stage = 10;
+                } else if (scenario.stage === 10) {
+                    if (!chat.wideLayout) return;
+                    const sidebar = inspector.findChild(chat, "chatSidebar");
+                    const drawer = inspector.findChild(chat, "chatSidebarDrawer");
+                    const edge = inspector.findChild(chat, "chatSidebarEdge");
+                    const before = scenario.composer.mapToItem(chat.contentItem, 0, 0);
+                    const beforeWidth = scenario.composer.width;
+                    scenario.prompt.text = "borrador conservado";
+                    inspector.mouseMove(edge, 2, edge.height / 2); inspector.wait(450);
+                    inspector.mouseMove(sidebar, 20, 20); inspector.wait(100);
+                    if (!scenario.check(drawer.visible && agent.messages.count === 2,
+                        "el borde no abre el panel grande o altera la conversación")) return;
+                    const after = scenario.composer.mapToItem(chat.contentItem, 0, 0);
+                    if (!scenario.check(Math.abs(after.x - before.x) < 0.5 && Math.abs(after.y - before.y) < 0.5
+                        && Math.abs(scenario.composer.width - beforeWidth) < 0.5,
+                        "abrir el panel desplaza o estrecha el editor")) return;
+                    inspector.mouseMove(chat.contentItem, chat.width - 40, chat.height / 2); inspector.wait(700);
+                    inspector.tryCompare(drawer, "visible", false, 500);
+                    if (!scenario.check(!drawer.visible && scenario.prompt.text === "borrador conservado",
+                        "panel grande no se oculta o pierde el borrador")) return;
+                    console.log("COMMANDS_OK: sugerencias fijas, activación al completar /modelos, filtro, teclado, siete comandos y borradores");
                     console.log("ACCOUNT_OK: cuenta nueva y selector sin navegador, con chat conservado");
+                    console.log("SIDEBAR_OK: borde sin botón, esperas, retorno del puntero, teclado, diálogos y chat estable en ventanas grandes y pequeñas");
                     steps.stop(); Qt.callLater(Qt.quit);
                 }
             } finally { scenario.stepping = false; }

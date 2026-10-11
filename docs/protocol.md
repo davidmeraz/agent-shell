@@ -1,4 +1,4 @@
-# Protocolo de interfaz NDJSON v1
+# Protocolo de interfaz NDJSON v2
 
 Contrato UTF-8 entre Qt y Python, con un objeto por línea y terminador `\n`.
 Límite de línea de entrada Qt → Python: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
@@ -13,18 +13,21 @@ comando, sin activar la selección. El editor no tiene selector de modelos.
 Confirmar un modelo usa `model.select` con un slug validado del catálogo.
 Aplicar configuración de terminal usa las instrucciones
 existentes; ningún comando con `/` se traduce a `chat.send`.
+`/shell comando` usa `shell.execute` con el texto de la orden, conservando comillas,
+tuberías, saltos de línea y espacios finales. Completar el nombre prepara el
+argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un aviso.
 
 ## Instrucciones Qt → Python
 
 | Tipo | Campos | Acción |
 | --- | --- | --- |
 | `chat.send` | `prompt` | Solicitar respuesta con los mensajes locales |
-| `chat.cancel` | Ninguno | Cerrar streaming y conservar el texto parcial |
+| `chat.cancel` | Ninguno | Cerrar streaming o detener shell local; conservar el texto y la salida parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
 | `chat.open` | `chat_id` | Cargar conversación local |
 | `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
-| `shell.configure` | `enabled` booleano, `workdir` | Activar/desactivar shell y validar el directorio local, sólo fuera de un turno |
-| `tool.decide` | `request_id`, `approved` booleano | Aprobar o rechazar únicamente la solicitud pendiente del turno actual |
+| `shell.configure` | `workdir` | Validar y cambiar el directorio local, sólo fuera de un turno; la terminal permanece disponible |
+| `shell.execute` | `command`: entre 1 y 8000 caracteres, sin NUL | Ejecutar directamente en el directorio configurado, sin autenticación ni modelo |
 | `history.list` | Ninguno | Consultar conversaciones recientes |
 | `auth.login` | `new_account` booleano opcional, por defecto `false` | Reautorizar la cuenta seleccionada o registrar otra |
 | `auth.select` | `account_id` del registro guardado | Activar otra cuenta y actualizar modelos |
@@ -35,7 +38,7 @@ existentes; ningún comando con `/` se traduce a `chat.send`.
 | `performance.list` | Ninguno | Consultar los últimos 200 turnos medidos de todos los chats, sin llamadas a OpenAI |
 | `performance.presented` | `turn_id`, `first_visible_ms`, `ui_frame_ms` | Confirmar la aproximación de presentación del primer texto en Qt |
 
-Sólo una respuesta o operación de cuenta a la vez. El historial puede leerse sin
+Sólo una respuesta, ejecución local u operación de cuenta a la vez. El historial puede leerse sin
 autenticación y mientras se descubre el catálogo. Cambiar de chat se rechaza
 durante respuesta o login, al igual que borrar conversaciones. Cerrar stdin cancela operaciones y cierra el backend.
 
@@ -49,7 +52,7 @@ actual. El borrado funciona sin sesión y no hace llamadas a OpenAI.
 
 ## Eventos Python → Qt
 
-Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
+Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 `type`, `run_id: null` y `data`. La secuencia se serializa entre trabajadores.
 
 | Tipo | Datos |
@@ -71,10 +74,11 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.saved` | `chat_id`, `title` |
 | `chat.loaded` | `chat`: registro visible con mensajes, métricas y herramientas; excluye `context` |
 | `chat.deleted` | `chat_id` de la conversación local eliminada |
-| `shell.state` | `enabled`, `workdir` absoluto, `timeout_seconds` |
-| `tool.approval` | `request_id` generado por el backend, `call`, `timeout_seconds` |
-| `tool.approval.resolved` | `request_id` de la decisión recibida |
-| `tool.updated` | `call`: id local, call_id del proveedor, turn_id, command, workdir, status, output, exit_code, truncated, message_index y duration_ms si terminó |
+| `shell.state` | `enabled: true`, `workdir` absoluto, `timeout_seconds` |
+| `shell.started` | `turn_id` de la ejecución local |
+| `shell.finished` | `turn_id`, `status: completed/error/timeout/interrupted`, `message` |
+| `shell.rejected` | `message`: petición local inválida, ocupada o que no pudo guardarse; no altera la ejecución activa |
+| `tool.updated` | `call`: id local, call_id del proveedor o local, turn_id, command, workdir, status, output, exit_code, truncated, message_index y duration_ms si terminó; source opcional `local` para `/shell` |
 | `chat.delta` | `item_id`, `text` que amplía el mensaje, `turn_id` |
 | `chat.message` | `item_id`, `text` final que reemplaza fragmentos, `turn_id` |
 | `chat.finished` | `status: completed/failed/interrupted`, `message`, `turn_id` |
@@ -87,6 +91,13 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 no sólo una identidad verificada. `plan` queda vacío si no hay información
 verificada sobre su nombre. Enviar requiere además un modelo disponible.
 Una actualización fallida no cierra el backend ni elimina los mensajes.
+`shell.execute` funciona sin autenticación ni catálogo de modelos. Guarda la
+llamada antes de iniciar el proceso y publica salida mediante `tool.updated`.
+Usa los límites y la cancelación del ejecutor compartido. No emite `chat.busy`,
+mensajes de IA ni `performance.updated`, y no hace peticiones al proveedor.
+Los resultados con `source: local` se conservan sólo en `tool_calls`; no se añaden
+al `context` de Responses. Si no hay conversación, crea una titulada con `/shell`
+y el comando. Abrir ese historial restaura tarjetas sin ejecutar sus órdenes.
 
 `accounts` contiene `{id, label, email, active}` por registro verificado; nunca
 tokens ni clientes OAuth. `id` es estable, opaco y válido para `auth.select`.
@@ -105,7 +116,13 @@ El registro del chat tiene un array opcional `performance`, compatible con los
 chats anteriores. Las instantáneas contienen identidad del turno, modelo, fecha,
 estado, tiempos en milisegundos, caracteres, contexto y uso de tokens disponible.
 Un campo desconocido es `null`; no se transforma en cero. Las definiciones exactas
-de cada campo están en [rendimiento](performance.md).
+de cada campo están en [rendimiento](performance.md). Los campos opcionales
+`context_tokens`, `model_request_ms` y `tokens_per_second` añaden el contexto de
+la última llamada y la velocidad media observada en tokens. La velocidad requiere
+un turno completado y tiempos/conteos conocidos para todas sus llamadas; excluye
+ejecución de shell y no sustituye `usage`, que conserva el consumo acumulado.
+Los registros anteriores presentan esos campos como `null`. Es una ampliación
+compatible del protocolo v2 y del historial con esquema 1.
 
 `chat.loaded.chat.tool_calls` conserva los comandos y sus resultados visibles.
 `message_index` ubica cada tarjeta antes del mensaje de ese índice. Los estados
@@ -114,11 +131,12 @@ Una llamada pendiente recuperada se marca como interrumpida sin ejecutarla.
 El `context` opcional del JSON contiene elementos de Responses y razonamiento
 cifrado para continuar; se excluye de `chat.loaded` y de todos los eventos Qt.
 
-Una aprobación no pertenece al modelo: el backend valida el id, booleano y turno
-antes de liberar la ejecución. **Esc** rechaza en Qt. `chat.cancel` cierra la
-aprobación y termina el grupo del proceso activo, además del streaming HTTP.
-La terminal comienza desactivada; configurarla no inicia procesos ni solicitudes
-al modelo. Sus límites se documentan en [terminal](terminal.md).
+La herramienta shell se anuncia en todas las respuestas y se usa cuando la tarea
+lo requiere. Las llamadas estructuradas válidas se ejecutan automáticamente, sin
+decisiones de aprobación ni filtros de comandos. Se guardan antes de crear el
+proceso y se publican mediante `tool.updated`. `chat.cancel` termina el grupo del
+proceso activo, además del streaming HTTP. Cambiar el directorio no inicia procesos
+ni solicitudes al modelo. Sus límites se documentan en [terminal](terminal.md).
 
 `performance.presented` sólo se acepta para el turno actual con texto recibido,
 con tiempos finitos y no negativos, `ui_frame_ms <= first_visible_ms` y un límite
@@ -127,7 +145,10 @@ guardar el dato de Qt. Los identificadores de turnos anteriores se ignoran.
 `performance.list` funciona sin sesión y durante una respuesta; se lee en un
 trabajador y la medición activa se toma de memoria para evitar datos atrasados.
 
-El formato de eventos sigue en v1. Los eventos y campos nuevos son aditivos.
+El protocolo v2 elimina `tool.decide`, `tool.approval` y `tool.approval.resolved`.
+`shell.configure` deja de permitir desactivar la herramienta y sólo configura
+el directorio. Backend e interfaz deben actualizarse juntos. El historial mantiene
+`schema_version: 1`, incluidos los resultados y estados de versiones anteriores.
 En 0.3.0 cambian el proveedor de backend.ready y el significado de thread_id:
 identifica una conversación local y ya no un thread de Codex. Los cambios de
 opciones CLI se documentan en el README y en el historial de cambios.

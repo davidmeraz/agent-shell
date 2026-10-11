@@ -51,6 +51,8 @@ ShellRoot {
             } else if (event.type === "chat.loaded" && test.stage === 5) {
                 if (agent.messages.count !== 4 || !agent.historyDirectory
                     || agent.currentChatId !== test.savedChatId
+                    || agent.latestPerformance.chat_id !== test.savedChatId
+                    || agent.latestPerformance.turn_id !== event.data.chat.performance[event.data.chat.performance.length - 1].turn_id
                     || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵") {
                     test.fail("historial no restaurado");
                 } else {
@@ -94,19 +96,12 @@ ShellRoot {
                     test.fail("mediciones borradas reaparecen");
                 else {
                     test.stage = 9;
-                    agent.configureShell(agent.workspace, true);
+                    agent.configureShell(agent.workspace);
                 }
             } else if (event.type === "shell.state" && test.stage === 9) {
                 if (!agent.shellEnabled || !agent.workspace) { test.fail("terminal no activada"); return; }
-                test.stage = 10;
-                agent.submit("shell-pwd");
-            } else if (event.type === "tool.approval" && test.stage === 10) {
-                if (agent.pendingTool.call.command !== "pwd" || agent.pendingTool.call.workdir !== agent.workspace) {
-                    test.fail("comando o directorio de confirmación incorrecto"); return;
-                }
                 test.stage = 11;
-                // Sólo el comando exacto pwd del servicio local de prueba está autorizado.
-                agent.decideTool(true);
+                agent.submit("shell-pwd");
             } else if (event.type === "chat.finished" && test.stage === 11) {
                 if (event.data.status !== "completed" || agent.messages.count !== 3
                     || !agent.messages.get(1).toolJson || agent.messages.get(2).body.indexOf(agent.workspace) < 0
@@ -122,19 +117,20 @@ ShellRoot {
                 test.stage = 13;
                 agent.openChat(test.savedChatId);
             } else if (event.type === "chat.loaded" && test.stage === 13) {
-                if (agent.messages.count !== 3 || JSON.parse(agent.messages.get(1).toolJson).status !== "completed"
-                    || agent.pendingTool.request_id) { test.fail("shell no restaurada o aprobación reabierta"); return; }
+                if (agent.messages.count !== 3 || JSON.parse(agent.messages.get(1).toolJson).status !== "completed") {
+                    test.fail("shell no restaurada"); return;
+                }
                 test.stage = 14;
-                agent.configureShell(agent.workspace, false);
+                agent.configureShell(agent.workspace);
             } else if (event.type === "shell.state" && test.stage === 14) {
-                if (agent.shellEnabled) { test.fail("terminal no desactivada"); return; }
+                if (!agent.shellEnabled) { test.fail("terminal dejó de estar disponible"); return; }
                 test.stage = 15;
                 agent.submit("continúa");
             } else if (event.type === "chat.finished" && test.stage === 15) {
-                if (event.data.status !== "completed" || agent.messages.count !== 5 || agent.pendingTool.request_id)
+                if (event.data.status !== "completed" || agent.messages.count !== 5)
                     test.fail("continuación tras shell incorrecta");
                 else {
-                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial, rendimiento, borrado y shell con confirmación y recuperación");
+                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial, rendimiento, borrado y shell automática con recuperación");
                     Qt.quit();
                 }
             } else if (event.type === "error" || event.type === "backend.disconnected") {
