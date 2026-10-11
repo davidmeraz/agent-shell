@@ -4,8 +4,8 @@ Aplicación de chat para Linux con **Quickshell y Qt Quick**, sesión propia de
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.4.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0`, `v0.2.0` y `v0.3.0` conservan las versiones anteriores.
+**Versión: 0.5.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0`, `v0.2.0`, `v0.3.0` y `v0.4.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -28,10 +28,28 @@ Usa **Enter** para enviar, **Shift+Enter** para un salto de línea, **Detener** 
 interrumpir y **Nuevo chat** para otra conversación. Los mensajes se pueden copiar
 y seleccionar; actualmente se presentan como texto sin formato Markdown.
 
-**Administrar uso** abre los ajustes de ChatGPT. **Actualizar** renueva el
-catálogo y consulta la sesión local. **Salir** cierra la sesión de Agent Shell e
+**Cuenta** reúne los controles de sesión. **Administrar uso del plan** abre los
+ajustes de ChatGPT. **Actualizar cuenta** renueva el catálogo y consulta la sesión
+local. **Salir** cierra la sesión de Agent Shell e
 intenta revocarla en OpenAI; si la revocación no se confirma, se informa para que
 puedas desconectar la aplicación desde los ajustes de ChatGPT.
+
+## Apariencia
+
+En ventanas amplias, la barra lateral reúne los chats, rendimiento y cuenta.
+En ventanas pequeñas, esos accesos pasan a una barra superior. El centro muestra
+la conversación y el editor inferior integra el selector de modelo y el envío.
+El botón junto al título permite ocultar y mostrar la barra lateral. En ventanas
+pequeñas la abre como un panel superpuesto, que puedes cerrar con **Cerrar** o **Esc**.
+Las sugerencias de bienvenida preparan un mensaje que puedes editar antes de enviar.
+
+La interfaz usa vidrio transparente con un tinte oscuro ligero, bordes de un píxel
+y reflejos suaves. El fondo principal tiene entre un 25 y un 32 % de opacidad para
+dejar visible el escritorio. El campo de mensaje y los controles resaltan el foco
+con un borde verde.
+El fondo solicita [desenfoque nativo de Quickshell](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/BackgroundEffect/)
+en compositores compatibles con `ext-background-effect-v1`, como Hyprland reciente.
+Sin ese soporte se conservan la transparencia y los bordes de cristal.
 
 ## Rendimiento
 
@@ -120,6 +138,9 @@ y el evento `response.completed` de OpenAI.
 shell.qml                    Ventana principal
 ui/AgentBridge.qml           Estado y contrato de eventos
 ui/ChatWindow.qml            Chat, cuenta, modelos e historial
+ui/components/ChatSidebar.qml Navegación y chats recientes
+ui/components/ConversationPane.qml Mensajes y bienvenida
+ui/components/MessageComposer.qml Editor, modelo y envío
 backend/main.py              Entrada del backend
 backend/harness/auth.py      OAuth, identidad y sesión propia
 backend/harness/http.py      HTTP y streaming SSE cancelable

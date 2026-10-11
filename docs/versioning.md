@@ -3,10 +3,11 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.4.0`, con métricas por respuesta, historial de
-mediciones y comparación por modelo. Conserva la sesión propia de ChatGPT y la
-conexión HTTP directa de `0.3.0`. Mantiene el formato NDJSON v1 con eventos
-aditivos de rendimiento y compatibilidad con chats anteriores.
+La última versión etiquetada es `0.5.0`, con interfaz de vidrio transparente,
+navegación lateral que se puede ocultar y un editor con modelo y envío integrados.
+Conserva las métricas de `0.4.0`, la sesión propia de ChatGPT y la conexión HTTP
+directa de `0.3.0`. Mantiene el formato NDJSON v1 y la compatibilidad con chats
+anteriores.
 El formato es `MAYOR.MENOR.PARCHE`. El prefijo `v` pertenece a la etiqueta Git,
 por ejemplo `v0.1.0`; el número de versión de la aplicación es `0.1.0`.
 
@@ -29,7 +30,7 @@ su propio ciclo de evolución. Una corrección de la aplicación puede cambiar d
 | Situación | Ejemplo | Política del proyecto |
 | --- | --- | --- |
 | Correcciones compatibles y ajustes de documentación | `0.1.0` → `0.1.1` | Incrementar PARCHE |
-| Nueva funcionalidad durante el desarrollo inicial | `0.1.0` → `0.2.0` | Incrementar MENOR y reiniciar PARCHE |
+| Nueva funcionalidad o cambios de diseño durante el desarrollo inicial | `0.1.0` → `0.2.0` | Incrementar MENOR y reiniciar PARCHE |
 | Cambios incompatibles durante `0.x` | `0.2.0` → `0.3.0` | Por convención local, incrementar MENOR y documentar la ruptura |
 | Primer contrato público estable | `0.x.y` → `1.0.0` | Declarar estabilidad del contrato |
 | Nueva funcionalidad compatible a partir de `1.0.0` | `1.0.0` → `1.1.0` | Incrementar MENOR y reiniciar PARCHE |

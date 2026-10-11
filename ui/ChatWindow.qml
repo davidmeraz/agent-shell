@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import Quickshell
+import Quickshell.Wayland
 import "components"
 import "Performance.js" as Performance
 
@@ -11,14 +12,28 @@ FloatingWindow {
     id: window
     required property AgentBridge bridge
     title: "Agent Shell · ChatGPT"
-    implicitWidth: 820
-    implicitHeight: 780
+    implicitWidth: 1040
+    implicitHeight: 800
     minimumSize: Qt.size(560, 560)
-    color: "#0d1420"
+    color: "transparent"
     visible: true
+    BackgroundEffect.blurRegion: Region { item: glassSurface; radius: glassSurface.radius }
     property var selectedPerformance: ({})
+    readonly property bool wideLayout: width >= 880
+    property bool sidebarExpanded: true
+    readonly property bool sidebarVisible: wideLayout && sidebarExpanded
+    readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy
     property string performanceModel: ""
     property double elapsedMs: 0
+
+    function toggleSidebar() {
+        if (wideLayout) sidebarExpanded = !sidebarExpanded;
+        else if (narrowSidebar.visible) narrowSidebar.close();
+        else narrowSidebar.open();
+    }
+    onWideLayoutChanged: {
+        if (narrowSidebar) narrowSidebar.close();
+    }
 
     function showPerformance(measurement) {
         selectedPerformance = measurement;
@@ -41,285 +56,292 @@ FloatingWindow {
         function onFrameSwapped() { window.bridge.confirmPresentation(); }
     }
 
-    ColumnLayout {
+    GlassPanel {
+        id: glassSurface
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 16
+        anchors.margins: 1
+        radius: 20
+        // Tinte ligero (25–32 % de opacidad) para dejar visible el escritorio.
+        topColor: "#40243243"
+        bottomColor: "#520c1420"
+        edgeColor: "#50ffffff"
+    }
 
-        RowLayout {
-            Layout.fillWidth: true
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                Text { text: "AGENT SHELL"; color: "#72e5c0"; font.pixelSize: 12; font.letterSpacing: 3 }
-                Text { text: "Conversa con ChatGPT"; color: "#edf4fa"; font.pixelSize: 27; font.bold: true }
-            }
-            Item { Layout.fillWidth: true }
-            ActionButton {
-                text: "Rendimiento"
-                enabled: window.bridge.historyReady
-                onClicked: window.openPerformance()
-            }
-            ActionButton {
-                text: "Historial"
-                enabled: window.bridge.historyReady
-                onClicked: historyPanel.open()
-            }
-            ActionButton {
-                text: "Nuevo chat"
-                enabled: window.bridge.canBrowseHistory
-                onClicked: window.bridge.newChat()
-            }
+    RowLayout {
+        anchors.fill: parent
+        anchors.margins: 16
+        spacing: 20
+
+        ChatSidebar {
+            Layout.preferredWidth: 232
+            Layout.fillHeight: true
+            visible: window.sidebarVisible
+            bridge: window.bridge
+            onHistoryRequested: historyPanel.open()
+            onPerformanceRequested: window.openPerformance()
+            onAccountRequested: accountPanel.open()
         }
 
-        Rectangle {
+        ColumnLayout {
             Layout.fillWidth: true
-            implicitHeight: accountRow.implicitHeight + 24
-            color: "#172330"
-            radius: 10
-            border.color: window.bridge.authenticated ? "#2f6156" : "#314155"
+            Layout.fillHeight: true
+            Layout.minimumWidth: 0
+            spacing: 14
+
             RowLayout {
-                id: accountRow
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 10
-                Rectangle {
-                    width: 8; height: 8; radius: 4
-                    color: window.bridge.authenticated ? "#72e5c0" : "#f5c478"
+                Layout.fillWidth: true
+                visible: !window.sidebarVisible
+                spacing: 6
+                Text { text: "Agent Shell"; color: "#b3f5df"; font.pixelSize: 14; font.bold: true }
+                Item { Layout.fillWidth: true }
+                ActionButton {
+                    text: "+ Nuevo chat"
+                    font.pixelSize: 11
+                    horizontalPadding: 10
+                    enabled: window.bridge.canBrowseHistory
+                    onClicked: window.bridge.newChat()
+                }
+                ActionButton {
+                    text: "Historial"
+                    font.pixelSize: 11
+                    horizontalPadding: 10
+                    enabled: window.bridge.historyReady
+                    onClicked: historyPanel.open()
+                }
+                ActionButton {
+                    text: "Rendimiento"
+                    font.pixelSize: 11
+                    horizontalPadding: 10
+                    enabled: window.bridge.historyReady
+                    onClicked: window.openPerformance()
+                }
+                ActionButton {
+                    text: "Cuenta"
+                    font.pixelSize: 11
+                    horizontalPadding: 10
+                    onClicked: accountPanel.open()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                SidebarToggle {
+                    expanded: window.sidebarVisible || narrowSidebar.visible
+                    onClicked: window.toggleSidebar()
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    Layout.minimumWidth: 0
+                    spacing: 5
+                    Text {
+                        text: "CONVERSACIÓN"
+                        color: "#a5b6c6"
+                        font.pixelSize: 10
+                        font.letterSpacing: 1.5
+                    }
                     Text {
                         Layout.fillWidth: true
-                        text: window.bridge.authenticated
-                              ? window.bridge.email || "Cuenta de ChatGPT conectada"
-                              : "Conecta tu cuenta de ChatGPT"
+                        text: window.bridge.currentTitle || "Nueva conversación"
                         color: "#edf4fa"
-                        font.pixelSize: 13
-                        elide: Text.ElideMiddle
+                        font.pixelSize: window.wideLayout ? 24 : 21
+                        font.bold: true
+                        elide: Text.ElideRight
                         textFormat: Text.PlainText
                     }
+                }
+                RowLayout {
+                    spacing: 7
+                    Rectangle {
+                        implicitWidth: 6; implicitHeight: 6; radius: 3
+                        color: window.bridge.ready && window.bridge.authenticated ? "#72e5c0" : "#f5c478"
+                    }
+                    Text {
+                        text: !window.bridge.ready ? "Conectando…" : window.bridge.authenticated ? "ChatGPT conectado" : "Sin sesión"
+                        color: "#b0bfcd"
+                        font.pixelSize: 11
+                    }
+                }
+            }
+
+            GlassPanel {
+                Layout.fillWidth: true
+                implicitHeight: loginRow.implicitHeight + 20
+                visible: window.bridge.loginBusy
+                edgeColor: "#50f5c478"
+                RowLayout {
+                    id: loginRow
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 10
                     Text {
                         Layout.fillWidth: true
-                        text: window.bridge.authenticated
-                              ? "Usando tu plan de ChatGPT"
-                              : "Conecta tu cuenta y autoriza el uso de tu plan."
-                        color: "#96a9bb"
-                        font.pixelSize: 11
+                        text: "Continúa en el navegador para conectar tu cuenta."
+                        color: "#d8e5ee"
+                        font.pixelSize: 12
                         wrapMode: Text.Wrap
                     }
-                }
-                ActionButton {
-                    text: window.bridge.authenticated ? "Actualizar" : "Continuar con ChatGPT"
-                    accent: !window.bridge.authenticated
-                    enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy && !window.bridge.accountBusy
-                    onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
-                }
-                ActionButton {
-                    text: "Salir"
-                    visible: window.bridge.email !== ""
-                    enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy && !window.bridge.accountBusy
-                    onClicked: window.bridge.logout()
+                    ActionButton {
+                        text: "Abrir navegador"
+                        enabled: window.bridge.authUrl !== ""
+                        onClicked: Qt.openUrlExternally(window.bridge.authUrl)
+                    }
+                    ActionButton { text: "Cancelar"; onClicked: window.bridge.cancelLogin() }
                 }
             }
-        }
 
-        RowLayout {
-            Layout.fillWidth: true
-            visible: window.bridge.availableModels.count > 0
-            ComboBox {
+            ConversationPane {
                 Layout.fillWidth: true
-                model: window.bridge.availableModels
-                textRole: "displayName"
-                valueRole: "slug"
-                enabled: window.bridge.canSend
-                currentIndex: {
-                    for (let i = 0; i < window.bridge.availableModels.count; ++i)
-                        if (window.bridge.availableModels.get(i).slug === window.bridge.modelName) return i;
-                    return -1;
-                }
-                onActivated: window.bridge.selectModel(currentValue)
+                Layout.fillHeight: true
+                Layout.minimumHeight: 140
+                bridge: window.bridge
+                onPerformanceRequested: measurement => window.showPerformance(measurement)
+                onSuggestionRequested: text => composer.prepare(text)
+                onLoginRequested: window.bridge.login()
             }
-            ActionButton {
-                text: "Administrar uso"
-                onClicked: Qt.openUrlExternally("https://chatgpt.com/#settings/Usage")
-            }
-        }
 
-        Text {
-            Layout.fillWidth: true
-            visible: window.bridge.currentTitle !== ""
-            text: window.bridge.currentTitle
-            color: "#96a9bb"
-            font.pixelSize: 12
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-        }
-
-        RowLayout {
-            visible: window.bridge.loginBusy
-            Layout.fillWidth: true
-            Text {
+            MessageComposer {
+                id: composer
                 Layout.fillWidth: true
-                text: "Continúa en el navegador para conectar tu cuenta."
-                color: "#96a9bb"
-                wrapMode: Text.Wrap
+                bridge: window.bridge
+                compact: window.height < 680
+                onSubmitted: text => window.bridge.submit(text)
             }
-            ActionButton {
-                text: "Abrir navegador"
-                enabled: window.bridge.authUrl !== ""
-                onClicked: Qt.openUrlExternally(window.bridge.authUrl)
-            }
-            ActionButton { text: "Cancelar"; onClicked: window.bridge.cancelLogin() }
-        }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            color: "#111d2a"
-            radius: 12
-            border.color: "#243347"
-            Text {
-                anchors.centerIn: parent
-                width: parent.width - 48
-                visible: window.bridge.messages.count === 0
-                text: "¿Qué tienes en mente?\n\nPregunta, comparte una idea o pide ayuda con código."
-                color: "#96a9bb"
-                font.pixelSize: 16
-                wrapMode: Text.Wrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-            ListView {
-                id: conversation
-                anchors.fill: parent
-                anchors.margins: 18
-                clip: true
-                spacing: 20
-                model: window.bridge.messages
-                ScrollBar.vertical: ScrollBar {}
-                onContentHeightChanged: {
-                    if (!moving) Qt.callLater(() => conversation.positionViewAtEnd());
-                }
-                delegate: Column {
-                    required property string author
-                    required property string body
-                    required property string performanceJson
-                    readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
-                    width: conversation.width - 16
-                    spacing: 6
-                    Text {
-                        text: parent.author
-                        color: parent.author === "SISTEMA" ? "#f5c478" : "#72e5c0"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                    TextArea {
-                        text: parent.body
-                        width: parent.width
-                        readOnly: true
-                        selectByMouse: true
-                        color: "#d8e5ee"
-                        font.pixelSize: 14
-                        wrapMode: TextEdit.Wrap
-                        textFormat: TextEdit.PlainText
-                        padding: 0
-                        background: null
-                    }
-                    RowLayout {
-                        width: parent.width
-                        visible: !!parent.measurement.turn_id
-                        Text {
-                            Layout.fillWidth: true
-                            text: Performance.summary(parent.parent.measurement)
-                            color: "#96a9bb"
-                            font.pixelSize: 11
-                            wrapMode: Text.Wrap
-                        }
-                        ActionButton {
-                            text: "Detalles"
-                            onClicked: window.showPerformance(parent.parent.measurement)
-                        }
-                    }
-                }
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            text: window.bridge.status
-            color: window.bridge.busy || window.bridge.loginBusy ? "#f5c478" : "#96a9bb"
-            font.pixelSize: 12
-            wrapMode: Text.Wrap
-            textFormat: Text.PlainText
-        }
-
-        Text {
-            Layout.fillWidth: true
-            visible: window.bridge.busy
-            text: (window.bridge.latestPerformance.first_text_ms === null
-                   || window.bridge.latestPerformance.first_text_ms === undefined
-                   ? "Esperando el primer texto" : "Recibiendo respuesta")
-                  + " · " + Performance.duration(window.elapsedMs)
-            color: "#72e5c0"
-            font.pixelSize: 11
-        }
-
-        ScrollView {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 95
-            TextArea {
-                id: prompt
-                placeholderText: window.bridge.authenticated ? "Escribe un mensaje…" : "Inicia sesión para conversar…"
-                placeholderTextColor: "#788da2"
-                color: "#edf4fa"
-                font.pixelSize: 14
-                wrapMode: TextEdit.Wrap
-                selectByMouse: true
-                enabled: window.bridge.canSend
-                background: Rectangle { color: "#192535"; radius: 8; border.color: "#314155" }
-                // Enter envía; Shift+Enter conserva el salto de línea.
-                Keys.onPressed: event => {
-                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                        && !(event.modifiers & Qt.ShiftModifier)) {
-                        window.sendPrompt();
-                        event.accepted = true;
-                    }
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Text {
+            RowLayout {
                 Layout.fillWidth: true
-                text: "v" + (window.bridge.appVersion || "…")
-                      + (window.bridge.modelName ? " · " + window.bridge.modelName : " · ChatGPT")
-                color: "#788da2"
-                font.pixelSize: 11
-                elide: Text.ElideRight
-            }
-            ActionButton { text: "Detener"; enabled: window.bridge.busy; onClicked: window.bridge.cancel() }
-            ActionButton {
-                text: "Enviar"
-                accent: true
-                enabled: window.bridge.canSend && prompt.text.trim().length > 0 && prompt.text.length <= 16000
-                onClicked: window.sendPrompt()
+                spacing: 12
+                Text {
+                    Layout.fillWidth: true
+                    text: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
+                    color: window.bridge.busy || window.bridge.loginBusy ? "#f5c478" : "#b0bfcd"
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    ToolTip.visible: statusHover.hovered
+                    ToolTip.text: text
+                    HoverHandler { id: statusHover }
+                }
+                Text {
+                    text: window.wideLayout ? "Enter envía · Shift+Enter salto de línea" : "Enter · Shift+Enter"
+                    color: "#a5b6c6"
+                    font.pixelSize: 10
+                }
             }
         }
     }
 
     Connections {
         target: window.bridge
-        function onPlanConnected() { planWelcome.open(); }
+        function onPlanConnected() { accountPanel.close(); planWelcome.open(); }
         function onBusyChanged() { window.elapsedMs = 0; }
         function onEventReceived(event) {
+            if (event.type === "chat.loaded" || event.type === "chat.reset") narrowSidebar.close();
             if (event.type === "performance.updated"
                 && event.data.measurement.turn_id === window.selectedPerformance.turn_id)
                 window.selectedPerformance = event.data.measurement;
         }
     }
-    Dialog {
+    Drawer {
+        id: narrowSidebar
+        width: Math.min(280, window.width - 40)
+        height: window.height
+        edge: Qt.LeftEdge
+        padding: 0
+        background: GlassPanel { topColor: "#ed293a4d"; bottomColor: "#f0172433"; radius: 18 }
+        Overlay.modal: Rectangle { color: "#66080e18" }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 10
+            RowLayout {
+                Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: "Navegación"; color: "#b0bfcd"; font.pixelSize: 12 }
+                ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: narrowSidebar.close() }
+            }
+            ChatSidebar {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                bridge: window.bridge
+                onHistoryRequested: { narrowSidebar.close(); historyPanel.open(); }
+                onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
+                onAccountRequested: { narrowSidebar.close(); accountPanel.open(); }
+            }
+        }
+    }
+
+    GlassDialog {
+        id: accountPanel
+        title: "Cuenta de ChatGPT"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(460, window.width - 40)
+        standardButtons: Dialog.Close
+        contentItem: ColumnLayout {
+            spacing: 16
+            Text {
+                Layout.fillWidth: true
+                text: window.bridge.authenticated ? window.bridge.email || "Cuenta conectada" : "Conecta tu cuenta"
+                color: "#edf4fa"
+                font.pixelSize: 16
+                font.bold: true
+                wrapMode: Text.WrapAnywhere
+                textFormat: Text.PlainText
+            }
+            Text {
+                Layout.fillWidth: true
+                text: window.bridge.authenticated ? "Las respuestas usan los límites disponibles de tu plan de ChatGPT."
+                                                     : "Inicia sesión en el navegador y autoriza el uso de tu plan de ChatGPT."
+                color: "#b0bfcd"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton {
+                    Layout.fillWidth: true
+                    text: window.bridge.authenticated ? "Actualizar cuenta" : "Continuar con ChatGPT"
+                    accent: !window.bridge.authenticated
+                    enabled: window.accountControlsEnabled
+                    onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
+                }
+                ActionButton {
+                    text: "Salir"
+                    visible: window.bridge.email !== ""
+                    enabled: window.accountControlsEnabled
+                    onClicked: window.bridge.logout()
+                }
+            }
+            ActionButton {
+                Layout.fillWidth: true
+                visible: window.bridge.authenticated
+                text: "Administrar uso del plan"
+                onClicked: Qt.openUrlExternally("https://chatgpt.com/#settings/Usage")
+            }
+            Text {
+                Layout.fillWidth: true
+                text: window.bridge.status
+                textFormat: Text.PlainText
+                color: "#b0bfcd"
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                visible: window.bridge.loginBusy
+                ActionButton {
+                    text: "Abrir navegador"
+                    enabled: window.bridge.authUrl !== ""
+                    onClicked: Qt.openUrlExternally(window.bridge.authUrl)
+                }
+                ActionButton { text: "Cancelar"; onClicked: window.bridge.cancelLogin() }
+            }
+            Text { text: "Agent Shell · v" + (window.bridge.appVersion || "…"); color: "#a5b6c6"; font.pixelSize: 10 }
+        }
+    }
+
+    GlassDialog {
         id: planWelcome
         title: "Tu plan de ChatGPT"
         modal: true
@@ -329,10 +351,12 @@ FloatingWindow {
         contentItem: Text {
             text: "Estás usando tu plan de ChatGPT. Las respuestas de Agent Shell consumen sus límites disponibles. Puedes administrar el uso y desconectar la aplicación en los ajustes de ChatGPT."
             wrapMode: Text.Wrap
+            color: "#d8e5ee"
+            font.pixelSize: 14
         }
     }
 
-    Dialog {
+    GlassDialog {
         id: performanceDetails
         title: "Detalles de rendimiento"
         modal: true
@@ -347,6 +371,9 @@ FloatingWindow {
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
+                color: "#d8e5ee"
+                font.pixelSize: 13
+                background: null
             }
         }
     }
@@ -356,12 +383,21 @@ FloatingWindow {
         width: Math.min(560, window.width - 40)
         height: window.height
         edge: Qt.RightEdge
-        background: Rectangle { color: "#111d2a"; border.color: "#314155" }
+        background: GlassPanel {
+            radius: 18
+            topColor: "#ed293a4d"
+            bottomColor: "#f0172433"
+        }
+        Overlay.modal: Rectangle { color: "#66080e18" }
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 18
             spacing: 12
-            Text { text: "Rendimiento"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: "Rendimiento"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+                ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: performancePanel.close() }
+            }
             Text {
                 Layout.fillWidth: true
                 text: "Últimos 200 turnos guardados. Las medianas y el p95 usan sólo respuestas completadas y tiempos del backend. Compara mensajes y contextos similares."
@@ -371,7 +407,7 @@ FloatingWindow {
             }
             RowLayout {
                 Layout.fillWidth: true
-                ComboBox {
+                GlassComboBox {
                     Layout.fillWidth: true
                     model: ["Todos los modelos"].concat(window.bridge.modelPerformance.map(row => row.model))
                     onActivated: window.performanceModel = currentIndex ? currentText : ""
@@ -399,13 +435,12 @@ FloatingWindow {
                     spacing: 10
                     Repeater {
                         model: window.bridge.modelPerformance.filter(row => !window.performanceModel || row.model === window.performanceModel)
-                        delegate: Rectangle {
+                        delegate: GlassPanel {
                             id: modelCard
                             required property var modelData
                             width: performanceList.width
                             implicitHeight: modelStats.implicitHeight + 24
                             radius: 8
-                            color: "#192535"
                             Column {
                                 id: modelStats
                                 anchors.fill: parent
@@ -468,7 +503,11 @@ FloatingWindow {
                             font.pixelSize: 10
                         }
                     }
-                    background: Rectangle { radius: 8; color: "#192535" }
+                    background: GlassPanel {
+                        radius: 10
+                        highlighted: measurementRow.activeFocus
+                        topColor: measurementRow.hovered ? "#70445669" : "#44304153"
+                    }
                 }
             }
         }
@@ -479,12 +518,21 @@ FloatingWindow {
         width: Math.min(360, window.width - 40)
         height: window.height
         edge: Qt.LeftEdge
-        background: Rectangle { color: "#111d2a"; border.color: "#314155" }
+        background: GlassPanel {
+            radius: 18
+            topColor: "#ed293a4d"
+            bottomColor: "#f0172433"
+        }
+        Overlay.modal: Rectangle { color: "#66080e18" }
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 18
             spacing: 14
-            Text { text: "Historial de chats"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: "Historial de chats"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+                ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: historyPanel.close() }
+            }
             Text {
                 Layout.fillWidth: true
                 visible: window.bridge.conversations.count === 0
@@ -527,9 +575,12 @@ FloatingWindow {
                             font.pixelSize: 10
                         }
                     }
-                    background: Rectangle {
-                        radius: 8
-                        color: savedChat.chatId === window.bridge.currentChatId ? "#263e44" : "#192535"
+                    background: GlassPanel {
+                        radius: 10
+                        highlighted: savedChat.activeFocus
+                        topColor: savedChat.chatId === window.bridge.currentChatId ? "#70408273"
+                                  : savedChat.hovered ? "#70445669" : "#44304153"
+                        edgeColor: savedChat.chatId === window.bridge.currentChatId ? "#7072e5c0" : "#38ffffff"
                     }
                 }
             }
@@ -562,8 +613,6 @@ FloatingWindow {
     }
 
     function sendPrompt() {
-        if (!bridge.canSend || !prompt.text.trim() || prompt.text.length > 16000) return;
-        bridge.submit(prompt.text);
-        prompt.clear();
+        composer.send();
     }
 }

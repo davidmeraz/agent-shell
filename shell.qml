@@ -1,7 +1,7 @@
 import Quickshell
 import "ui"
 
-// Una ventana de conversación; el motor de Codex queda detrás de AgentBridge.
+// Una ventana de conversación conectada al backend mediante AgentBridge.
 ShellRoot {
     AgentBridge { id: agent }
 

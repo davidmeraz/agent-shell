@@ -5,6 +5,15 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Pendiente de publicar
 
+## [0.5.0] — 2026-10-11
+
+- Interfaz de vidrio transparente con tinte ligero, bordes de un píxel y reflejos suaves; fondo principal con un 25–32 % de opacidad.
+- Desenfoque nativo del fondo en compositores compatibles con Quickshell; botones, selectores, diálogos e historial con el mismo acabado.
+- Navegación lateral con chats y acceso a la cuenta, cabecera de conversación y editor con modelo y envío integrados; barra compacta en ventanas pequeñas.
+- Mensajes propios diferenciados, bienvenida con sugerencias editables y más espacio para la conversación.
+- Botón para ocultar y mostrar la barra lateral, con navegación accesible al ocultarla y panel superpuesto en ventanas pequeñas.
+- 58 pruebas, revisión QML e integración Qt; comprobación de sugerencias, envío, cuenta, selección de modelo y apertura/cierre de la barra en escritorio y vista compacta con servicio local de prueba.
+
 ## [0.4.0] — 2026-10-11
 
 - Métricas por respuesta: primer texto, duración, velocidad de caracteres y tiempos de preparación, sesión, HTTP y presentación Qt.
