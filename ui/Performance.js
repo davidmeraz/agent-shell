@@ -33,6 +33,10 @@ function details(row) {
         "Primer texto recibido por el backend: " + duration(row.first_text_ms),
         "Enviar → primer texto en Qt (aprox.): " + duration(row.first_visible_ms),
         "Total del backend: " + duration(row.total_ms),
+        "Solicitudes al modelo: " + (row.model_calls === undefined || row.model_calls === null ? "—" : row.model_calls),
+        "Comandos solicitados: " + (row.tool_calls || 0),
+        "Ejecución de terminal: " + duration(row.tool_ms),
+        "Espera de confirmación: " + duration(row.approval_ms),
         "Preparación local: " + duration(row.prepare_ms),
         "Sesión y renovación: " + duration(row.session_ms),
         "Hasta las cabeceras HTTP: " + duration(row.headers_ms),
@@ -41,7 +45,7 @@ function details(row) {
         "Recepción en Qt → siguiente fotograma: " + duration(row.ui_frame_ms),
         "Velocidad entre fragmentos de texto: " + rate(row.characters_per_second),
         "Caracteres de respuesta: " + (row.characters === null ? "—" : row.characters),
-        "Contexto enviado: " + row.context_messages + " mensajes · " + row.input_characters + " caracteres",
+        "Contexto visible inicial: " + row.context_messages + " mensajes · " + row.input_characters + " caracteres",
         "Tokens de entrada: " + (usage.input_tokens === undefined ? "—" : usage.input_tokens),
         "Tokens de salida: " + (usage.output_tokens === undefined ? "—" : usage.output_tokens),
         "Tokens de razonamiento: " + (usage.reasoning_tokens === undefined ? "—" : usage.reasoning_tokens),
@@ -63,8 +67,9 @@ function models(rows) {
     const groups = Object.create(null);
     for (const row of rows) {
         if (!groups[row.model]) groups[row.model] = { model: row.model, completed: 0,
-            failed: 0, interrupted: 0, first: [], total: [] };
+            failed: 0, interrupted: 0, agentTurns: 0, first: [], total: [] };
         const group = groups[row.model];
+        if (row.tool_calls > 0) { group.agentTurns++; continue; }
         if (row.status === "completed") {
             group.completed++;
             if (row.first_text_ms !== null) group.first.push(row.first_text_ms);
@@ -75,7 +80,7 @@ function models(rows) {
     return Object.keys(groups).sort().map(key => {
         const group = groups[key];
         return { model: key, completed: group.completed, failed: group.failed,
-                 interrupted: group.interrupted, firstMedian: median(group.first),
+                 interrupted: group.interrupted, agentTurns: group.agentTurns, firstMedian: median(group.first),
                  totalMedian: median(group.total),
                  totalP95: group.total.length >= 20 ? group.total[Math.ceil(group.total.length * 0.95) - 1] : null };
     });

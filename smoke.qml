@@ -73,8 +73,9 @@ ShellRoot {
                 for (let i = 1; i <= 20; ++i)
                     samples.push({ model: "test", status: "completed", first_text_ms: i, total_ms: i * 10 });
                 samples.push({ model: "test", status: "failed", first_text_ms: 999, total_ms: 9999 });
+                samples.push({ model: "test", status: "completed", tool_calls: 1, first_text_ms: 999, total_ms: 9999 });
                 const statistics = Performance.models(samples)[0];
-                if (statistics.totalMedian !== 105 || statistics.totalP95 !== 190 || statistics.failed !== 1) {
+                if (statistics.totalMedian !== 105 || statistics.totalP95 !== 190 || statistics.failed !== 1 || statistics.agentTurns !== 1) {
                     test.fail("estadísticas mezclan fallos o calculan mal p95");
                     return;
                 }
@@ -92,7 +93,48 @@ ShellRoot {
                 if (agent.performanceHistory.length || agent.modelPerformance.length)
                     test.fail("mediciones borradas reaparecen");
                 else {
-                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial, rendimiento y borrado de conversación");
+                    test.stage = 9;
+                    agent.configureShell(agent.workspace, true);
+                }
+            } else if (event.type === "shell.state" && test.stage === 9) {
+                if (!agent.shellEnabled || !agent.workspace) { test.fail("terminal no activada"); return; }
+                test.stage = 10;
+                agent.submit("shell-pwd");
+            } else if (event.type === "tool.approval" && test.stage === 10) {
+                if (agent.pendingTool.call.command !== "pwd" || agent.pendingTool.call.workdir !== agent.workspace) {
+                    test.fail("comando o directorio de confirmación incorrecto"); return;
+                }
+                test.stage = 11;
+                // Sólo el comando exacto pwd del servicio local de prueba está autorizado.
+                agent.decideTool(true);
+            } else if (event.type === "chat.finished" && test.stage === 11) {
+                if (event.data.status !== "completed" || agent.messages.count !== 3
+                    || !agent.messages.get(1).toolJson || agent.messages.get(2).body.indexOf(agent.workspace) < 0
+                    || JSON.parse(agent.messages.get(1).toolJson).status !== "completed"
+                    || agent.latestPerformance.model_calls !== 2 || agent.latestPerformance.tool_calls !== 1
+                    || agent.modelPerformance[0].agentTurns !== 1 || agent.modelPerformance[0].totalMedian !== null) {
+                    test.fail("ciclo de shell o métricas incorrectos"); return;
+                }
+                test.savedChatId = agent.currentChatId;
+                test.stage = 12;
+                agent.newChat();
+            } else if (event.type === "chat.reset" && test.stage === 12) {
+                test.stage = 13;
+                agent.openChat(test.savedChatId);
+            } else if (event.type === "chat.loaded" && test.stage === 13) {
+                if (agent.messages.count !== 3 || JSON.parse(agent.messages.get(1).toolJson).status !== "completed"
+                    || agent.pendingTool.request_id) { test.fail("shell no restaurada o aprobación reabierta"); return; }
+                test.stage = 14;
+                agent.configureShell(agent.workspace, false);
+            } else if (event.type === "shell.state" && test.stage === 14) {
+                if (agent.shellEnabled) { test.fail("terminal no desactivada"); return; }
+                test.stage = 15;
+                agent.submit("continúa");
+            } else if (event.type === "chat.finished" && test.stage === 15) {
+                if (event.data.status !== "completed" || agent.messages.count !== 5 || agent.pendingTool.request_id)
+                    test.fail("continuación tras shell incorrecta");
+                else {
+                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial, rendimiento, borrado y shell con confirmación y recuperación");
                     Qt.quit();
                 }
             } else if (event.type === "error" || event.type === "backend.disconnected") {

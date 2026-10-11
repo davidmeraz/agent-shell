@@ -1,11 +1,11 @@
 # Agent Shell
 
-Aplicación de chat para Linux con **Quickshell y Qt Quick**, sesión propia de
+Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y Qt Quick**, sesión propia de
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.6.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.5.0` conservan las versiones anteriores.
+**Versión: 0.7.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.6.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -89,6 +89,28 @@ incluyas en Git. La aplicación no las publica en el protocolo de la interfaz ni
 en registros. Una URL de autorización puede contener un ID token de la sesión
 anterior como pista de cuenta: tampoco debe registrarse o compartirse.
 
+## Terminal con IA
+
+Abre **Terminal** en la barra lateral, actívala, indica el directorio de trabajo y
+pulsa **Aplicar**. Luego puedes pedir, por ejemplo: «Usa la terminal para decirme
+en qué directorio estamos». Antes de ejecutar, la aplicación muestra el comando
+exacto y su directorio: elige **Ejecutar** o **Rechazar**. **Esc** también rechaza.
+
+La shell se ejecuta localmente con `/bin/sh -c`. La IA recibe el resultado real y
+continúa la respuesta; el chat muestra comando, salida y estado en una tarjeta.
+**Detener** cancela tanto la espera de confirmación como el proceso y su grupo.
+La terminal comienza desactivada en cada lanzamiento y cada comando requiere
+una confirmación nueva. Recuperar un chat no vuelve a ejecutar comandos guardados.
+
+Cada comando tiene un máximo de 120 segundos y devuelve hasta 16000 caracteres
+de stdout/stderr combinados. Un turno admite hasta ocho solicitudes al modelo y
+ocho comandos, ejecutados en orden. No hay terminal interactiva ni gestión de
+trabajos en segundo plano. El directorio es el punto de partida, no un aislamiento
+del sistema: los comandos tienen los permisos de tu usuario. Su salida se comparte
+con ChatGPT como parte de la conversación.
+
+Consulta [diseño, permisos y límites de la integración](docs/terminal.md).
+
 ## Historial y contexto
 
 Cada conversación se guarda automáticamente en un JSON de `.runtime/chats/`.
@@ -121,6 +143,7 @@ error para iniciar otro chat; aún no hay resumen automático ni compactación.
 | `AGENT_SHELL_HISTORY_DIR` / `--history-root` | Directorio del historial |
 | `AGENT_SHELL_SESSION_DIR` / `--session-root` | Directorio privado de sesión |
 | `AGENT_SHELL_MODEL` / `--model` | Modelo inicial si aparece en el catálogo |
+| `AGENT_SHELL_WORKSPACE` / `--workspace` | Directorio inicial de shell; también se puede cambiar desde Terminal |
 | `AGENT_SHELL_PYTHON` | Intérprete del backend, por defecto `.venv/bin/python` |
 
 Las opciones anteriores `--codex-executable`, `--chat-root` y
@@ -139,7 +162,8 @@ explícita; el lanzamiento normal usa `backend/main.py` y el servicio real.
 Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTTP
 usa un servidor loopback de prueba y el cliente de streaming real. La integración
 Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
-presentación del primer texto, el panel de rendimiento y el borrado de conversaciones.
+presentación del primer texto, rendimiento, borrado y el ciclo de shell con
+confirmación, ejecución real de `pwd` en una carpeta temporal y recuperación.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto
@@ -161,6 +185,8 @@ backend/harness/chatgpt.py   Modelos e inferencia con tu plan
 backend/harness/server.py    Traducción a eventos Qt y contexto local
 backend/harness/history.py   Historial atómico compatible con 0.2.0
 backend/harness/performance.py Tiempos y conteos por turno
+backend/harness/shell.py      Validación, ejecución local y cancelación de procesos
+backend/harness/context.py    Contexto de Responses y recuperación de llamadas
 ui/Performance.js            Formato y comparación de mediciones
 tests/                       OAuth, HTTP y procesos de prueba
 scripts/                     Instalación, ejecución y comprobaciones

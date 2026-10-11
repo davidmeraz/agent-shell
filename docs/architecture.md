@@ -13,6 +13,8 @@ flowchart LR
     Client -->|HTTPS y SSE| API[Responses API con permiso de plan]
     API -->|Fragmentos de texto| Client
     Python --> History[Historial JSON local]
+    Python -->|Llamada validada y aprobada| Shell[Ejecutor local de shell]
+    Shell -->|Salida y estado| Python
 ```
 
 ## Responsabilidades
@@ -27,6 +29,8 @@ flowchart LR
 - `HttpClient`: HTTPS verificado sin redirecciones automáticas, errores sin
   diagnósticos privados, lectura SSE y cierre de sockets al cancelar.
 - `ChatGPTClient`: descubre modelos de la cuenta y solicita respuestas.
+- `ShellExecutor`: ejecuta comandos aprobados, acota la salida y termina grupos de procesos.
+- `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
 - `TurnPerformance`: reloj monotónico, etapas del turno, conteos y uso reportado por OpenAI.
 - `Performance.js`: formato de métricas y estadísticas por modelo en Qt.
@@ -61,9 +65,13 @@ Se muestran entradas con `visibility: list`, se conserva su orden y se envía el
 
 Cada turno envía instrucciones y los mensajes locales mediante
 `POST https://api.openai.com/v1/responses`, con `store: false` y `stream: true`.
-No se envían herramientas. Los fragmentos y el texto final se reconcilian por
+Con Terminal activada se anuncia la función `shell`; el backend espera confirmación
+antes de ejecutarla y devuelve el resultado con su `call_id` para continuar.
+Los fragmentos y el texto final se reconcilian por
 item y parte de contenido. Sólo `response.completed` con estado confirmado
-marca éxito. Fallos, respuestas incompletas y cortes de conexión conservan el texto
+marca el final de una solicitud al modelo. Si contiene herramientas, el turno
+continúa hasta la respuesta final o un límite, rechazo o cancelación.
+Fallos, respuestas incompletas y cortes de conexión conservan el texto
 parcial y liberan los controles.
 
 Los JSON de 0.2.0 siguen siendo legibles. Su antiguo thread_id no se consulta:
@@ -86,7 +94,8 @@ streaming actualiza Qt antes del guardado y agrupa escrituras cada medio segundo
 Al terminar, cancelar o recibir SIGTERM se guarda el estado final y el texto pendiente.
 
 Cancelar cierra el socket de streaming y marca inmediatamente el turno como
-interrumpido. Una generación impide que eventos tardíos contaminen el siguiente
+interrumpido, cerrando también la aprobación y el grupo de shell activo.
+Una generación impide que eventos tardíos contaminen el siguiente
 turno. El backend sigue disponible después de errores de red para reintentar.
 Cerrar stdin o SIGTERM cancela operaciones; los trabajadores de red tienen timeout.
 
@@ -96,3 +105,6 @@ La prueba Qt usa un backend real con cuenta de prueba y servicio HTTP local.
 El usuario confirmó la autenticación real desde el escritorio. También se verificó
 una respuesta real con el backend y la sesión propia de Agent Shell, hasta recibir
 texto y `response.completed`.
+La integración de shell también se comprobó con la sesión real: solicitud de
+`pwd`, ejecución aprobada en una carpeta temporal y respuesta basada en su salida,
+seguida de continuación desde ese contexto con la terminal desactivada.

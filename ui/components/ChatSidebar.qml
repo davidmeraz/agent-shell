@@ -10,12 +10,13 @@ MattePanel {
     signal historyRequested()
     signal performanceRequested()
     signal accountRequested()
+    signal shellRequested()
     signal deleteRequested(string chatId, string title)
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
-        spacing: 16
+        spacing: 12
         RowLayout {
             spacing: 10
             GlassPanel {
@@ -85,6 +86,12 @@ MattePanel {
             text: "Rendimiento"
             enabled: sidebar.bridge.historyReady
             onClicked: sidebar.performanceRequested()
+        }
+        ActionButton {
+            Layout.fillWidth: true
+            text: sidebar.bridge.shellEnabled ? "Terminal · Activada" : "Terminal"
+            enabled: sidebar.bridge.ready && !sidebar.bridge.busy && !sidebar.bridge.loginBusy
+            onClicked: sidebar.shellRequested()
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
         Button {

@@ -13,6 +13,10 @@ class FakeService:
         self.stream_content_type = "text/event-stream; charset=utf-8"
         self.started = threading.Event()
         self.disconnected = threading.Event()
+        self.tool_batches = []
+        self.tool_completion_gate = None
+        self.tool_preface = ""
+        self.tool_stream_items = False
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -37,7 +41,9 @@ class FakeService:
                 if fixture.stream_content_type is not None:
                     self.send_header("Content-Type", fixture.stream_content_type)
                 self.end_headers()
-                prompt = body["input"][-1]["content"]
+                last_user = max((i for i, item in enumerate(body["input"]) if item.get("role") == "user"), default=0)
+                prompt = body["input"][last_user].get("content", "")
+                results = [item for item in body["input"][last_user:] if item.get("type") == "function_call_output"]
                 item_id = "message-" + uuid.uuid4().hex
 
                 def event(value):
@@ -45,6 +51,43 @@ class FakeService:
                     self.wfile.flush()
 
                 try:
+                    batches = fixture.tool_batches or [[{"command": "pwd"}]]
+                    if isinstance(prompt, str) and prompt.startswith("shell") and body.get("tools"):
+                        if len(results) < len(batches):
+                            specs = batches[len(results)]
+                            output = [{"type": "reasoning", "id": "reason-" + uuid.uuid4().hex,
+                                       "summary": [], "encrypted_content": "test-opaque-reasoning"}]
+                            if fixture.tool_preface:
+                                event({"type": "response.output_text.delta", "item_id": item_id,
+                                       "delta": fixture.tool_preface})
+                                output.append({"type": "message", "role": "assistant", "id": item_id,
+                                               "phase": "commentary", "content": [{"type": "output_text", "text": fixture.tool_preface}]})
+                            for spec in specs:
+                                call = {"type": "function_call", "id": "fc-" + uuid.uuid4().hex,
+                                        "call_id": "call-" + uuid.uuid4().hex, "name": spec.get("name", "shell"),
+                                        "arguments": spec.get("arguments", json.dumps({"command": spec.get("command", "pwd")}))}
+                                event({"type": "response.output_item.added", "item": {**call, "arguments": ""}})
+                                event({"type": "response.function_call_arguments.delta", "item_id": call["id"], "delta": call["arguments"][:5]})
+                                output.append(call)
+                            if fixture.tool_stream_items:
+                                for index, item in enumerate(output):
+                                    event({"type": "response.output_item.done", "output_index": index, "item": item})
+                            fixture.started.set()
+                            if fixture.tool_completion_gate:
+                                fixture.tool_completion_gate.wait(2)
+                            event({"type": "response.completed", "response": {"status": "completed", "output": [] if fixture.tool_stream_items else output,
+                                   "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}}})
+                            return
+                        text = "Terminal: " + "\n".join(json.loads(item["output"]).get("output", "") for item in results)
+                        event({"type": "response.output_text.delta", "item_id": item_id, "delta": text})
+                        message = {"type": "message", "id": item_id, "role": "assistant", "phase": "final",
+                                   "content": [{"type": "output_text", "text": text}]}
+                        if fixture.tool_stream_items:
+                            event({"type": "response.output_item.done", "output_index": 0, "item": message})
+                        event({"type": "response.completed", "response": {"status": "completed",
+                               "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
+                               "output": [] if fixture.tool_stream_items else [message]}})
+                        return
                     event({"type": "response.output_text.delta", "item_id": item_id,
                            "content_index": 0, "delta": "Hola "})
                     fixture.started.set()

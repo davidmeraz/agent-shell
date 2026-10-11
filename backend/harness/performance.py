@@ -10,6 +10,7 @@ NUMBER_FIELDS = (
     "headers_ms", "request_first_text_ms", "stream_ms", "characters",
     "characters_per_second", "input_characters", "context_messages",
     "first_visible_ms", "ui_frame_ms",
+    "model_calls", "tool_calls", "tool_ms", "approval_ms",
 )
 STATUSES = ("streaming", "completed", "failed", "interrupted")
 
@@ -67,6 +68,15 @@ class TurnPerformance:
         self.turn_id, self.model = turn_id, model
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.input_characters, self.context_messages = 0, 0
+        self.model_calls, self.tool_calls = 0, 0
+        self.tool_ms, self.approval_ms = 0.0, 0.0
+
+    def add_usage(self, value) -> None:
+        usage = safe_usage(value)
+        if usage:
+            self.usage = self.usage or {}
+            for key, count in usage.items():
+                self.usage[key] = self.usage.get(key, 0) + count
 
     def mark(self, phase: str) -> None:
         self.phases.setdefault(phase, self.clock())
@@ -103,7 +113,7 @@ class TurnPerformance:
 
         request = self.phases.get("request")
         rate = None
-        if (self.first_text is not None and self.last_text is not None
+        if (not self.tool_calls and self.first_text is not None and self.last_text is not None
                 and self.last_text - self.first_text >= 0.1
                 and self.characters > self.first_characters):
             rate = round((self.characters - self.first_characters) / (self.last_text - self.first_text), 2)
@@ -118,6 +128,8 @@ class TurnPerformance:
             "request_first_text_ms": duration(request, self.first_text),
             "stream_ms": duration(self.first_text, end) if self.first_text is not None else None,
             "characters": self.characters, "characters_per_second": rate,
+            "model_calls": self.model_calls, "tool_calls": self.tool_calls,
+            "tool_ms": round(self.tool_ms, 3), "approval_ms": round(self.approval_ms, 3),
             "input_characters": self.input_characters, "context_messages": self.context_messages,
             "first_visible_ms": self.frontend.get("first_visible_ms"),
             "ui_frame_ms": self.frontend.get("ui_frame_ms"), "usage": self.usage,

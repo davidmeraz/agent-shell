@@ -20,7 +20,8 @@ def main():
     with FakeService() as service:
         session = FakeSession()
         client = ChatGPTClient(session, HttpClient(allow_loopback=True), service.url)
-        HarnessServer(Path(os.environ["AGENT_SHELL_HISTORY_DIR"]), sys.stdout, session, client).serve(sys.stdin)
+        workspace = Path(os.environ.get("AGENT_SHELL_WORKSPACE", str(Path(os.environ["AGENT_SHELL_HISTORY_DIR"]).parent)))
+        HarnessServer(Path(os.environ["AGENT_SHELL_HISTORY_DIR"]), sys.stdout, session, client, workspace=workspace).serve(sys.stdin)
 
 
 if __name__ == "__main__":

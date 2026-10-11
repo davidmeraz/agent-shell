@@ -7,9 +7,11 @@ Durante la espera también se muestra un contador de tiempo transcurrido.
 
 El botón **Rendimiento** abre los últimos 200 turnos medidos de todos los chats.
 Permite filtrar por modelo, consultar cada medición y comparar medianas. El p95
-del tiempo total se muestra desde 20 respuestas completadas con tiempo conocido;
+del tiempo total se muestra desde 20 respuestas completadas sin terminal y con tiempo conocido;
 usa el método de rango más cercano. Los fallos y las interrupciones se cuentan
 aparte y no entran en las estadísticas de latencia. Los turnos en curso tampoco.
+Los turnos con comandos se muestran por separado y no entran en medianas ni p95:
+su duración total incluye ejecución de shell y espera de confirmación.
 
 ## Qué se mide
 
@@ -32,13 +34,19 @@ algunos se solapan.
 | `ui_frame_ms` | Recepción del primer texto en Qt → esa notificación de fotograma |
 | `characters` | Caracteres Unicode del texto recibido, reconciliado por item y parte; el texto final no duplica deltas |
 | `characters_per_second` | Caracteres añadidos después del primer fragmento / tiempo entre el primer y último cambio de texto |
-| `context_messages`, `input_characters` | Número de mensajes y caracteres del contexto enviado, sin contar las instrucciones fijas |
+| `context_messages`, `input_characters` | Mensajes visibles y sus caracteres al iniciar el turno; excluye instrucciones, llamadas, resultados de herramientas y razonamiento cifrado |
 | `usage` | Conteos reales que entrega OpenAI: entrada, salida, total, razonamiento y entrada en caché, cuando existen |
+| `model_calls` | Número de solicitudes al modelo iniciadas durante el turno |
+| `tool_calls` | Número de comandos solicitados, incluidos los rechazados o inválidos |
+| `tool_ms` | Suma de duración de ejecuciones de shell terminadas |
+| `approval_ms` | Suma de espera de confirmaciones resueltas |
 
 Las duraciones desconocidas son `null` y se presentan como **—**, nunca como
 cero. La velocidad requiere al menos 100 ms entre cambios de texto; una respuesta
 de un solo fragmento o una ráfaga muy breve no ofrece una velocidad útil. Describe
 texto recibido por el cliente, no la velocidad interna del servidor.
+En turnos con herramientas la velocidad se deja sin dato para evitar mezclar
+fragmentos de distintas solicitudes con esperas del usuario.
 
 Las dos medidas de Qt usan diferencias de `Date.now()` dentro de la interfaz.
 Son aproximadas, pueden verse afectadas por ajustes del reloj y la cola de señales,
@@ -48,8 +56,12 @@ El resumen prefiere `first_visible_ms` cuando existe y usa `first_text_ms` como
 alternativa. Las comparaciones por modelo siempre usan el tiempo del backend.
 
 Los tokens se extraen de `usage` del evento terminal y se muestran sólo si OpenAI
-los entrega. Los tokens de salida pueden incluir razonamiento. No se infiere
-consumo contando fragmentos y no se calcula saldo ni coste de la suscripción.
+los entrega. Los tokens de salida pueden incluir razonamiento.
+En turnos con herramientas se suman los conteos reportados por las solicitudes;
+si alguna no entrega uso, esa suma puede ser parcial. Los tiempos de sesión y
+cabeceras corresponden a la primera solicitud. La duración de ejecución y espera
+de una llamada interrumpida puede quedar parcial o en cero si no llegó a terminar.
+No se infiere consumo contando fragmentos y no se calcula saldo ni coste de la suscripción.
 Referencia: [eventos de Responses en OpenAI Docs](https://developers.openai.com/api/reference/resources/responses/streaming-events).
 
 ## Persistencia y compatibilidad

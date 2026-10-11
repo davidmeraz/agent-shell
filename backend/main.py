@@ -29,15 +29,24 @@ def main() -> None:
         help="Directorio privado de la sesión propia de ChatGPT",
     )
     parser.add_argument(
+        "--workspace", type=Path, default=Path(os.environ.get("AGENT_SHELL_WORKSPACE", os.getcwd())),
+        help="Directorio inicial de la herramienta shell (requiere activación y aprobación desde la interfaz)",
+    )
+    parser.add_argument(
         "--model", default=os.environ.get("AGENT_SHELL_MODEL", ""),
         help="Modelo inicial, si está disponible en el catálogo de tu cuenta",
     )
     args = parser.parse_args()
+    from harness.shell import resolve_workspace
+    try:
+        args.workspace = resolve_workspace(args.workspace)
+    except (ValueError, OSError):
+        parser.error("--workspace debe indicar un directorio existente")
     from harness.auth import ChatGPTSession
     from harness.chatgpt import ChatGPTClient
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     session = ChatGPTSession(args.session_root)
-    HarnessServer(args.history_root, sys.stdout, session, ChatGPTClient(session), args.model).serve(sys.stdin)
+    HarnessServer(args.history_root, sys.stdout, session, ChatGPTClient(session), args.model, args.workspace).serve(sys.stdin)
 
 
 if __name__ == "__main__":

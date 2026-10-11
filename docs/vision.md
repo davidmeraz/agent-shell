@@ -19,6 +19,8 @@ La propuesta incluye observar el trabajo del agente en el escritorio: archivos,
 carpetas, código y acciones visibles en ventanas de Hyprland. Esa experiencia se
 construirá sobre el chat después de definir herramientas, edición y permisos.
 
-Esta versión implementa únicamente conversación. No ejecuta herramientas de
-programación. Las pruebas automatizadas usan OAuth firmado de prueba y un
+La base ahora incluye conversación y una herramienta de shell con confirmación
+por comando, directorio elegido y resultados visibles. No incluye todavía una
+terminal interactiva ni herramientas dedicadas de edición de archivos.
+Las pruebas automatizadas usan OAuth firmado de prueba y un
 servicio HTTP local; el acceso con una cuenta real se valida en el escritorio.

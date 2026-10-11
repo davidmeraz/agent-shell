@@ -13,6 +13,8 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 | `chat.new` | Ninguno | Vaciar conversación actual |
 | `chat.open` | `chat_id` | Cargar conversación local |
 | `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
+| `shell.configure` | `enabled` booleano, `workdir` | Activar/desactivar shell y validar el directorio local, sólo fuera de un turno |
+| `tool.decide` | `request_id`, `approved` booleano | Aprobar o rechazar únicamente la solicitud pendiente del turno actual |
 | `history.list` | Ninguno | Consultar conversaciones recientes |
 | `auth.login` | Ninguno | Iniciar OAuth propio de ChatGPT |
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
@@ -56,8 +58,12 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.busy` | `turn_id` del mensaje de usuario y la medición |
 | `chat.thread` | `thread_id`: id del chat local; `model` |
 | `chat.saved` | `chat_id`, `title` |
-| `chat.loaded` | `chat`: registro local completo |
+| `chat.loaded` | `chat`: registro visible con mensajes, métricas y herramientas; excluye `context` |
 | `chat.deleted` | `chat_id` de la conversación local eliminada |
+| `shell.state` | `enabled`, `workdir` absoluto, `timeout_seconds` |
+| `tool.approval` | `request_id` generado por el backend, `call`, `timeout_seconds` |
+| `tool.approval.resolved` | `request_id` de la decisión recibida |
+| `tool.updated` | `call`: id local, call_id del proveedor, turn_id, command, workdir, status, output, exit_code, truncated, message_index y duration_ms si terminó |
 | `chat.delta` | `item_id`, `text` que amplía el mensaje, `turn_id` |
 | `chat.message` | `item_id`, `text` final que reemplaza fragmentos, `turn_id` |
 | `chat.finished` | `status: completed/failed/interrupted`, `message`, `turn_id` |
@@ -81,6 +87,19 @@ chats anteriores. Las instantáneas contienen identidad del turno, modelo, fecha
 estado, tiempos en milisegundos, caracteres, contexto y uso de tokens disponible.
 Un campo desconocido es `null`; no se transforma en cero. Las definiciones exactas
 de cada campo están en [rendimiento](performance.md).
+
+`chat.loaded.chat.tool_calls` conserva los comandos y sus resultados visibles.
+`message_index` ubica cada tarjeta antes del mensaje de ese índice. Los estados
+son `pending`, `running`, `completed`, `error`, `timeout`, `denied`, `interrupted`.
+Una llamada pendiente recuperada se marca como interrumpida sin ejecutarla.
+El `context` opcional del JSON contiene elementos de Responses y razonamiento
+cifrado para continuar; se excluye de `chat.loaded` y de todos los eventos Qt.
+
+Una aprobación no pertenece al modelo: el backend valida el id, booleano y turno
+antes de liberar la ejecución. **Esc** rechaza en Qt. `chat.cancel` cierra la
+aprobación y termina el grupo del proceso activo, además del streaming HTTP.
+La terminal comienza desactivada; configurarla no inicia procesos ni solicitudes
+al modelo. Sus límites se documentan en [terminal](terminal.md).
 
 `performance.presented` sólo se acepta para el turno actual con texto recibido,
 con tiempos finitos y no negativos, `ui_frame_ms <= first_visible_ms` y un límite

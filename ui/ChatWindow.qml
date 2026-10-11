@@ -23,6 +23,7 @@ FloatingWindow {
     property var chatToDelete: ({})
     readonly property bool overlayVisible: narrowSidebar.visible || historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
+                                           || shellSettings.visible || shellApproval.visible
     readonly property bool wideLayout: width >= 880
     property bool sidebarExpanded: true
     readonly property bool sidebarVisible: wideLayout && sidebarExpanded
@@ -100,6 +101,7 @@ FloatingWindow {
             onHistoryRequested: historyPanel.open()
             onPerformanceRequested: window.openPerformance()
             onAccountRequested: accountPanel.open()
+            onShellRequested: shellSettings.open()
             onDeleteRequested: (chatId, title) => window.requestDeleteChat(chatId, title)
         }
 
@@ -222,8 +224,10 @@ FloatingWindow {
     Connections {
         target: window.bridge
         function onPlanConnected() { accountPanel.close(); planWelcome.open(); }
-        function onBusyChanged() { window.elapsedMs = 0; }
+        function onBusyChanged() { window.elapsedMs = 0; if (!window.bridge.busy) shellApproval.close(); }
         function onEventReceived(event) {
+            if (event.type === "tool.approval") shellApproval.open();
+            if (event.type === "tool.approval.resolved") shellApproval.close();
             if (event.type === "chat.loaded" || event.type === "chat.reset") narrowSidebar.close();
             if (event.type === "chat.deleted" && event.data.chat_id === window.selectedPerformance.chat_id) {
                 performanceDetails.close();
@@ -261,6 +265,7 @@ FloatingWindow {
                 onHistoryRequested: { narrowSidebar.close(); historyPanel.open(); }
                 onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
                 onAccountRequested: { narrowSidebar.close(); accountPanel.open(); }
+                onShellRequested: { narrowSidebar.close(); shellSettings.open(); }
                 onDeleteRequested: (chatId, title) => window.requestDeleteChat(chatId, title)
             }
         }
@@ -313,6 +318,19 @@ FloatingWindow {
             }
         }
         onAccepted: window.bridge.deleteChat(window.chatToDelete.chat_id)
+    }
+
+    ShellSettingsDialog {
+        id: shellSettings
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(480, window.width - 40)
+    }
+    ShellApprovalDialog {
+        id: shellApproval
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(560, window.width - 40)
     }
 
     GlassDialog {
@@ -441,7 +459,7 @@ FloatingWindow {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Últimos 200 turnos guardados. Las medianas y el p95 usan sólo respuestas completadas y tiempos del backend. Compara mensajes y contextos similares."
+                text: "Últimos 200 turnos guardados. Las medianas y el p95 usan sólo respuestas completadas sin terminal. Los turnos con comandos incluyen esperas y ejecución. Compara mensajes y contextos similares."
                 color: "#a0a0a0"
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
@@ -502,6 +520,7 @@ FloatingWindow {
                                     width: parent.width
                                     text: modelCard.modelData.completed + " completadas · " + modelCard.modelData.failed
                                           + " fallidas · " + modelCard.modelData.interrupted + " interrumpidas"
+                                          + (modelCard.modelData.agentTurns ? "\n" + modelCard.modelData.agentTurns + " turnos con terminal separados" : "")
                                     color: "#a0a0a0"
                                     font.pixelSize: 11
                                     wrapMode: Text.Wrap

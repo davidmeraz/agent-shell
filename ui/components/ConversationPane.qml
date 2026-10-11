@@ -86,12 +86,20 @@ GlassPanel {
             required property string author
             required property string body
             required property string performanceJson
+            required property string toolJson
+            readonly property bool isTool: !!toolJson
             readonly property bool fromUser: author === "TÚ"
             readonly property bool systemMessage: author === "SISTEMA"
             readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
             readonly property real cardWidth: fromUser ? Math.min(width * 0.88, 640) : width
             width: conversation.width
-            implicitHeight: messageContent.implicitHeight + 28
+            implicitHeight: isTool ? toolCard.implicitHeight : messageContent.implicitHeight + 28
+            ToolCallCard {
+                id: toolCard
+                width: parent.width
+                visible: message.isTool
+                call: message.isTool ? JSON.parse(message.toolJson) : ({})
+            }
             GlassPanel {
                 anchors.right: parent.right
                 width: message.cardWidth
@@ -104,6 +112,7 @@ GlassPanel {
             }
             ColumnLayout {
                 id: messageContent
+                visible: !message.isTool
                 x: message.fromUser ? message.width - message.cardWidth + 14 : 14
                 y: 14
                 width: message.cardWidth - 28

@@ -15,6 +15,10 @@ QtObject {
     property bool historyReady: false
     property bool openingChat: false
     property string deletingChatId: ""
+    property bool shellEnabled: false
+    property string workspace: ""
+    property int shellTimeout: 120
+    property var pendingTool: ({})
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
     property string email: ""
@@ -59,7 +63,7 @@ QtObject {
         framePending = false;
         activeTurnId = "";
         latestPerformance = ({});
-        messages.append({ author: "TÚ", body: text, turnId: "", performanceJson: "" });
+        messages.append({ author: "TÚ", body: text, turnId: "", performanceJson: "", toolJson: "" });
         busy = true;
         status = "Preparando la respuesta…";
         sendCommand({ type: "chat.send", prompt: text });
@@ -91,6 +95,26 @@ QtObject {
         deletingChatId = chatId;
         status = "Borrando conversación…";
         sendCommand({ type: "chat.delete", chat_id: chatId });
+    }
+
+    function configureShell(workdir, enabled) {
+        if (!ready || busy || loginBusy) return;
+        sendCommand({ type: "shell.configure", workdir: workdir, enabled: enabled });
+    }
+
+    function decideTool(approved) {
+        if (!busy || !pendingTool.request_id) return;
+        sendCommand({ type: "tool.decide", request_id: pendingTool.request_id, approved: approved });
+    }
+
+    function updateTool(call) {
+        const key = "tool:" + call.id;
+        if (messageRows[key] === undefined) {
+            messageRows[key] = messages.count;
+            messages.append({ author: "TERMINAL", body: "", turnId: call.turn_id || "",
+                              performanceJson: "", toolJson: JSON.stringify(call) });
+        } else messages.setProperty(messageRows[key], "toolJson", JSON.stringify(call));
+        conversationChanged();
     }
 
     function login() {
@@ -129,7 +153,7 @@ QtObject {
         if (measurement.turn_id === activeTurnId) latestPerformance = measurement;
         let target = -1;
         for (let i = 0; i < messages.count; ++i) {
-            if (messages.get(i).turnId === measurement.turn_id) {
+            if (messages.get(i).turnId === measurement.turn_id && !messages.get(i).toolJson) {
                 messages.setProperty(i, "performanceJson", "");
                 target = i;
             }
@@ -156,7 +180,7 @@ QtObject {
         const row = messageRows[itemId];
         if (row === undefined) {
             messageRows[itemId] = messages.count;
-            messages.append({ author: "CHATGPT", body: text, turnId: turnId || "", performanceJson: "" });
+            messages.append({ author: "CHATGPT", body: text, turnId: turnId || "", performanceJson: "", toolJson: "" });
         } else {
             messages.setProperty(row, "body", append ? messages.get(row).body + text : text);
         }
@@ -174,7 +198,20 @@ QtObject {
             return;
         }
         const data = event.data;
-        if (event.type === "history.ready") {
+        if (event.type === "shell.state") {
+            shellEnabled = data.enabled;
+            workspace = data.workdir;
+            shellTimeout = data.timeout_seconds;
+            status = shellEnabled ? "Terminal activada. Cada comando requiere confirmación." : "Terminal desactivada.";
+        } else if (event.type === "tool.updated") {
+            updateTool(data.call);
+            if (data.call.status === "running") status = "Ejecutando comando…";
+        } else if (event.type === "tool.approval") {
+            pendingTool = data;
+            status = "Confirma o rechaza el comando propuesto.";
+        } else if (event.type === "tool.approval.resolved") {
+            if (pendingTool.request_id === data.request_id) pendingTool = ({});
+        } else if (event.type === "history.ready") {
             historyDirectory = data.directory;
             historyReady = true;
         } else if (event.type === "history.list") {
@@ -197,11 +234,17 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
-            for (const message of chat.messages) {
+            pendingTool = ({});
+            for (let index = 0; index <= chat.messages.length; ++index) {
+                for (const call of chat.tool_calls || [])
+                    if ((call.message_index === undefined ? chat.messages.length : call.message_index) === index)
+                        updateTool(call);
+                if (index === chat.messages.length) break;
+                const message = chat.messages[index];
                 if (message.role === "assistant") messageRows[message.id] = messages.count;
                 messages.append({ author: message.role === "user" ? "TÚ"
                                  : message.role === "assistant" ? "CHATGPT" : "SISTEMA", body: message.text,
-                                 turnId: message.turn_id || "", performanceJson: "" });
+                                 turnId: message.turn_id || "", performanceJson: "", toolJson: "" });
             }
             for (const measurement of chat.performance || [])
                 updatePerformance(Object.assign({}, measurement, { chat_id: chat.chat_id }));
@@ -268,10 +311,11 @@ QtObject {
             updateMessage(data.item_id, data.text, false, data.turn_id);
         } else if (event.type === "chat.finished") {
             busy = false;
+            pendingTool = ({});
             status = data.status === "completed" ? "Respuesta completada."
-                     : data.status === "interrupted" ? "Respuesta detenida."
+                     : data.status === "interrupted" ? data.message || "Respuesta detenida."
                      : data.message || "No se pudo completar la respuesta.";
-            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status, turnId: "", performanceJson: "" });
+            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status, turnId: "", performanceJson: "", toolJson: "" });
         } else if (event.type === "performance.updated") {
             updatePerformance(data.measurement);
         } else if (event.type === "performance.list") {
@@ -285,12 +329,13 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
+            pendingTool = ({});
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
             if (event.type === "error") deletingChatId = "";
             status = data.message;
-            messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "" });
+            messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
             ready = false;
@@ -301,6 +346,7 @@ QtObject {
             performanceBusy = false;
             framePending = false;
             deletingChatId = "";
+            pendingTool = ({});
             status = data.message;
         }
         eventReceived(event);
@@ -325,6 +371,7 @@ QtObject {
             bridge.historyReady = false;
             bridge.openingChat = false;
             bridge.deletingChatId = "";
+            bridge.pendingTool = ({});
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";
         }
     }

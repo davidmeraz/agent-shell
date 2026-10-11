@@ -3,6 +3,14 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.7.0] — 2026-10-11
+
+- Integración de shell local mediante llamadas estructuradas de Responses, con activación y directorio desde el panel lateral, confirmación por comando y tarjetas de salida.
+- Ejecución secuencial con timeout, salida limitada, entorno mínimo y cancelación del grupo de procesos; recuperación del historial sin reejecutar llamadas.
+- Contexto de herramientas persistente y métricas que separan ejecución y espera de confirmación de las respuestas de chat.
+- Compatibilidad con streams que entregan las llamadas en `response.output_item.done` y omiten los elementos en el resumen final.
+- 91 pruebas, revisión QML y comprobaciones gráficas con software y OpenGL; ciclo real con ChatGPT, ejecución aprobada de `pwd` y continuación desde el resultado.
+
 ## [0.6.0] — 2026-10-11
 
 - Interfaz en blanco, negro y grises, incluidos controles, estados, bordes de foco y selección de texto.

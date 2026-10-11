@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .performance import safe_measurement
+from .context import replay_items
 
 
 def now() -> str:
@@ -89,6 +90,17 @@ class HistoryStore:
         record["performance"] = []
         if isinstance(measurements, list):
             record["performance"] = [clean for row in measurements if (clean := safe_measurement(row))]
+        if "context" in record:
+            record["context"] = replay_items(record["context"])
+        calls = record.get("tool_calls", [])
+        if not isinstance(calls, list) or any(
+            not isinstance(call, dict) or not all(isinstance(call.get(key), str)
+            for key in ("id", "call_id", "turn_id", "command", "workdir", "status", "output"))
+            or call["status"] not in ("pending", "running", "completed", "error", "timeout", "denied", "interrupted")
+            for call in calls
+        ):
+            raise ValueError("Registro de herramientas inválido")
+        record["tool_calls"] = calls
         return record
 
     def delete(self, chat_id: str) -> None:
