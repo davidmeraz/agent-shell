@@ -138,11 +138,30 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.connected = True
+        self.selected_account = "fixture-account"
 
     def account(self):
+        email = "fixture@example.invalid" if self.selected_account == "fixture-account" else "second@example.invalid"
         return {"authenticated": self.connected, "method": "chatgpt" if self.connected else "none",
-                "email": "fixture@example.invalid" if self.connected else "", "plan": "",
-                "plan_enabled": self.connected}
+                "email": email if self.connected else "", "plan": "",
+                "plan_enabled": self.connected, "accounts": [
+                    {"id": "fixture-account", "label": "Cuenta 1", "email": "fixture@example.invalid",
+                     "active": self.selected_account == "fixture-account"},
+                    {"id": "fixture-second", "label": "Cuenta 2", "email": "second@example.invalid",
+                     "active": self.selected_account == "fixture-second"}]}
+
+    def begin_login(self, cancel, new_account=False):
+        # Verifica el botón de Qt sin abrir navegador ni emitir una URL OAuth.
+        from harness.http import ServiceError
+        raise ServiceError("Cuenta nueva solicitada (prueba)." if new_account else
+                           "Cuenta actual solicitada (prueba).")
+
+    def select_account(self, account_id):
+        from harness.http import ServiceError
+        if account_id not in ("fixture-account", "fixture-second"):
+            raise ServiceError("Cuenta no registrada")
+        self.selected_account = account_id
+        self.connected = True
 
     def access_token(self):
         return "test-only-access-token"

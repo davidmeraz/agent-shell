@@ -4,6 +4,16 @@ Contrato UTF-8 entre Qt y Python, con un objeto por línea y terminador `\n`.
 Límite de línea de entrada Qt → Python: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
 Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 
+Los comandos escritos con `/` se resuelven en Qt antes de enviar mensajes.
+`/nuevo` y `/detener` usan `chat.new` y `chat.cancel`; `/historial` abre el panel
+y solicita la lista cuando corresponde. `/ayuda` y `/terminal` abren controles
+locales; `/modelos` muestra modelos dentro del editor sólo al completar ese
+nombre. `/mode`, `/model` y `/modelo` son prefijos para sugerir completar el
+comando, sin activar la selección. El editor no tiene selector de modelos.
+Confirmar un modelo usa `model.select` con un slug validado del catálogo.
+Aplicar configuración de terminal usa las instrucciones
+existentes; ningún comando con `/` se traduce a `chat.send`.
+
 ## Instrucciones Qt → Python
 
 | Tipo | Campos | Acción |
@@ -16,7 +26,8 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 | `shell.configure` | `enabled` booleano, `workdir` | Activar/desactivar shell y validar el directorio local, sólo fuera de un turno |
 | `tool.decide` | `request_id`, `approved` booleano | Aprobar o rechazar únicamente la solicitud pendiente del turno actual |
 | `history.list` | Ninguno | Consultar conversaciones recientes |
-| `auth.login` | Ninguno | Iniciar OAuth propio de ChatGPT |
+| `auth.login` | `new_account` booleano opcional, por defecto `false` | Reautorizar la cuenta seleccionada o registrar otra |
+| `auth.select` | `account_id` del registro guardado | Activar otra cuenta y actualizar modelos |
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
 | `auth.refresh` | Ninguno | Leer sesión y actualizar catálogo |
 | `auth.logout` | Ninguno | Revocar y cerrar la sesión local |
@@ -48,7 +59,7 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `history.ready` | `directory` absoluto |
 | `history.list` | `chats`: chat_id, title y updated_at |
 | `history.notice` | `message` de persistencia |
-| `auth.state` | `authenticated`, `method`, `email`, `plan`, `plan_enabled` |
+| `auth.state` | `authenticated`, `method`, `email`, `plan`, `plan_enabled`, `accounts` |
 | `auth.login.started` | `url` OAuth, para abrir el navegador; nunca registrarla |
 | `auth.login.finished` | `success`, `message`, `show_plan_welcome` |
 | `auth.refresh.started` | Objeto vacío |
@@ -76,6 +87,14 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 no sólo una identidad verificada. `plan` queda vacío si no hay información
 verificada sobre su nombre. Enviar requiere además un modelo disponible.
 Una actualización fallida no cierra el backend ni elimina los mensajes.
+
+`accounts` contiene `{id, label, email, active}` por registro verificado; nunca
+tokens ni clientes OAuth. `id` es estable, opaco y válido para `auth.select`.
+La cuenta seleccionada puede necesitar reautorización: usa `auth.login` sin
+`new_account`. Registrar otra cuenta conserva las anteriores y sólo la activa
+tras validar la identidad; cerrar sesión afecta únicamente a la seleccionada.
+Las operaciones de cuenta se bloquean durante respuestas u otra operación de
+autenticación y usan los eventos existentes `auth.refresh.started/finished`.
 
 Un texto final puede llegar sin deltas previos. Un mensaje usa item_id y parte
 de contenido para reconciliarse sin duplicados. Recibir texto final no confirma

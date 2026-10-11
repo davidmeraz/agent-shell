@@ -24,6 +24,7 @@ FloatingWindow {
     readonly property bool overlayVisible: narrowSidebar.visible || historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || shellSettings.visible || shellApproval.visible
+                                           || commandHelp.visible
     readonly property bool wideLayout: width >= 880
     property bool sidebarExpanded: true
     readonly property bool sidebarVisible: wideLayout && sidebarExpanded
@@ -179,6 +180,7 @@ FloatingWindow {
             }
 
             ConversationPane {
+                objectName: "chatConversation"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 140
@@ -193,7 +195,6 @@ FloatingWindow {
                 Layout.fillWidth: true
                 bridge: window.bridge
                 compact: window.height < 680
-                onSubmitted: text => window.bridge.submit(text)
             }
 
             RowLayout {
@@ -223,6 +224,13 @@ FloatingWindow {
 
     Connections {
         target: window.bridge
+        function onLocalCommandRequested(command) {
+            if (command === "/ayuda") commandHelp.open();
+            else if (command === "/historial") { historyPanel.open(); window.bridge.refreshHistory(); }
+            // Preparar las sugerencias después de procesar Enter.
+            else if (command === "/modelos") Qt.callLater(composer.openModels);
+            else if (command === "/terminal") shellSettings.open();
+        }
         function onPlanConnected() { accountPanel.close(); planWelcome.open(); }
         function onBusyChanged() { window.elapsedMs = 0; if (!window.bridge.busy) shellApproval.close(); }
         function onEventReceived(event) {
@@ -237,6 +245,11 @@ FloatingWindow {
                 && event.data.measurement.turn_id === window.selectedPerformance.turn_id)
                 window.selectedPerformance = event.data.measurement;
         }
+    }
+    CommandHelpDialog {
+        id: commandHelp
+        anchors.centerIn: parent
+        width: Math.min(440, window.width - 40)
     }
     Drawer {
         id: narrowSidebar
@@ -322,6 +335,7 @@ FloatingWindow {
 
     ShellSettingsDialog {
         id: shellSettings
+        objectName: "shellSettings"
         bridge: window.bridge
         anchors.centerIn: parent
         width: Math.min(480, window.width - 40)
@@ -335,6 +349,7 @@ FloatingWindow {
 
     GlassDialog {
         id: accountPanel
+        objectName: "chatAccount"
         title: "Cuenta de ChatGPT"
         modal: true
         anchors.centerIn: parent
@@ -359,6 +374,16 @@ FloatingWindow {
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
             }
+            GlassComboBox {
+                objectName: "chatAccountSelector"
+                Layout.fillWidth: true
+                visible: window.bridge.registeredAccounts.count > 1
+                enabled: window.accountControlsEnabled
+                model: window.bridge.registeredAccounts
+                textRole: "displayName"
+                currentIndex: window.bridge.activeAccountIndex
+                onActivated: index => window.bridge.selectAccount(window.bridge.registeredAccounts.get(index).accountId)
+            }
             RowLayout {
                 Layout.fillWidth: true
                 ActionButton {
@@ -374,6 +399,14 @@ FloatingWindow {
                     enabled: window.accountControlsEnabled
                     onClicked: window.bridge.logout()
                 }
+            }
+            ActionButton {
+                objectName: "chatAddAccount"
+                Layout.fillWidth: true
+                visible: window.bridge.registeredAccounts.count > 0
+                text: "Usar otra cuenta"
+                enabled: window.accountControlsEnabled
+                onClicked: window.bridge.login(true)
             }
             ActionButton {
                 Layout.fillWidth: true
@@ -575,6 +608,7 @@ FloatingWindow {
 
     Drawer {
         id: historyPanel
+        objectName: "chatHistory"
         width: Math.min(360, window.width - 40)
         height: window.height
         edge: Qt.LeftEdge

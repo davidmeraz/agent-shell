@@ -46,8 +46,8 @@ class AuthTests(unittest.TestCase):
                 "token_type": "Bearer", "scope": "openid email offline_access " + PLAN_SCOPE,
                 "id_token": self.token(nonce, **claims)}
 
-    def attempt(self):
-        attempt = self.session.begin_login(threading.Event())
+    def attempt(self, new_account=False):
+        attempt = self.session.begin_login(threading.Event(), new_account=new_account)
         self.addCleanup(attempt.close)
         return attempt
 
@@ -137,6 +137,148 @@ class AuthTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.session.complete_login(attempt, {"code": "test"})
         self.http.json.assert_not_called()
+
+    def connect_other(self, **claims):
+        attempt = self.attempt(new_account=True)
+        tokens = self.tokens(attempt.nonce, aud="oaiapp_other", **claims)
+        tokens.update(access_token="other-access", refresh_token="other-refresh")
+        self.http.json.side_effect = [tokens, {"keys": [self.jwk]}]
+        self.session.complete_login(attempt, {"code": "other-code", "client_id": "oaiapp_other"})
+        return attempt
+
+    def test_new_account_uses_separate_registration_without_old_identity_hint(self):
+        self.connect()
+        original = self.session.store.path.read_bytes()
+        attempt = self.attempt(new_account=True)
+        params = parse_qs(urlsplit(attempt.url).query)
+        self.assertEqual(params["client_id"], ["dynamic_agent_client"])
+        self.assertEqual(params["agent_name_hint"], ["Agent Shell"])
+        self.assertNotIn("id_token_hint", params)
+        self.assertEqual(params["ext_agent_host_id"], [self.session.store.load()["host_id"]])
+        self.assertEqual(self.session.store.path.read_bytes(), original)
+
+    def test_accounts_with_same_email_remain_separate_and_can_switch_after_restart(self):
+        self.connect()
+        before = self.session.store.load()
+        old_id = self.session.account()["accounts"][0]["id"]
+        self.connect_other(sub="subject-2")
+        record = self.session.store.load()
+        self.assertEqual(record["host_id"], before["host_id"])
+        self.assertEqual(record["saved_connections"], [before["connection"]])
+        self.assertEqual(record["connection"]["subject"], "subject-2")
+        accounts = self.session.account()["accounts"]
+        self.assertEqual([item["label"] for item in accounts], ["Cuenta 1", "Cuenta 2"])
+        self.assertEqual(accounts[0]["email"], accounts[1]["email"])
+        self.assertNotEqual(accounts[0]["id"], accounts[1]["id"])
+        self.assertFalse(accounts[0]["active"])
+        self.assertTrue(accounts[1]["active"])
+        self.assertNotIn("other-refresh", json.dumps(self.session.account()))
+        reopened = ChatGPTSession(self.session.store.root, self.http)
+        reopened.select_account(old_id)
+        self.assertEqual(reopened.access_token(), "access-test")
+        self.assertEqual(reopened.store.load()["saved_connections"], [record["connection"]])
+        reopened.select_account(accounts[1]["id"])
+        self.assertEqual(reopened.access_token(), "other-access")
+        self.assertEqual([item["id"] for item in reopened.account()["accounts"]],
+                         [item["id"] for item in accounts])
+
+    def test_invalid_or_cancelled_new_identity_preserves_previous_session(self):
+        self.connect()
+        before = self.session.store.path.read_bytes()
+        attempt = self.attempt(new_account=True)
+        self.http.json.side_effect = [self.tokens("wrong", aud="oaiapp_other"), {"keys": [self.jwk]}]
+        with self.assertRaises(ServiceError):
+            self.session.complete_login(attempt, {"code": "test", "client_id": "oaiapp_other"})
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+        attempt = self.attempt(new_account=True)
+
+        def exchange(method, url, *args):
+            if url == JWKS_URL:
+                attempt.cancel.set()
+                return {"keys": [self.jwk]}
+            return self.tokens(attempt.nonce, aud="oaiapp_other")
+
+        self.http.json.side_effect = exchange
+        with self.assertRaises(Cancelled):
+            self.session.complete_login(attempt, {"code": "test", "client_id": "oaiapp_other"})
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+
+    def test_new_login_cannot_overwrite_existing_registration_with_different_subject(self):
+        self.connect()
+        before = self.session.store.path.read_bytes()
+        attempt = self.attempt(new_account=True)
+        self.http.json.side_effect = [self.tokens(attempt.nonce, sub="another-person"), {"keys": [self.jwk]}]
+        with self.assertRaises(ServiceError):
+            self.session.complete_login(attempt, {"code": "test", "client_id": "oaiapp_test"})
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+
+    def test_pending_new_registration_does_not_change_active_account_or_returning_login(self):
+        self.connect()
+        original = self.session.store.load()["connection"]
+        attempt = self.attempt(new_account=True)
+        self.http.json.side_effect = ServiceError("expired", 400, "invalid_grant")
+        with self.assertRaises(ServiceError):
+            self.session.complete_login(attempt, {"code": "test", "client_id": "oaiapp_other"})
+        self.assertEqual(self.session.store.load()["connection"], original)
+        self.assertEqual(self.attempt().client_id, "oaiapp_test")
+        self.assertEqual(self.attempt(new_account=True).client_id, "oaiapp_other")
+        self.connect_other(sub="subject-2")
+        self.assertNotIn("pending_new_client_id", self.session.store.load())
+
+    def test_logout_clears_only_selected_session_and_keeps_other_account(self):
+        self.connect()
+        old_id = self.session.account()["accounts"][0]["id"]
+        self.connect_other(sub="subject-2")
+        self.http.json.side_effect = [{"revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke"}, {}]
+        self.session.logout()
+        request = parse_qs(self.http.json.call_args.args[2].decode())
+        self.assertEqual(request["client_id"], ["oaiapp_other"])
+        self.assertEqual(request["token"], ["other-refresh"])
+        self.assertFalse(self.session.account()["authenticated"])
+        self.assertEqual(len(self.session.account()["accounts"]), 2)
+        self.session.select_account(old_id)
+        self.assertEqual(self.session.access_token(), "access-test")
+
+    def test_legacy_record_can_add_account_and_invalid_selection_preserves_file(self):
+        self.connect()
+        record = self.session.store.load()
+        record.pop("saved_connections")
+        record["connection"].pop("label")
+        self.session.store.save(record)
+        before = self.session.store.path.read_bytes()
+        with self.assertRaises(ServiceError):
+            self.session.select_account("not-registered")
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+        self.assertEqual(self.session.account()["accounts"][0]["label"], "Cuenta 1")
+        self.connect_other(sub="subject-2")
+        self.assertEqual(len(self.session.account()["accounts"]), 2)
+
+    def test_returning_login_does_not_replace_account_selected_by_other_process(self):
+        self.connect()
+        old_id = self.session.account()["accounts"][0]["id"]
+        self.connect_other(sub="subject-2")
+        attempt = self.attempt()
+        self.session.select_account(old_id)
+        before = self.session.store.path.read_bytes()
+        self.http.json.side_effect = [self.tokens(attempt.nonce, aud="oaiapp_other", sub="subject-2"),
+                                    {"keys": [self.jwk]}]
+        with self.assertRaises(ServiceError):
+            self.session.complete_login(attempt, {"code": "test", "client_id": "oaiapp_other"})
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+
+    def test_incompatible_saved_or_pending_registration_is_preserved(self):
+        self.connect()
+        original = self.session.store.load()
+        for changes in ({"saved_connections": [original["connection"]]},
+                        {"saved_connections": [{"client_id": "private-test-token"}]},
+                        {"pending_new_client_id": {"token": "private-test-token"}}):
+            with self.subTest(changes=changes):
+                self.session.store.save({**original, **changes})
+                before = self.session.store.path.read_bytes()
+                with self.assertRaises(ServiceError) as error:
+                    self.session.account()
+                self.assertNotIn("private-test-token", str(error.exception))
+                self.assertEqual(self.session.store.path.read_bytes(), before)
 
     def test_invalid_code_retains_issued_registration_for_fresh_login(self):
         attempt = self.attempt()

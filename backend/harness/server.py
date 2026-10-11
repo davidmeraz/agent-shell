@@ -115,13 +115,13 @@ class HarnessServer:
                 self.account_pending = False
                 self._emit("auth.refresh.finished")
 
-    def _login(self, cancel: threading.Event) -> None:
+    def _login(self, cancel: threading.Event, new_account: bool = False) -> None:
         attempt = None
         success, message = False, "Inicio de sesión cancelado."
         try:
             if cancel.is_set():
                 raise Cancelled()
-            attempt = self.session.begin_login(cancel)
+            attempt = self.session.begin_login(cancel, new_account=new_account)
             with self._lock:
                 if cancel.is_set():
                     raise Cancelled()
@@ -149,6 +149,18 @@ class HarnessServer:
                     self.account_pending = True
                     self._emit("auth.refresh.started")
                     self._spawn(self._refresh_account)
+
+    def _select_account(self, account_id: str) -> None:
+        try:
+            self.session.select_account(account_id)
+        except (ServiceError, OSError) as error:
+            with self._lock:
+                self.account_pending = False
+                self._emit("auth.refresh.finished")
+                self._emit("error", message=str(error) if isinstance(error, ServiceError) else
+                           "No se pudo cambiar de cuenta")
+            return
+        self._refresh_account()
 
     def _logout(self) -> None:
         try:
@@ -533,14 +545,26 @@ class HarnessServer:
                     self._emit("error", message="No se pudo borrar la conversación. Vuelve a actualizar el historial e inténtalo de nuevo."
                                if action == "chat.delete" else "No se pudo abrir la conversación guardada")
                 return
-            if action in ("auth.login", "auth.refresh", "auth.logout"):
+            if action in ("auth.login", "auth.refresh", "auth.logout", "auth.select"):
                 if self.busy or self.login_pending or self.account_pending:
                     self._emit("error", message="Ya hay una operación en curso")
                 elif action == "auth.login":
+                    new_account = request.get("new_account", False)
+                    if not isinstance(new_account, bool):
+                        self._emit("error", message="La opción de cuenta nueva debe ser un booleano")
+                        return
                     self.login_pending = True
                     self._login_cancel = threading.Event()
                     cancel = self._login_cancel
-                    self._spawn(lambda: self._login(cancel))
+                    self._spawn(lambda: self._login(cancel, new_account))
+                elif action == "auth.select":
+                    account_id = request.get("account_id")
+                    if not isinstance(account_id, str) or not account_id or len(account_id) > 128:
+                        self._emit("error", message="Selecciona una cuenta registrada")
+                        return
+                    self.account_pending = True
+                    self._emit("auth.refresh.started")
+                    self._spawn(lambda: self._select_account(account_id))
                 else:
                     self.account_pending = True
                     self._emit("auth.refresh.started")

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Performance.js" as Performance
+import "ChatCommands.js" as ChatCommands
 
 // Estado del chat. Python administra la sesión y el streaming directo con ChatGPT.
 QtObject {
@@ -40,12 +41,15 @@ QtObject {
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
     readonly property ListModel availableModels: ListModel {}
+    readonly property ListModel registeredAccounts: ListModel {}
+    property int activeAccountIndex: -1
     readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId
     readonly property bool canSend: ready && authenticated && availableModels.count > 0
                                    && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
+    signal localCommandRequested(string command)
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
@@ -53,10 +57,30 @@ QtObject {
 
     function submit(prompt) {
         const text = prompt.trim();
-        if (!canSend || !text) return;
+        const command = ChatCommands.parse(text);
+        if (command) {
+            const reason = command.error || ChatCommands.blockedReason(command.name, bridge);
+            if (reason) { status = reason; return false; }
+            if (command.name === "/modelos" && command.model) {
+                for (let i = 0; i < availableModels.count; ++i) {
+                    if (availableModels.get(i).slug === command.model) {
+                        selectModel(command.model);
+                        status = "Cambiando modelo…";
+                        return true;
+                    }
+                }
+                status = "El modelo solicitado no está disponible en tu cuenta.";
+                return false;
+            }
+            if (command.name === "/nuevo") newChat();
+            else if (command.name === "/detener") cancel();
+            else localCommandRequested(command.name);
+            return true;
+        }
+        if (!canSend || !text) return false;
         if (text.length > 16000) {
             status = "El mensaje puede tener como máximo 16000 caracteres.";
-            return;
+            return false;
         }
         submittedAt = Date.now();
         firstReceivedAt = 0;
@@ -68,6 +92,7 @@ QtObject {
         status = "Preparando la respuesta…";
         sendCommand({ type: "chat.send", prompt: text });
         conversationChanged();
+        return true;
     }
 
     function cancel() {
@@ -117,11 +142,17 @@ QtObject {
         conversationChanged();
     }
 
-    function login() {
+    function login(newAccount = false) {
         if (!ready || busy || loginBusy || accountBusy) return;
         loginBusy = true;
         status = "Preparando el inicio de sesión…";
-        sendCommand({ type: "auth.login" });
+        sendCommand({ type: "auth.login", new_account: newAccount });
+    }
+
+    function selectAccount(accountId) {
+        if (!ready || busy || loginBusy || accountBusy) return;
+        accountBusy = true;
+        sendCommand({ type: "auth.select", account_id: accountId });
     }
 
     function cancelLogin() { sendCommand({ type: "auth.cancel" }); }
@@ -263,6 +294,13 @@ QtObject {
             planEnabled = !!data.plan_enabled;
             email = data.email;
             plan = data.plan;
+            registeredAccounts.clear();
+            activeAccountIndex = -1;
+            for (const account of data.accounts || []) {
+                if (account.active) activeAccountIndex = registeredAccounts.count;
+                registeredAccounts.append({ accountId: account.id,
+                                            displayName: account.label + (account.email ? " · " + account.email : "") });
+            }
             if (!busy && !loginBusy && !accountBusy)
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
                          : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."

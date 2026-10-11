@@ -36,7 +36,7 @@ class ExecutorTests(unittest.TestCase):
         stat = Path(f"/proc/{pid}/stat")
         try:
             state = stat.read_text().split()[2]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return
         self.assertEqual(state, "Z", f"Proceso {pid} sobrevivió")
 

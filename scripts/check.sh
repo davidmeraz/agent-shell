@@ -4,4 +4,4 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 "${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}" -m unittest discover -s tests -v
-qmllint shell.qml smoke.qml ui/*.qml ui/components/*.qml
+qmllint shell.qml smoke.qml commands-smoke.qml ui/*.qml ui/components/*.qml

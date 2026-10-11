@@ -4,8 +4,8 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.7.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.6.0` conservan las versiones anteriores.
+**Versión: 0.8.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.7.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -34,11 +34,58 @@ local. **Salir** cierra la sesión de Agent Shell e
 intenta revocarla en OpenAI; si la revocación no se confirma, se informa para que
 puedas desconectar la aplicación desde los ajustes de ChatGPT.
 
+Para cambiar de cuenta, abre **Cuenta → Usar otra cuenta** y elige la nueva
+cuenta en el navegador. Se crea un registro separado y se conserva la anterior;
+tras conectar varias, el selector permite volver a cualquiera. **Continuar con
+ChatGPT** vuelve a autorizar la cuenta seleccionada. **Salir** cierra sólo esa
+sesión. Tus conversaciones se conservan al cambiar de cuenta.
+
+Si el navegador muestra `3p_login_workspace_scope_denied` al elegir otra cuenta,
+cancela el intento en Agent Shell y usa **Usar otra cuenta**. Los registros
+existentes están asociados a su cuenta y espacio de trabajo; no sirven para
+autorizar una cuenta distinta. La nueva cuenta también debe ser elegible para
+usar su plan con la aplicación.
+
+## Comandos del chat
+
+Escribe `/` para ver sugerencias compactas a la izquierda de **Enviar**, en el
+espacio que ocupaba el selector de modelos. La fila mantiene una altura fija
+al mostrar u ocultar las opciones, sin desplazar el chat ni el editor.
+Usa **← / →** para elegir, **Enter** para ejecutar, **Tab** para completar
+y **Esc** para ocultar las sugerencias.
+También puedes escribir el comando completo y pulsar **Enviar**.
+
+Al completar `/modelos` aparecen los modelos de tu cuenta en esa misma fila.
+Mientras escribes `/mode`, `/model` o `/modelo`, sólo se sugiere completar el
+comando; los modelos todavía no se muestran.
+Puedes filtrarlos, por ejemplo con `/modelos gpt`, y elegir con **← / →** y
+Enter o con un clic. Tab completa el
+identificador del modelo sin cambiarlo hasta que confirmes.
+
+| Comando | Acción |
+| --- | --- |
+| `/ayuda` | Mostrar los comandos disponibles |
+| `/nuevo` | Preparar una conversación nueva; la anterior queda en el historial |
+| `/historial` | Abrir las conversaciones guardadas |
+| `/modelos` | Elegir modelo dentro del editor |
+| `/terminal` | Abrir la configuración de terminal; no ejecuta ni activa comandos automáticamente |
+| `/detener` | Cancelar la respuesta o ejecución en curso |
+
+Se procesan localmente y no se envían a ChatGPT ni se guardan como mensajes.
+`/modelos` acepta el identificador de un modelo; los demás no aceptan argumentos.
+Un comando desconocido o no disponible muestra un aviso
+y conserva el borrador. `/ayuda` y `/historial` funcionan sin sesión; elegir modelo
+requiere una cuenta conectada. Puedes seguir escribiendo un borrador durante una
+respuesta y usar `/detener`; el envío de mensajes espera a que termine el turno.
+
 ## Apariencia
 
 La barra lateral reúne nuevo chat, historial, rendimiento y cuenta. Estos accesos
 se concentran en ese panel. El centro muestra la conversación y el editor inferior
-integra el selector de modelo y el envío.
+ofrece las acciones de envío y detención. Una etiqueta discreta a la izquierda de
+Enviar muestra el modelo activo; al pasar el cursor indica su identificador y
+recuerda el comando `/modelos`. Las sugerencias ocupan ese mismo espacio al usar
+comandos, manteniendo estable la altura del editor.
 El botón junto al título permite ocultar y mostrar la barra lateral. En ventanas
 pequeñas la abre como un panel superpuesto, que puedes cerrar con **Cerrar** o **Esc**.
 Las sugerencias de bienvenida preparan un mensaje que puedes editar antes de enviar.
@@ -164,6 +211,10 @@ usa un servidor loopback de prueba y el cliente de streaming real. La integraci�
 Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
 presentación del primer texto, rendimiento, borrado y el ciclo de shell con
 confirmación, ejecución real de `pwd` en una carpeta temporal y recuperación.
+El escenario `commands-smoke.qml` comprueba los seis comandos, sugerencias
+compactas, activación al completar `/modelos`, filtros, teclado y ratón,
+validación y borradores sin sesión. Las comprobaciones
+de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto
@@ -178,6 +229,8 @@ ui/ChatWindow.qml            Chat, cuenta, modelos e historial
 ui/components/ChatSidebar.qml Navegación y chats recientes
 ui/components/ConversationPane.qml Mensajes y bienvenida
 ui/components/MessageComposer.qml Editor, modelo y envío
+ui/ChatCommands.js           Catálogo y validación de comandos locales
+ui/components/CommandHelpDialog.qml Ayuda de comandos del chat
 backend/main.py              Entrada del backend
 backend/harness/auth.py      OAuth, identidad y sesión propia
 backend/harness/http.py      HTTP y streaming SSE cancelable

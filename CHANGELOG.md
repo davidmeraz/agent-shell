@@ -3,6 +3,18 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.8.0] — 2026-10-11
+
+- Botón «Usar otra cuenta» con registro OAuth separado, selector de cuentas guardadas y cierre de sesión por cuenta; conservación del host, registros anteriores y conversaciones.
+- Validación de la nueva identidad antes de activar la cuenta, compatibilidad con sesiones anteriores y pruebas de fallos, cancelación, cambio de cuenta y controles Qt.
+- Comandos locales `/ayuda`, `/nuevo`, `/historial`, `/modelos`, `/terminal` y `/detener`, sin enviarlos al modelo ni crear mensajes o mediciones.
+- Sugerencias compactas a la izquierda de Enviar, en el espacio del antiguo selector de modelos y con altura fija para no desplazar el chat; flechas izquierda/derecha para elegir, Enter para ejecutar, Tab para completar y Esc para ocultar.
+- Editor más minimalista sin selector de modelos: sólo `/modelos` completo muestra y filtra los modelos dentro del prompt; los prefijos como `/mode` sugieren completar el comando. Selección mediante teclado o clic.
+- Nombre del modelo activo como etiqueta discreta a la izquierda de Enviar, con identificador y recordatorio de `/modelos` al pasar el cursor; comparte espacio con las sugerencias sin desplazar el chat.
+- Validación de disponibilidad y argumentos con conservación de borradores; editor disponible sin sesión y durante respuestas para usar comandos locales.
+- Prueba Qt con sugerencias compactas, activación al completar `/modelos`, filtros, teclado, paneles, cancelación, validación, uso sin sesión y envío normal.
+- 103 pruebas, revisión QML y dos escenarios Qt con servicio local de prueba; comprobación de altura y posición estables y actualización de la etiqueta del modelo. Inicio de sesión real con otra cuenta confirmado por el usuario.
+
 ## [0.7.0] — 2026-10-11
 
 - Integración de shell local mediante llamadas estructuradas de Responses, con activación y directorio desde el panel lateral, confirmación por comando y tarjetas de salida.

@@ -75,6 +75,44 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(request["body"]["input"][1]["content"], "Hola desde ChatGPT. 🎵")
         self.assertEqual(len(self.server.conversation["messages"]), 4)
 
+    def test_login_for_another_account_passes_flag_and_preserves_chat(self):
+        self.send("conservar")
+        current = self.server.conversation
+        attempt = Mock(profile={}, url="https://example.invalid/test-login")
+        with patch.object(self.session, "begin_login", create=True, return_value=attempt) as begin, \
+                patch.object(self.session, "complete_login", create=True) as complete:
+            self.server.handle({"type": "auth.login", "new_account": True})
+            self.assertTrue(self.output.wait_for("auth.login.finished")["success"])
+            begin.assert_called_once_with(self.server._login_cancel, new_account=True)
+            complete.assert_called_once_with(attempt, attempt.wait.return_value)
+            self.output.wait_for("auth.refresh.finished")
+        self.assertIs(self.server.conversation, current)
+        self.assertEqual(len(self.server.history.list()), 1)
+
+    def test_account_selection_updates_models_without_deleting_conversation(self):
+        self.send("conservar")
+        current = self.server.conversation
+        with patch.object(self.session, "select_account", create=True) as select:
+            self.server.handle({"type": "auth.select", "account_id": "saved-account"})
+            self.output.wait_for("auth.refresh.finished")
+            select.assert_called_once_with("saved-account")
+        self.assertFalse(self.server.account_pending)
+        self.assertIs(self.server.conversation, current)
+        self.assertEqual(len(self.server.models), 2)
+
+    def test_account_selection_failure_and_invalid_options_release_controls(self):
+        with patch.object(self.session, "select_account", create=True,
+                          side_effect=ServiceError("Cuenta no registrada")):
+            self.server.handle({"type": "auth.select", "account_id": "unknown"})
+            self.assertIn("no registrada", self.output.wait_for("error")["message"])
+        self.assertFalse(self.server.account_pending)
+        for command in ({"type": "auth.login", "new_account": "true"},
+                        {"type": "auth.select", "account_id": None}):
+            self.server.handle(command)
+            self.output.wait_for("error")
+            self.assertFalse(self.server.login_pending)
+            self.assertFalse(self.server.account_pending)
+
     def test_cancel_closes_http_stream_and_keeps_partial_answer(self):
         self.server.handle({"type": "chat.send", "prompt": "cancel"})
         self.output.wait_for("chat.delta")

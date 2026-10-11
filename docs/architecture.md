@@ -22,6 +22,12 @@ flowchart LR
 - `ChatWindow`: chat, cuenta, modelo, control de respuesta e historial.
 - `AgentBridge`: aplica eventos, reconcilia texto final por identificador y abre
   la autorización sólo al solicitar el usuario iniciar sesión.
+- `ChatCommands.js`: catálogo compartido, análisis y disponibilidad de comandos
+  locales. `AgentBridge.submit` los resuelve antes del envío HTTP; `ChatWindow`
+  abre sus paneles y `MessageComposer` ofrece sugerencias en la fila de envío,
+  dentro de un espacio reservado de altura fija para evitar desplazar el chat.
+  `/modelos` filtra modelos de la cuenta y confirma su selección localmente;
+  el editor no incluye un selector de modelos adicional.
 - `HarnessServer`: valida instrucciones, construye contexto local, coordina
   operaciones en trabajadores y emite el contrato NDJSON.
 - `ChatGPTSession`: registro dinámico de cliente, callback loopback, validación
@@ -41,9 +47,19 @@ flowchart LR
 Antes de autorizar se crea un host estable, `ext_agent_host_id`, independiente de
 la identidad de usuario. El registro inicial usa `dynamic_agent_client`, nombre
 `Agent Shell`, scopes de identidad y permiso `chatgpt.tokens.use.direct`.
-Las nuevas conexiones usan el cliente emitido por OpenAI, asociado a esa cuenta.
-La implementación actual mantiene una sola cuenta registrada por directorio de
-sesión; un selector de cuentas queda pendiente.
+Las reconexiones usan el cliente emitido por OpenAI, asociado a esa cuenta y
+espacio de trabajo. **Usar otra cuenta** inicia un registro separado, sin enviar
+el ID token de la cuenta anterior y manteniendo el mismo host.
+Cada registro conserva su cliente, identidad y tokens: `connection` contiene la
+cuenta activa y `saved_connections` las demás. Los archivos anteriores de una
+sola cuenta siguen siendo válidos. La nueva identidad se verifica antes de
+guardar o activar la cuenta; un fallo o cancelación conserva la cuenta anterior.
+Un código caducado conserva el cliente emitido pendiente para reintentar el
+intercambio mediante otra autorización, separado del registro activo.
+El selector identifica cada registro mediante un hash del cliente, con una
+etiqueta estable y correo para presentarlo; no agrupa registros por correo.
+Cambiar de cuenta actualiza los modelos y conserva las conversaciones. Cerrar
+sesión revoca y elimina únicamente los tokens de la cuenta seleccionada.
 
 Cada intento tiene state, nonce y PKCE nuevos. El listener está ligado únicamente
 a `127.0.0.1` y a `/auth/callback`. El intercambio usa exactamente el mismo URI,

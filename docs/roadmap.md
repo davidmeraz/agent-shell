@@ -1,12 +1,15 @@
 # Próximos pasos
 
 La base actual conecta directamente con ChatGPT, con sesión propia, catálogo de
-modelos, historial local y shell con confirmación por comando.
+modelos, historial local y shell con confirmación por comando. Incluye comandos
+del chat y cambio entre cuentas guardadas; el usuario confirmó un inicio de
+sesión real con una cuenta nueva.
 
-1. Validar en el escritorio un registro OAuth real, renovación y conversación con
-   una cuenta elegible. Las pruebas automáticas no consumen cuentas.
+1. Ampliar la validación en el escritorio de renovación y conversación al cambiar
+   de cuenta. Las pruebas automáticas no consumen cuentas.
 2. Mejorar Markdown, bloques de código y lectura de mensajes durante streaming.
-3. Añadir selector de cuentas y espacios de trabajo, con registros separados.
+3. Mejorar la identificación y selección de espacios de trabajo en los registros
+   de cuentas existentes.
 4. Definir compactación del contexto para conversaciones largas.
 5. Ampliar herramientas y trabajo visual sobre proyectos: edición, terminal
    interactiva, aislamiento y gestión de trabajos largos sobre la shell ya integrada.

@@ -73,8 +73,16 @@ class SessionStore:
             if (not isinstance(value, dict) or value.get("schema_version") != 1
                     or not isinstance(value.get("host_id"), str) or not value["host_id"]):
                 raise ValueError()
-            profile = value.get("connection")
-            if profile is not None:
+            for key in ("pending_client_id", "pending_new_client_id"):
+                if key in value and (not isinstance(value[key], str) or not value[key]
+                                     or value[key] == "dynamic_agent_client"):
+                    raise ValueError()
+            saved = value.get("saved_connections", [])
+            if not isinstance(saved, list):
+                raise ValueError()
+            profiles = saved + ([value["connection"]] if value.get("connection") is not None else [])
+            identifiers = set()
+            for profile in profiles:
                 if not isinstance(profile, dict):
                     raise ValueError()
                 if not all(isinstance(profile.get(key), str) and profile[key]
@@ -82,12 +90,15 @@ class SessionStore:
                     raise ValueError()
                 if profile["client_id"] == "dynamic_agent_client":
                     raise ValueError()
+                if profile["client_id"] in identifiers:
+                    raise ValueError()
+                identifiers.add(profile["client_id"])
                 if (not isinstance(profile.get("scopes", []), list)
                         or not all(isinstance(scope, str) for scope in profile.get("scopes", []))):
                     raise ValueError()
                 if not isinstance(profile.get("expires_at", 0), (int, float)):
                     raise ValueError()
-                for key in ("email", "access_token", "refresh_token", "id_token"):
+                for key in ("email", "access_token", "refresh_token", "id_token", "label"):
                     if key in profile and not isinstance(profile[key], str):
                         raise ValueError()
             return value
@@ -112,14 +123,17 @@ class SessionStore:
 class LoginAttempt:
     """Listener loopback temporal. Un callback ajeno no consume el intento válido."""
 
-    def __init__(self, record: dict, cancel: threading.Event, timeout: float = 600) -> None:
+    def __init__(self, record: dict, cancel: threading.Event, timeout: float = 600,
+                 new_account: bool = False) -> None:
         self.cancel = cancel
         self.state = secrets.token_urlsafe(32)
         self.nonce = secrets.token_urlsafe(32)
         self.verifier = secrets.token_urlsafe(64)
         self.expires = time.monotonic() + timeout
-        self.profile = record.get("connection") or {}
-        self.client_id = self.profile.get("client_id") or record.get("pending_client_id") or "dynamic_agent_client"
+        self.new_account = new_account
+        self.profile = {} if new_account else record.get("connection") or {}
+        pending_key = "pending_new_client_id" if new_account else "pending_client_id"
+        self.client_id = self.profile.get("client_id") or record.get(pending_key) or "dynamic_agent_client"
         self.result: dict | None = None
         attempt = self
 
@@ -180,7 +194,7 @@ class LoginAttempt:
 
 
 class ChatGPTSession:
-    """Una cuenta registrada localmente; renovación independiente de Codex CLI."""
+    """Registros separados por cuenta; renovación independiente de Codex CLI."""
 
     def __init__(self, root: Path, http: HttpClient | None = None) -> None:
         self.store = SessionStore(root)
@@ -188,16 +202,42 @@ class ChatGPTSession:
 
     def account(self) -> dict:
         with self.store.locked():
-            profile = self.store.load().get("connection") or {}
+            record = self.store.load()
+            profile = record.get("connection") or {}
+            profiles = record.get("saved_connections", []) + ([profile] if profile else [])
+            accounts = [{"id": self._account_id(item), "label": item.get("label", "Cuenta 1"),
+                         "email": item.get("email", ""), "active": item is profile}
+                        for item in profiles]
         connected = bool(profile.get("access_token") or profile.get("refresh_token"))
         return {"authenticated": connected and PLAN_SCOPE in profile.get("scopes", []),
                 "method": "chatgpt" if connected else "none",
                 "email": profile.get("email", "") if connected else "", "plan": "",
-                "plan_enabled": connected and PLAN_SCOPE in profile.get("scopes", [])}
+                "plan_enabled": connected and PLAN_SCOPE in profile.get("scopes", []),
+                "accounts": accounts}
 
-    def begin_login(self, cancel: threading.Event) -> LoginAttempt:
+    @staticmethod
+    def _account_id(profile: dict) -> str:
+        return hashlib.sha256(profile["client_id"].encode()).hexdigest()
+
+    def select_account(self, account_id: str) -> None:
         with self.store.locked():
-            return LoginAttempt(self.store.load(), cancel)
+            record = self.store.load()
+            current = record.get("connection")
+            if current and self._account_id(current) == account_id:
+                return
+            saved = record.get("saved_connections", [])
+            selected = next((item for item in saved if self._account_id(item) == account_id), None)
+            if selected is None:
+                raise ServiceError("La cuenta seleccionada no está registrada")
+            record["saved_connections"] = [item for item in saved if item is not selected]
+            if current:
+                record["saved_connections"].append(current)
+            record["connection"] = selected
+            self.store.save(record)
+
+    def begin_login(self, cancel: threading.Event, new_account: bool = False) -> LoginAttempt:
+        with self.store.locked():
+            return LoginAttempt(self.store.load(), cancel, new_account=new_account)
 
     def _identity(self, token: str, client_id: str, nonce: str | None = None) -> dict:
         try:
@@ -259,7 +299,7 @@ class ChatGPTSession:
             if error.code == "invalid_grant" and not attempt.profile and not attempt.cancel.is_set():
                 with self.store.locked():
                     record = self.store.load()
-                    record["pending_client_id"] = client_id
+                    record["pending_new_client_id" if attempt.new_account else "pending_client_id"] = client_id
                     self.store.save(record)
             raise
         identity = self._identity(tokens.get("id_token", ""), client_id, attempt.nonce)
@@ -271,7 +311,20 @@ class ChatGPTSession:
             if attempt.cancel.is_set():
                 raise Cancelled()
             record = self.store.load()
-            record.pop("pending_client_id", None)
+            current = record.get("connection")
+            saved = record.get("saved_connections", [])
+            profiles = saved + ([current] if current else [])
+            previous = next((item for item in profiles if item["client_id"] == client_id), None)
+            if previous and previous["subject"] != identity["sub"]:
+                raise ServiceError("La cuenta no coincide con la registrada en esta aplicación")
+            if attempt.profile and (not current or current["client_id"] != attempt.profile["client_id"]):
+                raise ServiceError("La cuenta activa cambió durante el inicio de sesión. Vuelve a intentarlo.")
+            profile["label"] = (previous.get("label", "Cuenta 1") if previous else
+                                "Cuenta " + str(len(profiles) + 1))
+            record["saved_connections"] = [item for item in saved if item["client_id"] != client_id]
+            if current and current["client_id"] != client_id:
+                record["saved_connections"].append(current)
+            record.pop("pending_new_client_id" if attempt.new_account else "pending_client_id", None)
             record["connection"] = profile
             self.store.save(record)
 

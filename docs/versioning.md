@@ -3,11 +3,14 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.7.0`, con integración local de shell,
-directorio configurable y confirmación por comando. Conserva la interfaz
+La última versión etiquetada es `0.8.0`, con comandos locales del chat, selección
+mediante `/modelos`, etiqueta del modelo activo y registros separados de cuentas.
+Las sugerencias comparten la fila de envío sin desplazar el chat y se recorren
+con las flechas izquierda/derecha. Conserva la integración de shell de `0.7.0`,
+con directorio configurable y confirmación por comando, y la interfaz
 monocromática de vidrio mate, reflejos de agua y borrado de conversaciones de `0.6.0`.
-La navegación lateral reúne los accesos y se puede ocultar; el editor integra
-modelo y envío.
+La navegación lateral reúne los accesos y se puede ocultar; el editor muestra
+el modelo activo y las acciones de envío.
 Conserva las métricas de `0.4.0`, la sesión propia de ChatGPT y la conexión HTTP
 directa de `0.3.0`. Mantiene el formato NDJSON v1 y la compatibilidad con chats
 anteriores.
