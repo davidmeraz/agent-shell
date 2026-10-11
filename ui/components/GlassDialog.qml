@@ -4,14 +4,13 @@ import QtQuick.Controls
 Dialog {
     id: control
     padding: 20
-    background: GlassPanel {
+    background: MattePanel {
+        overlay: true
         radius: 16
-        topColor: "#f02a3a4b"
-        bottomColor: "#f0172433"
     }
     header: Label {
         text: control.title
-        color: "#edf4fa"
+        color: "#f5f5f5"
         font.pixelSize: 20
         font.bold: true
         padding: 20
@@ -25,5 +24,5 @@ Dialog {
         background: null
         delegate: ActionButton {}
     }
-    Overlay.modal: Rectangle { color: "#80080e18" }
+    Overlay.modal: Rectangle { color: "#66000000" }
 }

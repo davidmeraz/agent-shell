@@ -11,8 +11,8 @@ GlassPanel {
     signal suggestionRequested(string text)
     signal loginRequested()
     radius: 16
-    topColor: "#141c2d40"
-    bottomColor: "#24101928"
+    topColor: "#14292929"
+    bottomColor: "#24171717"
     edgeColor: "#20ffffff"
 
     Column {
@@ -23,7 +23,7 @@ GlassPanel {
         Text {
             width: parent.width
             text: "¿En qué trabajamos?"
-            color: "#edf4fa"
+            color: "#f5f5f5"
             font.pixelSize: pane.width < 580 ? 25 : 32
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
@@ -31,7 +31,7 @@ GlassPanel {
         Text {
             width: parent.width
             text: pane.bridge.authenticated ? "Una idea, una pregunta o tu próximo proyecto." : "Conecta tu cuenta de ChatGPT para comenzar."
-            color: "#b0bfcd"
+            color: "#bbbbbb"
             font.pixelSize: 13
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
@@ -98,9 +98,9 @@ GlassPanel {
                 height: parent.height
                 visible: message.fromUser
                 radius: 14
-                topColor: "#24408273"
-                bottomColor: "#1425373c"
-                edgeColor: "#3072e5c0"
+                topColor: "#24707070"
+                bottomColor: "#14333333"
+                edgeColor: "#30ffffff"
             }
             ColumnLayout {
                 id: messageContent
@@ -112,28 +112,30 @@ GlassPanel {
                     spacing: 8
                     Rectangle {
                         implicitWidth: 22; implicitHeight: 22; radius: 7
-                        color: message.systemMessage ? "#24f5c478" : "#2472e5c0"
+                        color: message.systemMessage ? "#24cccccc" : "#24ffffff"
                         Text {
                             anchors.centerIn: parent
                             text: message.fromUser ? "T" : message.systemMessage ? "!" : "AI"
-                            color: message.systemMessage ? "#f5c478" : "#b3f5df"
+                            color: message.systemMessage ? "#cccccc" : "#ffffff"
                             font.pixelSize: 9
                             font.bold: true
                         }
                     }
                     Text {
                         text: message.fromUser ? "Tú" : message.systemMessage ? "Sistema" : "ChatGPT"
-                        color: message.systemMessage ? "#f5c478" : "#b0bfcd"
+                        color: message.systemMessage ? "#cccccc" : "#bbbbbb"
                         font.pixelSize: 11
                         font.bold: true
                     }
                 }
                 TextArea {
+                    selectionColor: "#ffffff"
+                    selectedTextColor: "#000000"
                     Layout.fillWidth: true
                     text: message.body
                     readOnly: true
                     selectByMouse: true
-                    color: "#edf4fa"
+                    color: "#f5f5f5"
                     font.pixelSize: 15
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
@@ -146,7 +148,7 @@ GlassPanel {
                     Text {
                         Layout.fillWidth: true
                         text: Performance.summary(message.measurement)
-                        color: "#a5b6c6"
+                        color: "#aaaaaa"
                         font.pixelSize: 10
                         wrapMode: Text.Wrap
                     }

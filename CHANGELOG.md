@@ -3,7 +3,14 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
-## Pendiente de publicar
+## [0.6.0] — 2026-10-11
+
+- Interfaz en blanco, negro y grises, incluidos controles, estados, bordes de foco y selección de texto.
+- Vidrio mate uniforme y más marcado en el fondo principal, panel lateral, Historial, Cuenta, Rendimiento y diálogos; mayor desenfoque del chat detrás de los paneles superpuestos.
+- Reflejos suaves de agua dibujados con Qt, recortados a los bordes del vidrio y sin animación continua; fondo principal con un 44–48 % de opacidad.
+- Accesos a nuevo chat, historial, rendimiento y cuenta concentrados en el panel lateral; cabecera principal sin botones duplicados.
+- Papelera con confirmación en el panel lateral y el historial; borrado local de mensajes y mediciones, también sin sesión. Borrar el chat abierto prepara uno nuevo; un fallo conserva el chat.
+- 66 pruebas, revisión QML e integración Qt con borrado; comprobación gráfica de la confirmación y los paneles con software y OpenGL.
 
 ## [0.5.0] — 2026-10-11
 

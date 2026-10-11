@@ -154,6 +154,74 @@ class ServerTests(unittest.TestCase):
         self.send("hola")
         self.assertEqual(self.service.requests[-1]["body"]["model"], "other-model")
 
+    def test_delete_active_chat_clears_context_metrics_and_ignores_late_events(self):
+        self.send("borrar")
+        chat_id = self.server.conversation["chat_id"]
+        turn_id = self.server._performance.turn_id
+        generation = self.server._generation
+        self.server.handle({"type": "chat.delete", "chat_id": chat_id})
+        self.assertEqual(self.output.wait_for("chat.deleted")["chat_id"], chat_id)
+        self.assertIsNone(self.server.conversation)
+        self.assertIsNone(self.server._performance)
+        self.assertEqual(self.server.history.list(), [])
+        self.assertEqual(self.output.wait_for("performance.list")["measurements"], [])
+        self.server.handle({"type": "performance.presented", "turn_id": turn_id,
+                            "first_visible_ms": 250, "ui_frame_ms": 12})
+        self.server._response_event({"type": "response.completed", "response": {"status": "completed"}}, generation)
+        self.assertEqual(list(self.server.history.root.glob("*.json")), [])
+        self.send("nuevo")
+        self.assertNotEqual(self.server.conversation["chat_id"], chat_id)
+        self.assertEqual(len(self.service.requests[-1]["body"]["input"]), 1)
+
+    def test_delete_inactive_chat_preserves_current_context_and_works_offline(self):
+        self.send("conservar")
+        current = self.server.conversation
+        metrics = self.server._performance
+        other = self.server.history.create("borrar")
+        self.server.authenticated = False
+        requests = len(self.service.requests)
+        self.server.handle({"type": "chat.delete", "chat_id": other["chat_id"]})
+        self.assertEqual(self.output.wait_for("chat.deleted")["chat_id"], other["chat_id"])
+        self.assertIs(self.server.conversation, current)
+        self.assertIs(self.server._performance, metrics)
+        self.assertEqual(self.server.history.list()[0]["chat_id"], current["chat_id"])
+        self.assertEqual(len(self.output.wait_for("performance.list")["measurements"]), 1)
+        self.assertEqual(len(self.service.requests), requests)
+
+    def test_delete_failure_preserves_active_chat_and_reports_error(self):
+        self.send("conservar")
+        current = self.server.conversation
+        metrics = self.server._performance
+        with patch.object(self.server.history, "delete", side_effect=OSError("permission denied")):
+            self.server.handle({"type": "chat.delete", "chat_id": current["chat_id"]})
+        self.assertIn("No se pudo borrar", self.output.wait_for("error")["message"])
+        self.assertIs(self.server.conversation, current)
+        self.assertIs(self.server._performance, metrics)
+        self.assertEqual(len(self.server.history.list()), 1)
+        events = [json.loads(line)["type"] for line in self.output.getvalue().splitlines()]
+        self.assertNotIn("chat.deleted", events)
+        self.assertNotIn("chat.reset", events)
+
+    def test_delete_is_rejected_during_streaming_or_login(self):
+        record = self.server.history.create("conservar")
+        for field in ("busy", "login_pending"):
+            with self.subTest(field=field):
+                setattr(self.server, field, True)
+                self.server.handle({"type": "chat.delete", "chat_id": record["chat_id"]})
+                self.assertIn("Espera", self.output.wait_for("error")["message"])
+                self.assertEqual(self.server.history.load(record["chat_id"])["title"], "conservar")
+                setattr(self.server, field, False)
+
+    def test_missing_or_invalid_delete_target_does_not_clear_active_chat(self):
+        self.send("conservar")
+        current = self.server.conversation
+        for chat_id in (None, "../outside", "a" * 32):
+            with self.subTest(chat_id=chat_id):
+                self.server.handle({"type": "chat.delete", "chat_id": chat_id})
+                self.assertIn("No se pudo borrar", self.output.wait_for("error")["message"])
+                self.assertIs(self.server.conversation, current)
+        self.assertEqual(len(self.server.history.list()), 1)
+
     def test_shutdown_preserves_partial_text(self):
         self.server.handle({"type": "chat.send", "prompt": "cancel"})
         self.output.wait_for("chat.delta")

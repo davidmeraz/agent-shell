@@ -80,6 +80,21 @@ ShellRoot {
                 }
                 chatWindow.showPerformance(agent.performanceHistory[0]);
                 finishRun.start();
+            } else if (event.type === "chat.deleted" && test.stage === 7) {
+                if (event.data.chat_id !== test.savedChatId || agent.deletingChatId
+                    || agent.currentChatId || agent.messages.count || agent.conversations.count
+                    || agent.performanceHistory.length || agent.framePending || !agent.canSend) {
+                    test.fail("borrado no limpia conversación, historial o mediciones");
+                    return;
+                }
+                test.stage = 8;
+            } else if (event.type === "performance.list" && test.stage === 8) {
+                if (agent.performanceHistory.length || agent.modelPerformance.length)
+                    test.fail("mediciones borradas reaparecen");
+                else {
+                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial, rendimiento y borrado de conversación");
+                    Qt.quit();
+                }
             } else if (event.type === "error" || event.type === "backend.disconnected") {
                 test.fail(event.data.message);
             }
@@ -98,8 +113,8 @@ ShellRoot {
         id: finishRun
         interval: 100
         onTriggered: {
-            console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación, historial y rendimiento con presentación Qt");
-            Qt.quit();
+            test.stage = 7;
+            agent.deleteChat(test.savedChatId);
         }
     }
     ChatWindow { id: chatWindow; bridge: agent }

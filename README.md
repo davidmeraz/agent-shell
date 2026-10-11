@@ -4,12 +4,12 @@ Aplicación de chat para Linux con **Quickshell y Qt Quick**, sesión propia de
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.5.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0`, `v0.2.0`, `v0.3.0` y `v0.4.0` conservan las versiones anteriores.
+**Versión: 0.6.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.5.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
-Requisitos: Python 3.11+, Quickshell 0.3.x con Qt Quick Controls y Layouts, acceso
+Requisitos: Python 3.11+, Quickshell 0.3.x con Qt Quick Controls, Layouts y Effects, acceso
 a Internet y una sesión gráfica. La validación de identidad usa PyJWT con
 cryptography; la instalación prepara un entorno Python dentro del proyecto.
 
@@ -36,17 +36,25 @@ puedas desconectar la aplicación desde los ajustes de ChatGPT.
 
 ## Apariencia
 
-En ventanas amplias, la barra lateral reúne los chats, rendimiento y cuenta.
-En ventanas pequeñas, esos accesos pasan a una barra superior. El centro muestra
-la conversación y el editor inferior integra el selector de modelo y el envío.
+La barra lateral reúne nuevo chat, historial, rendimiento y cuenta. Estos accesos
+se concentran en ese panel. El centro muestra la conversación y el editor inferior
+integra el selector de modelo y el envío.
 El botón junto al título permite ocultar y mostrar la barra lateral. En ventanas
 pequeñas la abre como un panel superpuesto, que puedes cerrar con **Cerrar** o **Esc**.
 Las sugerencias de bienvenida preparan un mensaje que puedes editar antes de enviar.
+El panel lateral, Historial, Cuenta, Rendimiento y sus diálogos usan el mismo vidrio
+mate translúcido más marcado, con ondas de luz suaves que evocan un reflejo de agua.
+Los reflejos se dibujan al cambiar el tamaño, sin animación continua.
+Al abrir un panel superpuesto, el chat de detrás se
+suaviza con [desenfoque de Qt Quick](https://doc.qt.io/qt-6/qml-qtquick-effects-multieffect.html);
+ese efecto se activa sólo mientras hay un panel visible.
+Con el renderizador de software se conserva el acabado mate sin desenfoque interno.
 
-La interfaz usa vidrio transparente con un tinte oscuro ligero, bordes de un píxel
-y reflejos suaves. El fondo principal tiene entre un 25 y un 32 % de opacidad para
+La interfaz usa únicamente blanco, negro y tonos de gris, con vidrio transparente,
+un tinte oscuro y bordes de un píxel, con reflejos suaves.
+El fondo principal tiene entre un 44 y un 48 % de opacidad para
 dejar visible el escritorio. El campo de mensaje y los controles resaltan el foco
-con un borde verde.
+con un borde blanco. La selección de texto también es en blanco y negro.
 El fondo solicita [desenfoque nativo de Quickshell](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/BackgroundEffect/)
 en compositores compatibles con `ext-background-effect-v1`, como Hyprland reciente.
 Sin ese soporte se conservan la transparencia y los bordes de cristal.
@@ -86,6 +94,11 @@ anterior como pista de cuenta: tampoco debe registrarse o compartirse.
 Cada conversación se guarda automáticamente en un JSON de `.runtime/chats/`.
 El panel **Historial** permite abrir chats anteriores, copiar la ubicación y abrir
 la carpeta. El texto local sigue disponible sin conexión y sin iniciar sesión.
+La papelera de cada chat, en la barra lateral o en Historial, permite borrar la
+conversación después de confirmar. Se eliminan su archivo local, mensajes y
+mediciones de rendimiento; no se puede deshacer. Si borras el chat abierto, queda
+lista una conversación nueva. Durante una respuesta o un login, el borrado se
+deshabilita. Un fallo al eliminar el archivo conserva el chat y muestra un error.
 
 Las solicitudes llevan los mensajes guardados de la conversación y no dependen
 de threads remotos. Se envían con `store: false` y `stream: true`. Los chats de
@@ -126,7 +139,7 @@ explícita; el lanzamiento normal usa `backend/main.py` y el servicio real.
 Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTTP
 usa un servidor loopback de prueba y el cliente de streaming real. La integración
 Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
-presentación del primer texto y el panel de rendimiento.
+presentación del primer texto, el panel de rendimiento y el borrado de conversaciones.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto

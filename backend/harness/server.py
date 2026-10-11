@@ -165,6 +165,17 @@ class HarnessServer:
         self._emit("chat.loaded", chat=record)
         self._emit("model.selected", model=self.model)
 
+    def _delete_chat(self, chat_id: str) -> None:
+        self.history.delete(chat_id)
+        if self.conversation is not None and self.conversation["chat_id"] == chat_id:
+            self.conversation = None
+            self._performance = None
+            self._generation += 1
+            self._emit("chat.reset")
+        self._emit("chat.deleted", chat_id=chat_id)
+        self._publish_history()
+        self._publish_performance()
+
     def _save(self) -> None:
         if self.conversation is not None:
             try:
@@ -212,13 +223,13 @@ class HarnessServer:
                 self._performance.mark(phase)
 
     def _publish_performance(self) -> None:
-        try:
-            measurements = self.history.performance()
-        except OSError:
-            self._emit("performance.list", measurements=[])
-            self._emit("history.notice", message="No se pudieron leer las mediciones guardadas. Vuelve a actualizar el panel.")
-            return
         with self._lock:
+            try:
+                measurements = self.history.performance()
+            except OSError:
+                self._emit("performance.list", measurements=[])
+                self._emit("history.notice", message="No se pudieron leer las mediciones guardadas. Vuelve a actualizar el panel.")
+                return
             if self._performance and self.conversation is not None:
                 snapshot = {**self._performance.snapshot(), "chat_id": self.conversation["chat_id"]}
                 measurements = [row for row in measurements if row["turn_id"] != snapshot["turn_id"]]
@@ -321,7 +332,7 @@ class HarnessServer:
             if action == "auth.cancel":
                 self._login_cancel.set()
                 return
-            if action in ("chat.new", "chat.open", "history.list", "model.select"):
+            if action in ("chat.new", "chat.open", "chat.delete", "history.list", "model.select"):
                 if self.busy or self.login_pending or (action == "model.select" and self.account_pending):
                     self._emit("error", message="Espera a que termine la operación actual")
                     return
@@ -333,6 +344,8 @@ class HarnessServer:
                         self._emit("model.selected", model=self.model)
                     elif action == "chat.open":
                         self._open_chat(request.get("chat_id"))
+                    elif action == "chat.delete":
+                        self._delete_chat(request.get("chat_id"))
                     elif action == "history.list":
                         self._publish_history()
                     elif request.get("model") in {row["slug"] for row in self.models}:
@@ -341,7 +354,8 @@ class HarnessServer:
                     else:
                         self._emit("error", message="Selecciona un modelo disponible en tu cuenta")
                 except (OSError, ValueError, KeyError, TypeError):
-                    self._emit("error", message="No se pudo abrir la conversación guardada")
+                    self._emit("error", message="No se pudo borrar la conversación. Vuelve a actualizar el historial e inténtalo de nuevo."
+                               if action == "chat.delete" else "No se pudo abrir la conversación guardada")
                 return
             if action in ("auth.login", "auth.refresh", "auth.logout"):
                 if self.busy or self.login_pending or self.account_pending:

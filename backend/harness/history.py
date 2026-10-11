@@ -91,6 +91,10 @@ class HistoryStore:
             record["performance"] = [clean for row in measurements if (clean := safe_measurement(row))]
         return record
 
+    def delete(self, chat_id: str) -> None:
+        """Borra únicamente el archivo local identificado; los errores se propagan."""
+        self._path(chat_id).unlink()
+
     def performance(self, limit: int = 200) -> list[dict]:
         """Últimos turnos medidos, sin títulos, prompts ni datos de cuenta."""
         result = []

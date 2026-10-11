@@ -12,6 +12,7 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 | `chat.cancel` | Ninguno | Cerrar streaming y conservar el texto parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
 | `chat.open` | `chat_id` | Cargar conversación local |
+| `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
 | `history.list` | Ninguno | Consultar conversaciones recientes |
 | `auth.login` | Ninguno | Iniciar OAuth propio de ChatGPT |
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
@@ -23,7 +24,15 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 
 Sólo una respuesta o operación de cuenta a la vez. El historial puede leerse sin
 autenticación y mientras se descubre el catálogo. Cambiar de chat se rechaza
-durante respuesta o login. Cerrar stdin cancela operaciones y cierra el backend.
+durante respuesta o login, al igual que borrar conversaciones. Cerrar stdin cancela operaciones y cierra el backend.
+
+La interfaz pide confirmación antes de enviar `chat.delete`. El backend valida el
+identificador y rechaza enlaces simbólicos. Sólo después de eliminar el archivo
+emite `chat.deleted`, seguido de `history.list` y `performance.list` actualizados.
+Si era el chat abierto, primero limpia el contexto y emite `chat.reset`; las
+confirmaciones de presentación y respuestas tardías no recrean el archivo.
+Un archivo inexistente o un fallo de borrado produce `error` y conserva el estado
+actual. El borrado funciona sin sesión y no hace llamadas a OpenAI.
 
 ## Eventos Python → Qt
 
@@ -48,6 +57,7 @@ Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.thread` | `thread_id`: id del chat local; `model` |
 | `chat.saved` | `chat_id`, `title` |
 | `chat.loaded` | `chat`: registro local completo |
+| `chat.deleted` | `chat_id` de la conversación local eliminada |
 | `chat.delta` | `item_id`, `text` que amplía el mensaje, `turn_id` |
 | `chat.message` | `item_id`, `text` final que reemplaza fragmentos, `turn_id` |
 | `chat.finished` | `status: completed/failed/interrupted`, `message`, `turn_id` |

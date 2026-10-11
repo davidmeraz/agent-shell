@@ -22,12 +22,12 @@ ActionButton {
             radius: 3
             color: "transparent"
             border.width: 1
-            border.color: control.expanded ? "#b3f5df" : "#d8e5ee"
+            border.color: control.expanded ? "#ffffff" : "#e4e4e4"
             Rectangle {
                 x: 2; y: 2; width: 4; height: 12; radius: 1
-                color: control.expanded ? "#5072e5c0" : "#18ffffff"
+                color: control.expanded ? "#50ffffff" : "#18ffffff"
             }
-            Rectangle { x: 7; y: 1; width: 1; height: 14; color: "#8096a9bb" }
+            Rectangle { x: 7; y: 1; width: 1; height: 14; color: "#80a0a0a0" }
         }
     }
 }

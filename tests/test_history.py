@@ -73,6 +73,30 @@ class StoreTests(unittest.TestCase):
             self.store.load(record["chat_id"])
         self.assertEqual(path.read_bytes(), before)
 
+    def test_delete_removes_only_selected_chat_and_survives_restart(self):
+        removed = self.store.create("borrar")
+        kept = self.store.create("conservar")
+        self.store.delete(removed["chat_id"])
+        reopened = HistoryStore(self.store.root)
+        self.assertEqual([chat["chat_id"] for chat in reopened.list()], [kept["chat_id"]])
+        with self.assertRaises(FileNotFoundError):
+            reopened.load(removed["chat_id"])
+        with self.assertRaises(FileNotFoundError):
+            reopened.delete(removed["chat_id"])
+
+    def test_delete_rejects_invalid_ids_and_symlinks_without_touching_other_files(self):
+        record = self.store.create("conservar")
+        outside = Path(self.temp.name) / "outside.json"
+        outside.write_text("keep")
+        link = self.store.root / ("a" * 32 + ".json")
+        link.symlink_to(outside)
+        for chat_id in (None, [], "../outside", str(outside), "", "A" * 32, "a" * 32):
+            with self.subTest(chat_id=chat_id), self.assertRaises(ValueError):
+                self.store.delete(chat_id)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(outside.read_text(), "keep")
+        self.assertEqual(self.store.list()[0]["chat_id"], record["chat_id"])
+
     @unittest.skipUnless(os.name == "posix", "Permisos de archivo POSIX")
     def test_history_file_has_owner_only_permissions(self):
         record = self.store.create("private")
@@ -81,6 +105,25 @@ class StoreTests(unittest.TestCase):
 
 
 class RestartTests(unittest.TestCase):
+    def test_deleted_chat_and_metrics_stay_removed_after_backend_restart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with BackendSession(root) as session:
+                session.send({"type": "chat.send", "prompt": "borrar"})
+                chat_id = session.wait_for("chat.saved")["data"]["chat_id"]
+                session.wait_for("chat.finished")
+                session.send({"type": "chat.delete", "chat_id": chat_id})
+                session.wait_for("chat.reset")
+                self.assertEqual(session.wait_for("chat.deleted")["data"]["chat_id"], chat_id)
+                self.assertEqual(session.wait_for("history.list")["data"]["chats"], [])
+                self.assertEqual(session.wait_for("performance.list")["data"]["measurements"], [])
+            with BackendSession(root) as session:
+                session.send({"type": "history.list"})
+                self.assertEqual(session.wait_for("history.list")["data"]["chats"], [])
+                session.send({"type": "performance.list"})
+                self.assertEqual(session.wait_for("performance.list")["data"]["measurements"], [])
+            self.assertEqual(list((root / "chats").glob("*.json")), [])
+
     def test_chat_survives_restart_and_continues_without_codex_thread(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

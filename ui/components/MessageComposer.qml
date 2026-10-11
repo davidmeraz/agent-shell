@@ -11,8 +11,8 @@ GlassPanel {
     signal submitted(string text)
     implicitHeight: editorLayout.implicitHeight + 24
     radius: 16
-    topColor: "#282c4054"
-    bottomColor: "#20131e2d"
+    topColor: "#28393939"
+    bottomColor: "#201c1c1c"
     highlighted: prompt.activeFocus
 
     function prepare(text) {
@@ -36,10 +36,12 @@ GlassPanel {
             Layout.preferredHeight: composer.compact ? 64 : 88
             clip: true
             TextArea {
+                selectionColor: "#ffffff"
+                selectedTextColor: "#000000"
                 id: prompt
                 placeholderText: composer.bridge.authenticated ? "Escribe un mensaje…" : "Conecta ChatGPT para escribir…"
-                placeholderTextColor: "#a5b6c6"
-                color: "#edf4fa"
+                placeholderTextColor: "#aaaaaa"
+                color: "#f5f5f5"
                 font.pixelSize: 14
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true

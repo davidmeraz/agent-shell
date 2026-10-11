@@ -1,6 +1,6 @@
 [project]
 name = "agent-shell"
-version = "0.5.0"
+version = "0.6.0"
 description = "Cliente de ChatGPT con sesión propia, Quickshell y Qt"
 requires-python = ">=3.11"
 dependencies = ["PyJWT[crypto]>=2.10,<3"]

@@ -14,6 +14,7 @@ QtObject {
     property bool planEnabled: false
     property bool historyReady: false
     property bool openingChat: false
+    property string deletingChatId: ""
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
     property string email: ""
@@ -35,9 +36,9 @@ QtObject {
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
     readonly property ListModel availableModels: ListModel {}
-    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat
+    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId
     readonly property bool canSend: ready && authenticated && availableModels.count > 0
-                                   && !busy && !loginBusy && !accountBusy && !openingChat
+                                   && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
@@ -83,6 +84,13 @@ QtObject {
 
     function refreshHistory() {
         if (canBrowseHistory) sendCommand({ type: "history.list" });
+    }
+
+    function deleteChat(chatId) {
+        if (!canBrowseHistory || !chatId) return;
+        deletingChatId = chatId;
+        status = "Borrando conversación…";
+        sendCommand({ type: "chat.delete", chat_id: chatId });
     }
 
     function login() {
@@ -176,6 +184,12 @@ QtObject {
         } else if (event.type === "chat.saved") {
             currentChatId = data.chat_id;
             currentTitle = data.title;
+        } else if (event.type === "chat.deleted") {
+            deletingChatId = "";
+            for (let i = conversations.count - 1; i >= 0; --i)
+                if (conversations.get(i).chatId === data.chat_id) conversations.remove(i);
+            performanceHistory = performanceHistory.filter(row => row.chat_id !== data.chat_id);
+            status = "Conversación borrada del historial local.";
         } else if (event.type === "chat.loaded") {
             messages.clear();
             messageRows = ({});
@@ -274,6 +288,7 @@ QtObject {
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
+            if (event.type === "error") deletingChatId = "";
             status = data.message;
             messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "" });
             conversationChanged();
@@ -285,6 +300,7 @@ QtObject {
             accountBusy = false;
             performanceBusy = false;
             framePending = false;
+            deletingChatId = "";
             status = data.message;
         }
         eventReceived(event);
@@ -308,6 +324,7 @@ QtObject {
             bridge.framePending = false;
             bridge.historyReady = false;
             bridge.openingChat = false;
+            bridge.deletingChatId = "";
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";
         }
     }
