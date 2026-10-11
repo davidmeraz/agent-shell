@@ -64,7 +64,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(calls[2].args[1]["threadId"], "thread-a")
         self.assertEqual(calls[0].args[1]["sandbox"], "read-only")
         self.assertEqual(calls[0].args[1]["modelProvider"], "openai")
-        self.assertTrue(calls[0].args[1]["ephemeral"])
+        self.assertFalse(calls[0].args[1]["ephemeral"])
         self.assertFalse(calls[0].args[1]["config"]["features"]["shell_tool"])
 
     def test_cancel_before_turn_creation_skips_inference(self):
@@ -153,7 +153,7 @@ class ServerTests(unittest.TestCase):
         ]
         self.server.serve(io.StringIO("invalid\n" + "x" * 70000 + '\n{"type":"chat.new"}\n'))
         self.assertEqual([e["type"] for e in self.events()],
-                         ["backend.ready", "auth.state", "error", "error", "chat.reset"])
+                         ["history.ready", "history.list", "backend.ready", "auth.state", "error", "error", "chat.reset"])
 
     def test_server_approval_requests_are_denied(self):
         self.server._on_message({"id": 9, "method": "item/commandExecution/requestApproval"})
@@ -177,6 +177,7 @@ class TransportTests(unittest.TestCase):
             process = subprocess.Popen([
                 sys.executable, "-u", str(PROJECT / "backend/main.py"),
                 "--chat-root", chat_root, "--codex-executable", str(PROJECT / "tests/fake_codex.py"),
+                "--history-root", str(Path(chat_root) / "chats"),
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             watchdog = threading.Timer(5, process.kill)
             watchdog.start()
@@ -219,6 +220,7 @@ class TransportTests(unittest.TestCase):
             process = subprocess.Popen([
                 sys.executable, "-u", str(PROJECT / "backend/main.py"),
                 "--chat-root", chat_root, "--codex-executable", str(PROJECT / "tests/fake_codex.py"),
+                "--history-root", str(Path(chat_root) / "chats"),
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             events = queue.Queue()
             reader = threading.Thread(target=lambda: [events.put(json.loads(line)) for line in process.stdout], daemon=True)

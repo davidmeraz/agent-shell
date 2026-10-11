@@ -6,6 +6,7 @@ smoke_runtime="$(mktemp -d /tmp/agent-shell-smoke.XXXXXX)"
 trap 'rm -rf -- "$smoke_runtime"' EXIT
 env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen \
     AGENT_SHELL_CODEX="$project_root/tests/fake_codex.py" \
+    AGENT_SHELL_HISTORY_DIR="$smoke_runtime/chats" \
     timeout 12s qs --path "$project_root/smoke.qml" > "$smoke_runtime/output.log" 2>&1 || {
         cat "$smoke_runtime/output.log"
         exit 1

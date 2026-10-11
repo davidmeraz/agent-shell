@@ -5,7 +5,19 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Pendiente de publicar
 
-Sin cambios posteriores a la base inicial.
+Sin cambios pendientes.
+
+## [0.2.0] — 2026-10-11
+
+- Historial automático con un JSON por conversación en `.runtime/chats/`.
+- Panel Historial con título, fecha, selección de chats y ubicación del directorio.
+- Botón Abrir carpeta y ruta seleccionable para copiarla.
+- Recuperación de mensajes incluso cuando Codex está desconectado.
+- Threads persistentes y continuación mediante `thread/resume` de Codex.
+- Guardado atómico, conservación de respuestas parciales y tolerancia a JSON dañados.
+- Ubicación configurable con `AGENT_SHELL_HISTORY_DIR` y `--history-root`.
+- Pruebas de recuperación tras reinicio, continuidad del thread y fallas de escritura.
+- Ejecución única del shell y pruebas con historial aislado en directorios temporales.
 
 ## [0.1.0] — 2026-10-11
 

@@ -6,12 +6,14 @@ lector de instrucciones, permitiendo cancelar aun al preparar una respuesta.
 
 import json
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import urlparse
 
 from .codex import CodexClient, CodexError
 from .events import EventEmitter
+from .history import HistoryStore
 from .version import get_version
 
 MAX_REQUEST_BYTES = 65536
@@ -27,10 +29,14 @@ CHAT_INSTRUCTIONS = (
 class HarnessServer:
     """Administra cuenta, conversación y turno; Codex conserva la autenticación."""
 
-    def __init__(self, chat_root: Path, output: TextIO, command: list[str]) -> None:
+    def __init__(self, chat_root: Path, output: TextIO, command: list[str],
+                 history_root: Path | None = None) -> None:
         self.root = chat_root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.events = EventEmitter(output)
+        self.history = HistoryStore(history_root if history_root is not None else self.root / "history")
+        self.conversation: dict | None = None
+        self._resume_thread_id: str | None = None
         self.client = CodexClient(command, self._on_message, self._disconnected)
         self._lock = threading.RLock()
         self._closing = threading.Event()
@@ -54,6 +60,45 @@ class HarnessServer:
                 if not self._closing.is_set():
                     self.events.emit("error", message=str(error))
         threading.Thread(target=guarded, daemon=True).start()
+
+    def _publish_history(self) -> None:
+        self.events.emit("history.list", chats=self.history.list())
+        if self.history.invalid_files:
+            self.events.emit("history.notice", message="Hay archivos de historial dañados o incompatibles; se conservaron.")
+
+    def _save_message(self, item_id: str, text: str, append: bool, status: str) -> None:
+        """Persiste tanto fragmentos como texto final, sin duplicar el mismo mensaje."""
+        if self.conversation is None:
+            return
+        messages = self.conversation["messages"]
+        message = next((entry for entry in messages if entry["id"] == item_id), None)
+        if message is None:
+            messages.append({"id": item_id, "role": "assistant", "text": text, "status": status})
+        else:
+            message["text"] = message["text"] + text if append else text
+            message["status"] = status
+        try:
+            self.history.save(self.conversation)
+        except (OSError, ValueError):
+            self.events.emit("history.notice", message="No se pudo guardar un fragmento del chat; el texto sigue visible.")
+
+    def _open_chat(self, chat_id: str) -> None:
+        record = self.history.load(chat_id)  # Una falla conserva la conversación actual.
+        self.conversation = record
+        self.thread_id = None
+        self.turn_id = None
+        self._resume_thread_id = record.get("thread_id")
+        self.events.emit("chat.loaded", chat=record)
+
+    def _thread_options(self) -> dict:
+        return {
+            "cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
+            "modelProvider": "openai", "developerInstructions": CHAT_INSTRUCTIONS,
+            "config": {
+                "features": {"shell_tool": False, "unified_exec": False, "apps": False},
+                "web_search": "disabled",
+            },
+        }
 
     def _read_account(self) -> None:
         account = self.client.request("account/read", {"refreshToken": False}).get("account") or {}
@@ -101,17 +146,21 @@ class HarnessServer:
                     generation = self._generation
                 thread_id = self.thread_id
             if not thread_id:
-                result = self.client.request("thread/start", {
-                    "cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
-                    "modelProvider": "openai",
-                    "ephemeral": True, "developerInstructions": CHAT_INSTRUCTIONS,
-                    "config": {
-                        "features": {"shell_tool": False, "unified_exec": False, "apps": False},
-                        "web_search": "disabled",
-                    },
-                })
+                if self._resume_thread_id:
+                    result = self.client.request("thread/resume", {
+                        **self._thread_options(), "threadId": self._resume_thread_id,
+                    })
+                else:
+                    result = self.client.request("thread/start", {
+                        **self._thread_options(), "ephemeral": False,
+                    })
                 with self._lock:
                     self.thread_id = thread_id = result["thread"]["id"]
+                    self._resume_thread_id = None
+                    if self.conversation is not None:
+                        self.conversation["thread_id"] = thread_id
+                        self.conversation["model"] = result.get("model", "")
+                        self.history.save(self.conversation)
                 self.events.emit("chat.thread", thread_id=thread_id, model=result.get("model", ""))
             with self._lock:
                 if self._cancel_pending:
@@ -146,10 +195,22 @@ class HarnessServer:
             self.busy = False
             self.turn_id = None
             self._cancel_pending = False
+            if self.conversation is not None:
+                for entry in self.conversation["messages"]:
+                    if entry["status"] == "streaming":
+                        entry["status"] = status
+                try:
+                    self.history.save(self.conversation)
+                except OSError:
+                    self.events.emit("history.notice", message="No se pudo guardar el último estado del chat")
             self.events.emit("chat.finished", status=status, message=message)
+            if self.conversation is not None:
+                self._publish_history()
 
     def _disconnected(self) -> None:
         with self._lock:
+            if self.busy:
+                self._finish("interrupted", "Se perdió la conexión con Codex")
             self.ready = False
             self.authenticated = False
             self.busy = False
@@ -158,6 +219,8 @@ class HarnessServer:
 
     def _on_message(self, message: dict) -> None:
         """Normaliza datos del chat; no reenvía tokens ni eventos de razonamiento."""
+        if self._closing.is_set():
+            return
         method, params = message.get("method"), message.get("params") or {}
         if "id" in message:
             # Este chat no tiene pantallas de herramientas; no dejar solicitudes
@@ -193,9 +256,11 @@ class HarnessServer:
                 if self._cancel_pending:
                     self._spawn(self._interrupt)
             elif method == "item/agentMessage/delta":
+                self._save_message(params["itemId"], params["delta"], True, "streaming")
                 self.events.emit("chat.delta", item_id=params["itemId"], text=params["delta"])
             elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
                 item = params["item"]
+                self._save_message(item["id"], item.get("text", ""), False, "completed")
                 self.events.emit("chat.message", item_id=item["id"], text=item.get("text", ""))
             elif method == "turn/completed":
                 turn = params["turn"]
@@ -210,6 +275,25 @@ class HarnessServer:
             return
         action = request.get("type")
         with self._lock:
+            # El historial local se puede leer incluso cuando Codex está desconectado.
+            if action in ("history.list", "chat.open", "chat.new"):
+                if self.busy or self.login_pending:
+                    self.events.emit("error", message="Detén la operación actual antes de abrir otro chat")
+                else:
+                    try:
+                        if action == "history.list":
+                            self._publish_history()
+                        elif action == "chat.open":
+                            self._open_chat(request.get("chat_id"))
+                        else:
+                            self.thread_id = None
+                            self.turn_id = None
+                            self.conversation = None
+                            self._resume_thread_id = None
+                            self.events.emit("chat.reset")
+                    except (OSError, ValueError, KeyError, TypeError):
+                        self.events.emit("error", message="No se pudo abrir la conversación guardada")
+                return
             if not self.ready:
                 self.events.emit("error", message="Codex todavía no está conectado")
                 return
@@ -222,6 +306,18 @@ class HarnessServer:
                 elif self.busy or self.login_pending:
                     self.events.emit("error", message="Espera a que termine la operación actual")
                 else:
+                    try:
+                        if self.conversation is None:
+                            self.conversation = self.history.create(prompt.strip())
+                        self.conversation["messages"].append({
+                            "id": uuid.uuid4().hex, "role": "user", "text": prompt.strip(), "status": "completed",
+                        })
+                        self.history.save(self.conversation)
+                    except OSError:
+                        self.events.emit("chat.finished", status="failed", message="No se pudo guardar el mensaje")
+                        return
+                    self.events.emit("chat.saved", chat_id=self.conversation["chat_id"], title=self.conversation["title"])
+                    self._publish_history()
                     self.busy = True
                     self.turn_id = None
                     self._cancel_pending = False
@@ -233,13 +329,6 @@ class HarnessServer:
                 if self.busy:
                     self._cancel_pending = True
                     self._spawn(self._interrupt)
-            elif action == "chat.new":
-                if self.busy or self.login_pending:
-                    self.events.emit("error", message="Detén la operación actual antes de abrir otro chat")
-                else:
-                    self.thread_id = None
-                    self.turn_id = None
-                    self.events.emit("chat.reset")
             elif action == "auth.login":
                 if self.busy or self.login_pending:
                     self.events.emit("error", message="Ya hay una operación en curso")
@@ -258,15 +347,22 @@ class HarnessServer:
     def serve(self, source: TextIO) -> None:
         """Hace handshake y lee instrucciones; cerrar stdin libera App Server."""
         try:
-            self.client.start()
-            self.client.request("initialize", {"clientInfo": {
-                "name": "agent_shell", "title": "Agent Shell", "version": get_version(),
-            }})
-            self.client.notify("initialized")
-            with self._lock:
-                self.ready = True
-            self.events.emit("backend.ready", provider="codex", app_version=get_version())
-            self._read_account()
+            self.events.emit("history.ready", directory=str(self.history.root))
+            self._publish_history()
+            try:
+                self.client.start()
+                self.client.request("initialize", {"clientInfo": {
+                    "name": "agent_shell", "title": "Agent Shell", "version": get_version(),
+                }})
+                self.client.notify("initialized")
+                with self._lock:
+                    self.ready = True
+                self.events.emit("backend.ready", provider="codex", app_version=get_version())
+                self._read_account()
+            except (CodexError, OSError) as error:
+                self.ready = False
+                self.authenticated = False
+                self.events.emit("backend.disconnected", message=str(error))
             while line := source.readline(MAX_REQUEST_BYTES + 1):
                 if len(line.encode("utf-8")) > MAX_REQUEST_BYTES:
                     while not line.endswith("\n"):
@@ -286,3 +382,12 @@ class HarnessServer:
         finally:
             self._closing.set()
             self.client.close()
+            with self._lock:
+                if self.busy and self.conversation is not None:
+                    for message in self.conversation["messages"]:
+                        if message["status"] == "streaming":
+                            message["status"] = "interrupted"
+                    try:
+                        self.history.save(self.conversation)
+                    except OSError:
+                        pass  # Los deltas anteriores ya están en el JSON atómico.

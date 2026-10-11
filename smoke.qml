@@ -6,6 +6,7 @@ import "ui"
 ShellRoot {
     id: test
     property int stage: 0
+    property string savedChatId: ""
     AgentBridge {
         id: agent
         onEventReceived: event => {
@@ -22,6 +23,7 @@ ShellRoot {
                     test.fail("respuesta o reconciliación de deltas incorrecta");
                     return;
                 }
+                test.savedChatId = agent.currentChatId;
                 test.stage = 2;
                 nextRun.start();
             } else if (event.type === "chat.delta" && test.stage === 2) {
@@ -37,7 +39,16 @@ ShellRoot {
             } else if (event.type === "chat.reset" && test.stage === 4) {
                 if (agent.messages.count !== 0) test.fail("historial no vaciado");
                 else {
-                    console.log("SMOKE_OK: cuenta, chat, streaming, cancelación y nuevo chat (Codex simulado)");
+                    test.stage = 5;
+                    agent.openChat(test.savedChatId);
+                }
+            } else if (event.type === "chat.loaded" && test.stage === 5) {
+                if (agent.messages.count !== 4 || !agent.historyDirectory
+                    || agent.currentChatId !== test.savedChatId
+                    || agent.messages.get(1).body !== "Hola desde Codex. 🎵") {
+                    test.fail("historial no restaurado");
+                } else {
+                    console.log("SMOKE_OK: cuenta, chat, streaming, cancelación e historial persistente (Codex simulado)");
                     Qt.quit();
                 }
             } else if (event.type === "error" || event.type === "backend.disconnected") {

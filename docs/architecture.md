@@ -27,6 +27,7 @@ flowchart LR
 - `CodexClient`: proceso hijo, handshake, ids RPC, respuestas concurrentes, notificaciones
   y cierre del transporte. No lee archivos de autenticación ni implementa OAuth.
 - `EventEmitter`: serializa los eventos de la interfaz para varios hilos.
+- `HistoryStore`: un JSON por conversación, escritura atómica y recuperación local.
 
 ## Flujo
 
@@ -34,7 +35,7 @@ flowchart LR
    de Agent Shell. Después envía la notificación `initialized`.
 2. `account/read` consulta la cuenta administrada por Codex. Sólo `type: chatgpt`
    habilita el chat. Se muestran únicamente correo, plan y estado.
-3. El primer mensaje crea un thread efímero con un directorio de contexto vacío,
+3. El primer mensaje crea un thread persistente con un directorio de contexto vacío,
    proveedor OpenAI, sandbox `read-only`, shell y conectores desactivados, búsqueda
    web desactivada e instrucciones para conversar.
 4. Cada mensaje inicia `turn/start` en el mismo thread. `item/agentMessage/delta`
@@ -62,10 +63,24 @@ reenvían a la interfaz.
 
 ## Ciclo de vida y límites
 
-Los threads efímeros conservan contexto durante el proceso. Nuevo chat descarta el
-thread actual en la interfaz; los recursos restantes se liberan al terminar App Server.
+El historial local vive en `.runtime/chats/`, separado de `.runtime/chat/`, el
+directorio de contexto. Al aceptar un mensaje se crea su conversación y se guarda el
+texto. Cada delta amplía el JSON; el mensaje final reemplaza los fragmentos por id.
+Un temporal con permisos 0600 se vacía a disco y se reemplaza mediante `os.replace`.
+Así una escritura interrumpida conserva un JSON completo anterior o posterior.
+
+Los threads de Codex se crean con `ephemeral: false`. Abrir un historial carga los
+mensajes locales sin depender del motor; al enviar otra solicitud se usa `thread/resume`
+con las mismas opciones de conversación. Si el thread falta, se conserva el archivo
+local y se informa el error, sin reemplazarlo por un contexto nuevo silenciosamente.
+Nuevo chat desacopla la conversación actual sin borrar sus archivos. El arranque
+publica la ubicación y lista del historial antes de conectar con Codex, de modo que
+los mensajes siguen siendo consultables cuando App Server no está disponible.
+
 Cerrar stdin o recibir SIGTERM cierra también el proceso de Codex. Si éste desaparece,
 se desbloquean llamadas pendientes y el chat muestra desconexión; se debe relanzar.
+Las respuestas parciales conservan su texto y quedan marcadas como interrumpidas.
+El lanzador evita iniciar otra instancia del mismo shell con `--no-duplicate`.
 
 No hay implementación de herramientas propias, editor ni terminal. Las solicitudes
 RPC de aprobación se rechazan y otras peticiones interactivas no soportadas reciben

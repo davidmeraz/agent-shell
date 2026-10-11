@@ -8,6 +8,7 @@ normal inicia el ejecutable codex de PATH.
 import json
 import os
 import sys
+import uuid
 
 
 def write(message):
@@ -45,17 +46,20 @@ def main():
             notify("account/login/completed", {"loginId": params["loginId"], "success": False, "error": "Cancelado"})
         elif method == "thread/start":
             thread_count += 1
-            active_thread = f"thread-{thread_count}"
+            active_thread = f"thread-{uuid.uuid4().hex}"
+            reply({"thread": {"id": active_thread}, "model": "modelo-de-prueba"})
+        elif method == "thread/resume":
+            active_thread = params["threadId"]
             reply({"thread": {"id": active_thread}, "model": "modelo-de-prueba"})
         elif method == "turn/start":
             turn_count += 1
             active_thread = params["threadId"]
-            active_turn = f"turn-{turn_count}"
+            active_turn = f"turn-{uuid.uuid4().hex}"
             prompt = params["input"][0]["text"]
             turn = {"id": active_turn, "status": "inProgress", "error": None}
             reply({"turn": turn})
             notify("turn/started", {"threadId": active_thread, "turn": turn})
-            envelope = {"threadId": active_thread, "turnId": active_turn, "itemId": f"item-{turn_count}"}
+            envelope = {"threadId": active_thread, "turnId": active_turn, "itemId": f"item-{active_turn}"}
             if prompt == "fail":
                 turn.update(status="failed", error={"message": "Error de prueba del proveedor"})
                 notify("turn/completed", {"threadId": active_thread, "turn": turn})

@@ -11,7 +11,7 @@ FloatingWindow {
     title: "Agent Shell · Codex"
     implicitWidth: 820
     implicitHeight: 780
-    minimumSize: Qt.size(480, 560)
+    minimumSize: Qt.size(560, 560)
     color: "#0d1420"
     visible: true
 
@@ -23,14 +23,20 @@ FloatingWindow {
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout {
+                Layout.fillWidth: true
                 spacing: 6
                 Text { text: "AGENT SHELL"; color: "#72e5c0"; font.pixelSize: 12; font.letterSpacing: 3 }
                 Text { text: "Conversa con Codex"; color: "#edf4fa"; font.pixelSize: 27; font.bold: true }
             }
             Item { Layout.fillWidth: true }
             ActionButton {
+                text: "Historial"
+                enabled: window.bridge.historyReady
+                onClicked: historyPanel.open()
+            }
+            ActionButton {
                 text: "Nuevo chat"
-                enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy
+                enabled: window.bridge.canBrowseHistory
                 onClicked: window.bridge.newChat()
             }
         }
@@ -80,6 +86,16 @@ FloatingWindow {
                     onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
                 }
             }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: window.bridge.currentTitle !== ""
+            text: window.bridge.currentTitle
+            color: "#96a9bb"
+            font.pixelSize: 12
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
         }
 
         RowLayout {
@@ -202,6 +218,93 @@ FloatingWindow {
                 accent: true
                 enabled: window.bridge.canSend && prompt.text.trim().length > 0 && prompt.text.length <= 16000
                 onClicked: window.sendPrompt()
+            }
+        }
+    }
+
+    Drawer {
+        id: historyPanel
+        width: Math.min(360, window.width - 40)
+        height: window.height
+        edge: Qt.LeftEdge
+        background: Rectangle { color: "#111d2a"; border.color: "#314155" }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 14
+            Text { text: "Historial de chats"; color: "#edf4fa"; font.pixelSize: 21; font.bold: true }
+            Text {
+                Layout.fillWidth: true
+                visible: window.bridge.conversations.count === 0
+                text: "Tus conversaciones aparecerán aquí al enviar el primer mensaje."
+                color: "#96a9bb"
+                wrapMode: Text.Wrap
+            }
+            ListView {
+                id: savedChats
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 8
+                model: window.bridge.conversations
+                ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                    id: savedChat
+                    required property string chatId
+                    required property string title
+                    required property string updatedAt
+                    width: savedChats.width
+                    enabled: window.bridge.canBrowseHistory
+                    onClicked: {
+                        window.bridge.openChat(chatId);
+                        historyPanel.close();
+                    }
+                    contentItem: Column {
+                        spacing: 6
+                        Text {
+                            width: parent.width
+                            text: savedChat.title
+                            color: "#d8e5ee"
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            textFormat: Text.PlainText
+                        }
+                        Text {
+                            text: new Date(savedChat.updatedAt).toLocaleString()
+                            color: "#96a9bb"
+                            font.pixelSize: 10
+                        }
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: savedChat.chatId === window.bridge.currentChatId ? "#263e44" : "#192535"
+                    }
+                }
+            }
+            Text { text: "Directorio del historial"; color: "#72e5c0"; font.pixelSize: 12 }
+            TextArea {
+                Layout.fillWidth: true
+                text: window.bridge.historyDirectory
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                color: "#96a9bb"
+                font.pixelSize: 11
+                background: null
+                padding: 0
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton {
+                    text: "Abrir carpeta"
+                    enabled: window.bridge.historyDirectory !== ""
+                    onClicked: Qt.openUrlExternally("file://" + window.bridge.historyDirectory)
+                }
+                ActionButton {
+                    text: "Actualizar"
+                    enabled: window.bridge.canBrowseHistory
+                    onClicked: window.bridge.refreshHistory()
+                }
             }
         }
     }

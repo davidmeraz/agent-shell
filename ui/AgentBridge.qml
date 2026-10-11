@@ -9,20 +9,27 @@ QtObject {
     property bool authenticated: false
     property bool busy: false
     property bool loginBusy: false
+    property bool historyReady: false
+    property bool openingChat: false
     property string status: "Conectando con Codex…"
     property string appVersion: ""
     property string email: ""
     property string plan: ""
     property string modelName: ""
     property string authUrl: ""
+    property string historyDirectory: ""
+    property string currentChatId: ""
+    property string currentTitle: ""
     property var messageRows: ({})
     readonly property ListModel messages: ListModel {}
-    readonly property bool canSend: ready && authenticated && !busy && !loginBusy
+    readonly property ListModel conversations: ListModel {}
+    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat
+    readonly property bool canSend: ready && authenticated && !busy && !loginBusy && !openingChat
     signal eventReceived(var event)
     signal conversationChanged()
 
     function sendCommand(command) {
-        if (ready) backend.write(JSON.stringify(command) + "\n");
+        if (backend.running) backend.write(JSON.stringify(command) + "\n");
     }
 
     function submit(prompt) {
@@ -46,7 +53,17 @@ QtObject {
     }
 
     function newChat() {
-        if (ready && !busy && !loginBusy) sendCommand({ type: "chat.new" });
+        if (canBrowseHistory) sendCommand({ type: "chat.new" });
+    }
+
+    function openChat(chatId) {
+        if (!canBrowseHistory) return;
+        openingChat = true;
+        sendCommand({ type: "chat.open", chat_id: chatId });
+    }
+
+    function refreshHistory() {
+        if (canBrowseHistory) sendCommand({ type: "history.list" });
     }
 
     function login() {
@@ -81,7 +98,33 @@ QtObject {
             return;
         }
         const data = event.data;
-        if (event.type === "backend.ready") {
+        if (event.type === "history.ready") {
+            historyDirectory = data.directory;
+            historyReady = true;
+        } else if (event.type === "history.list") {
+            conversations.clear();
+            for (const chat of data.chats)
+                conversations.append({ chatId: chat.chat_id, title: chat.title, updatedAt: chat.updated_at });
+        } else if (event.type === "chat.saved") {
+            currentChatId = data.chat_id;
+            currentTitle = data.title;
+        } else if (event.type === "chat.loaded") {
+            messages.clear();
+            messageRows = ({});
+            const chat = data.chat;
+            for (const message of chat.messages) {
+                if (message.role === "assistant") messageRows[message.id] = messages.count;
+                messages.append({ author: message.role === "user" ? "TÚ"
+                                 : message.role === "assistant" ? "CODEX" : "SISTEMA", body: message.text });
+            }
+            currentChatId = chat.chat_id;
+            currentTitle = chat.title;
+            modelName = chat.model || "";
+            openingChat = false;
+            status = authenticated ? "Conversación recuperada. Puedes continuar."
+                     : "Conversación recuperada. Conecta Codex para continuar.";
+            conversationChanged();
+        } else if (event.type === "backend.ready") {
             ready = true;
             appVersion = data.app_version;
             status = "Comprobando tu sesión…";
@@ -122,8 +165,11 @@ QtObject {
             messages.clear();
             messageRows = ({});
             modelName = "";
+            currentChatId = "";
+            currentTitle = "";
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
-        } else if (event.type === "error" || event.type === "chat.notice") {
+        } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
+            openingChat = false;
             status = data.message;
             messages.append({ author: "SISTEMA", body: data.message });
             conversationChanged();
@@ -149,6 +195,8 @@ QtObject {
             bridge.authenticated = false;
             bridge.busy = false;
             bridge.loginBusy = false;
+            bridge.historyReady = false;
+            bridge.openingChat = false;
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";
         }
     }

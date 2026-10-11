@@ -1,0 +1,98 @@
+"""Historial local legible: un JSON por conversación, sin credenciales.
+
+Las escrituras reemplazan el archivo completo de forma atómica. Un lector ve la
+versión anterior o la nueva, nunca un JSON escrito a medias. Codex mantiene por
+separado el thread que se necesita para recuperar el contexto del modelo.
+"""
+
+import json
+import os
+import re
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class HistoryStore:
+    """Guarda las conversaciones del proceso; conserva archivos dañados sin borrarlos."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.invalid_files: list[str] = []
+
+    def _path(self, chat_id: str) -> Path:
+        if not isinstance(chat_id, str) or not re.fullmatch(r"[0-9a-f]{32}", chat_id):
+            raise ValueError("Identificador de conversación inválido")
+        path = self.root / f"{chat_id}.json"
+        if path.is_symlink():
+            raise ValueError("No se permiten enlaces simbólicos en el historial")
+        return path
+
+    def create(self, prompt: str) -> dict:
+        """Crea una conversación cuando llega su primer mensaje; evita chats vacíos."""
+        timestamp = now()
+        record = {
+            "schema_version": 1, "chat_id": uuid.uuid4().hex,
+            "title": " ".join(prompt.split())[:72],
+            "created_at": timestamp, "updated_at": timestamp,
+            "thread_id": None, "model": "", "messages": [],
+        }
+        self.save(record)
+        return record
+
+    def save(self, record: dict) -> None:
+        """Vacía el temporal a disco antes de reemplazar el JSON anterior."""
+        destination = self._path(record["chat_id"])
+        payload = {**record, "updated_at": now()}
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.root, prefix=".chat-", suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+            record["updated_at"] = payload["updated_at"]
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+
+    def load(self, chat_id: str) -> dict:
+        """Valida el esquema antes de entregar texto a Qt o usar un thread almacenado."""
+        record = json.loads(self._path(chat_id).read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or record.get("schema_version") != 1 or record.get("chat_id") != chat_id:
+            raise ValueError("Formato del historial incompatible")
+        if not all(isinstance(record.get(key), str) for key in ("title", "created_at", "updated_at", "model")):
+            raise ValueError("Metadatos del historial inválidos")
+        if record.get("thread_id") is not None and not isinstance(record["thread_id"], str):
+            raise ValueError("Thread del historial inválido")
+        messages = record.get("messages")
+        if not isinstance(messages, list):
+            raise ValueError("Mensajes del historial inválidos")
+        for message in messages:
+            if (not isinstance(message, dict) or message.get("role") not in ("user", "assistant", "system")
+                or not all(isinstance(message.get(key), str) for key in ("id", "text", "status"))):
+                raise ValueError("Mensaje del historial inválido")
+        return record
+
+    def list(self) -> list[dict]:
+        """Devuelve títulos recientes primero; un JSON dañado no oculta el resto."""
+        result = []
+        self.invalid_files = []
+        for path in self.root.glob("*.json"):
+            try:
+                record = self.load(path.stem)
+                result.append({key: record[key] for key in ("chat_id", "title", "updated_at")})
+            except (OSError, ValueError, KeyError, TypeError):
+                self.invalid_files.append(path.name)
+        return sorted(result, key=lambda entry: entry["updated_at"], reverse=True)

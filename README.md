@@ -4,7 +4,9 @@ Cliente de chat para **Codex**, construido con **Quickshell y Qt Quick** para Li
 con Hyprland. Reutiliza la cuenta de ChatGPT iniciada en Codex CLI y muestra la
 respuesta conforme llega. El motor es el App Server oficial de Codex.
 
-**Base inicial: 0.1.0**, identificada con la etiqueta Git local `v0.1.0`.
+**Versión actual: 0.2.0**, con historial persistente y etiqueta Git local `v0.2.0`.
+La base inicial `0.1.0`
+permanece identificada con la etiqueta Git local `v0.1.0`.
 
 La visión es construir una aplicación de escritorio propia, inspirada en la
 experiencia de Codex y ChatGPT, usando Quickshell y Qt. Esta primera etapa se
@@ -61,9 +63,43 @@ No hay botón de cierre de sesión porque la sesión se comparte con la CLI.
 
 ## Alcance actual
 
-Una sola ventana para conversar, con historial durante la sesión. Los threads son
-`ephemeral`: no hay recuperación de conversaciones al reiniciar. El contexto se
-mantiene en el mismo thread mientras el chat esté abierto.
+Una sola ventana para conversar, con historial persistente. Pulsa **Historial** para
+ver las conversaciones recientes y abrir una. **Nuevo chat** inicia otra sin borrar
+las anteriores. Puedes leer el historial aunque Codex esté desconectado; para enviar
+mensajes necesitas la conexión y la cuenta autenticada.
+
+## Directorio del historial
+
+La ruta por defecto es:
+
+```text
+/home/dav3e/Dev/quickshell/agent-shell/.runtime/chats/
+```
+
+Cada conversación se guarda como `<chat_id>.json` en UTF-8, con título, fechas,
+mensajes, estado de respuestas, modelo e identificador del thread de Codex. El panel
+Historial muestra la ruta real, permite copiarla y ofrece **Abrir carpeta**.
+
+El guardado es automático, incluso durante una respuesta y al detenerla. Los archivos
+se reemplazan de forma atómica y están excluidos de Git. No contienen credenciales.
+Un JSON dañado se conserva y no impide listar los demás chats.
+
+Codex conserva el contexto del modelo en su propio almacén. Al continuar una
+conversación recuperada se utiliza `thread/resume` con el identificador guardado.
+Si ese thread ya no existe, los mensajes locales siguen disponibles, pero no se
+simula una continuación sin contexto. No se pueden recuperar conversaciones
+anteriores que sólo existieron en memoria y ya se cerraron.
+
+Puedes cambiar la ubicación antes de abrir la aplicación:
+
+```bash
+AGENT_SHELL_HISTORY_DIR=/ruta/a/mis-chats ./scripts/run.sh
+```
+
+El backend también acepta `--history-root`. `.runtime/chat/` sigue siendo el
+directorio de contexto del agente; `.runtime/chats/` contiene los mensajes guardados.
+
+## Límites de la interfaz
 
 Los chats usan `.runtime/chat/` como directorio de contexto, política `read-only`, herramientas
 shell desactivadas e instrucciones de conversación. No hay herramientas propias
@@ -80,6 +116,7 @@ ui/components/            Controles visuales compartidos
 backend/main.py           Entrada y ciclo de vida del puente
 backend/harness/codex.py   Cliente RPC del App Server oficial
 backend/harness/server.py Traducción de cuenta, threads y turnos
+backend/harness/history.py Historial JSON y reemplazo atómico de archivos
 backend/harness/events.py Eventos de la interfaz NDJSON v1
 backend/harness/version.py Versión centralizada en pyproject.toml
 tests/                    Pruebas y doble de App Server
@@ -98,7 +135,9 @@ python3 backend/main.py --version
 
 Las pruebas usan un doble de App Server explícito, sin red ni consumo de tu cuenta.
 La integración arranca Qt offscreen, atraviesa Python y un proceso simulado de Codex,
-y comprueba cuenta, streaming, cancelación y nuevo chat. No prueba una respuesta
+y comprueba cuenta, streaming, cancelación, nuevo chat y apertura del historial.
+También se verifica persistencia al reiniciar el backend y continuación del mismo
+thread con Codex simulado. No prueba una respuesta
 real del modelo ni completa OAuth. En entornos restringidos se tolera únicamente
 el diagnóstico del socket IPC auxiliar de Quickshell bloqueado.
 

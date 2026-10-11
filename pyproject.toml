@@ -1,6 +1,6 @@
 [project]
 name = "agent-shell"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cliente de chat de Codex con Quickshell y Qt"
 requires-python = ">=3.11"
 dependencies = []

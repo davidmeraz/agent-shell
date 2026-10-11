@@ -15,6 +15,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Chat de Agent Shell sobre Codex App Server")
     parser.add_argument("--version", action="version", version=f"Agent Shell {get_version()}")
     parser.add_argument(
+        "--history-root", type=Path,
+        default=Path(os.environ.get(
+            "AGENT_SHELL_HISTORY_DIR", str(Path(__file__).resolve().parents[1] / ".runtime" / "chats"),
+        )),
+        help="Directorio de los archivos JSON de conversación",
+    )
+    parser.add_argument(
         "--chat-root", type=Path,
         default=Path(__file__).resolve().parents[1] / ".runtime" / "chat",
         help="Directorio de contexto vacío para las conversaciones",
@@ -28,7 +35,7 @@ def main() -> None:
     # Quickshell envía SIGTERM a su proceso hijo al cerrar. SystemExit atraviesa
     # el finally de serve(), que también libera el proceso nieto de Codex.
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-    HarnessServer(args.chat_root, sys.stdout, command).serve(sys.stdin)
+    HarnessServer(args.chat_root, sys.stdout, command, history_root=args.history_root).serve(sys.stdin)
 
 
 if __name__ == "__main__":
