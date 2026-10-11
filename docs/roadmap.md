@@ -1,14 +1,15 @@
 # Próximos pasos
 
-La base actual se centra en chat con cuenta de ChatGPT mediante Codex App Server.
+La base actual conecta directamente con ChatGPT, con sesión propia, catálogo de
+modelos e historial local.
 
-1. Comprobar en el escritorio real la reutilización de sesión, OAuth y un intercambio
-   con el modelo. Las pruebas automatizadas usan un doble explícito de App Server.
-2. Añadir selector de modelo a partir del catálogo que devuelve Codex.
-3. Ampliar el historial persistente con búsqueda, títulos editables y gestión de chats.
-4. Mejorar presentación de Markdown y bloques de código, manteniendo copia y selección.
-5. Diseñar con el usuario la experiencia de herramientas y trabajo sobre proyectos,
-   incluyendo aprobaciones antes de incorporar editor, terminal o visor de acciones.
+1. Validar en el escritorio un registro OAuth real, renovación y conversación con
+   una cuenta elegible. Las pruebas automáticas no consumen cuentas.
+2. Mejorar Markdown, bloques de código y lectura de mensajes durante streaming.
+3. Añadir selector de cuentas y espacios de trabajo, con registros separados.
+4. Definir compactación del contexto para conversaciones largas.
+5. Diseñar herramientas y trabajo visual sobre proyectos, con permisos y
+   aprobaciones explícitos antes de incorporar edición o terminal.
 
-Las herramientas de programación visual de la idea original quedan para una fase
-posterior. Primero se debe validar que el chat y la autenticación sean la base deseada.
+El chat ya no requiere Codex CLI. Las versiones anteriores permanecen en sus
+etiquetas Git para consultar su arquitectura y decisiones históricas.

@@ -5,7 +5,20 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Pendiente de publicar
 
-Sin cambios pendientes.
+## [0.3.0] — 2026-10-11
+
+- Conexión directa con ChatGPT sin Codex CLI ni App Server.
+- Registro OAuth propio mediante Sign in with ChatGPT y permiso de uso del plan.
+- Validación de identidad con PyJWT/cryptography, renovación serializada y sesión privada.
+- Catálogo de modelos de la cuenta, selector, administración de uso y cierre de sesión.
+- Contexto reconstruido desde mensajes locales, compatible con los chats de 0.2.0.
+- HTTP/SSE cancelable, conservación del texto parcial y guardado agrupado del historial.
+- Entorno Python local y script de instalación; opciones `--session-root` y `--model`.
+- Retirada de `--codex-executable`, `--chat-root` y `AGENT_SHELL_CODEX`.
+- Pruebas OAuth con claves RSA y HTTP/SSE local, además de la integración Qt sin Codex.
+- Compatibilidad con respuestas SSE que omiten la cabecera `Content-Type`, como se observó en la ruta real.
+- Tres pruebas de regresión para cabeceras de streaming ausentes o incompatibles y transmisiones sin evento de finalización.
+- Autenticación real confirmada por el usuario y respuesta real verificada con el backend hasta `response.completed`.
 
 ## [0.2.0] — 2026-10-11
 

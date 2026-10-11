@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Runtime temporal y Codex simulado: no abre OAuth ni consume una cuenta real.
+# Runtime temporal y servicio HTTP local: no abre OAuth ni consume una cuenta real.
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 smoke_runtime="$(mktemp -d /tmp/agent-shell-smoke.XXXXXX)"
 trap 'rm -rf -- "$smoke_runtime"' EXIT
 env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen \
-    AGENT_SHELL_CODEX="$project_root/tests/fake_codex.py" \
+    AGENT_SHELL_PYTHON="${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}" \
+    AGENT_SHELL_BACKEND_ENTRY="$project_root/tests/fake_backend.py" \
     AGENT_SHELL_HISTORY_DIR="$smoke_runtime/chats" \
     timeout 12s qs --path "$project_root/smoke.qml" > "$smoke_runtime/output.log" 2>&1 || {
         cat "$smoke_runtime/output.log"

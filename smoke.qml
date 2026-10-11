@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell
 import "ui"
 
-// Escenario de prueba con App Server simulado. Nunca inicia OAuth ni un modelo.
+// Escenario con backend real y HTTP/SSE local. Nunca inicia OAuth ni un modelo.
 ShellRoot {
     id: test
     property int stage: 0
@@ -10,16 +10,17 @@ ShellRoot {
     AgentBridge {
         id: agent
         onEventReceived: event => {
-            if (event.type === "auth.state" && test.stage === 0) {
-                if (!agent.authenticated || !agent.appVersion) {
+            if (event.type === "auth.refresh.finished" && test.stage === 0) {
+                if (!agent.canSend || !agent.appVersion || agent.availableModels.count !== 2) {
                     test.fail("cuenta o versión ausente");
                     return;
                 }
+                agent.planConnected(); // Comprueba también el diálogo de uso del plan.
                 test.stage = 1;
                 agent.submit("hola");
             } else if (event.type === "chat.finished" && test.stage === 1) {
                 if (agent.busy || agent.messages.count !== 2
-                    || agent.messages.get(1).body !== "Hola desde Codex. 🎵") {
+                    || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵") {
                     test.fail("respuesta o reconciliación de deltas incorrecta");
                     return;
                 }
@@ -45,10 +46,10 @@ ShellRoot {
             } else if (event.type === "chat.loaded" && test.stage === 5) {
                 if (agent.messages.count !== 4 || !agent.historyDirectory
                     || agent.currentChatId !== test.savedChatId
-                    || agent.messages.get(1).body !== "Hola desde Codex. 🎵") {
+                    || agent.messages.get(1).body !== "Hola desde ChatGPT. 🎵") {
                     test.fail("historial no restaurado");
                 } else {
-                    console.log("SMOKE_OK: cuenta, chat, streaming, cancelación e historial persistente (Codex simulado)");
+                    console.log("SMOKE_OK: cuenta, modelos, HTTP/SSE, cancelación e historial persistente (sin Codex)");
                     Qt.quit();
                 }
             } else if (event.type === "error" || event.type === "backend.disconnected") {

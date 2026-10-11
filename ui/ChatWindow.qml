@@ -8,7 +8,7 @@ import "components"
 FloatingWindow {
     id: window
     required property AgentBridge bridge
-    title: "Agent Shell · Codex"
+    title: "Agent Shell · ChatGPT"
     implicitWidth: 820
     implicitHeight: 780
     minimumSize: Qt.size(560, 560)
@@ -26,7 +26,7 @@ FloatingWindow {
                 Layout.fillWidth: true
                 spacing: 6
                 Text { text: "AGENT SHELL"; color: "#72e5c0"; font.pixelSize: 12; font.letterSpacing: 3 }
-                Text { text: "Conversa con Codex"; color: "#edf4fa"; font.pixelSize: 27; font.bold: true }
+                Text { text: "Conversa con ChatGPT"; color: "#edf4fa"; font.pixelSize: 27; font.bold: true }
             }
             Item { Layout.fillWidth: true }
             ActionButton {
@@ -72,19 +72,47 @@ FloatingWindow {
                     Text {
                         Layout.fillWidth: true
                         text: window.bridge.authenticated
-                              ? "Sesión de Codex CLI" + (window.bridge.plan ? " · " + window.bridge.plan : "")
-                              : "Puedes reutilizar la sesión que ya tienes en Codex CLI."
+                              ? "Usando tu plan de ChatGPT"
+                              : "Conecta tu cuenta y autoriza el uso de tu plan."
                         color: "#96a9bb"
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
                     }
                 }
                 ActionButton {
-                    text: window.bridge.authenticated ? "Actualizar" : "Iniciar sesión"
+                    text: window.bridge.authenticated ? "Actualizar" : "Continuar con ChatGPT"
                     accent: !window.bridge.authenticated
-                    enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy
+                    enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy && !window.bridge.accountBusy
                     onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
                 }
+                ActionButton {
+                    text: "Salir"
+                    visible: window.bridge.email !== ""
+                    enabled: window.bridge.ready && !window.bridge.busy && !window.bridge.loginBusy && !window.bridge.accountBusy
+                    onClicked: window.bridge.logout()
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: window.bridge.availableModels.count > 0
+            ComboBox {
+                Layout.fillWidth: true
+                model: window.bridge.availableModels
+                textRole: "displayName"
+                valueRole: "slug"
+                enabled: window.bridge.canSend
+                currentIndex: {
+                    for (let i = 0; i < window.bridge.availableModels.count; ++i)
+                        if (window.bridge.availableModels.get(i).slug === window.bridge.modelName) return i;
+                    return -1;
+                }
+                onActivated: window.bridge.selectModel(currentValue)
+            }
+            ActionButton {
+                text: "Administrar uso"
+                onClicked: Qt.openUrlExternally("https://chatgpt.com/#settings/Usage")
             }
         }
 
@@ -207,7 +235,7 @@ FloatingWindow {
             Text {
                 Layout.fillWidth: true
                 text: "v" + (window.bridge.appVersion || "…")
-                      + (window.bridge.modelName ? " · " + window.bridge.modelName : " · Codex")
+                      + (window.bridge.modelName ? " · " + window.bridge.modelName : " · ChatGPT")
                 color: "#788da2"
                 font.pixelSize: 11
                 elide: Text.ElideRight
@@ -219,6 +247,23 @@ FloatingWindow {
                 enabled: window.bridge.canSend && prompt.text.trim().length > 0 && prompt.text.length <= 16000
                 onClicked: window.sendPrompt()
             }
+        }
+    }
+
+    Connections {
+        target: window.bridge
+        function onPlanConnected() { planWelcome.open(); }
+    }
+    Dialog {
+        id: planWelcome
+        title: "Tu plan de ChatGPT"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, window.width - 48)
+        standardButtons: Dialog.Ok
+        contentItem: Text {
+            text: "Estás usando tu plan de ChatGPT. Las respuestas de Agent Shell consumen sus límites disponibles. Puedes administrar el uso y desconectar la aplicación en los ajustes de ChatGPT."
+            wrapMode: Text.Wrap
         }
     }
 

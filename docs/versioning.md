@@ -3,8 +3,10 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión actual es `0.2.0`, identificada con la etiqueta local `v0.2.0`.
-Añade historial persistente y mantiene el protocolo NDJSON v1.
+La última versión etiquetada es `0.3.0`, con sesión propia
+de ChatGPT, conexión HTTP directa y respuestas reales verificadas con el backend.
+Mantiene el formato NDJSON v1 y documenta
+la retirada de opciones públicas de Codex en README y CHANGELOG.
 El formato es `MAYOR.MENOR.PARCHE`. El prefijo `v` pertenece a la etiqueta Git,
 por ejemplo `v0.1.0`; el número de versión de la aplicación es `0.1.0`.
 

@@ -1,68 +1,72 @@
 # Protocolo de interfaz NDJSON v1
 
-Este contrato comunica Qt con Python y es distinto del protocolo RPC oficial de
-Codex App Server. UTF-8, un objeto por línea y terminador `\n`. Límite de línea:
-65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
+Contrato UTF-8 entre Qt y Python, con un objeto por línea y terminador `\n`.
+Límite de línea: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
+Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 
 ## Instrucciones Qt → Python
 
-| Tipo | Campos adicionales | Acción |
+| Tipo | Campos | Acción |
 | --- | --- | --- |
-| `chat.send` | `prompt` | Iniciar respuesta en el thread actual o crear uno |
-| `chat.cancel` | Ninguno | Interrumpir la respuesta activa |
-| `chat.new` | Ninguno | Vaciar conversación y descartar contexto actual |
-| `chat.open` | `chat_id` | Cargar una conversación local para verla y continuarla |
-| `history.list` | Ninguno | Consultar las conversaciones recientes |
-| `auth.login` | Ninguno | Iniciar OAuth de ChatGPT administrado por Codex |
-| `auth.cancel` | Ninguno | Cancelar el inicio de sesión |
-| `auth.refresh` | Ninguno | Consultar otra vez la cuenta, sin forzar refresh de tokens |
+| `chat.send` | `prompt` | Solicitar respuesta con los mensajes locales |
+| `chat.cancel` | Ninguno | Cerrar streaming y conservar el texto parcial |
+| `chat.new` | Ninguno | Vaciar conversación actual |
+| `chat.open` | `chat_id` | Cargar conversación local |
+| `history.list` | Ninguno | Consultar conversaciones recientes |
+| `auth.login` | Ninguno | Iniciar OAuth propio de ChatGPT |
+| `auth.cancel` | Ninguno | Cancelar el intento OAuth |
+| `auth.refresh` | Ninguno | Leer sesión y actualizar catálogo |
+| `auth.logout` | Ninguno | Revocar y cerrar la sesión local |
+| `model.select` | `model` | Seleccionar un slug del catálogo de la cuenta |
 
-Sólo una respuesta o inicio de sesión a la vez. El cliente limita el envío según
-estado; el servidor también valida. Cancelar sin operación activa no cambia el chat.
-Una instrucción inválida produce `error`. El cierre de stdin termina App Server.
+Sólo una respuesta o operación de cuenta a la vez. El historial puede leerse sin
+autenticación y mientras se descubre el catálogo. Cambiar de chat se rechaza
+durante respuesta o login. Cerrar stdin cancela operaciones y cierra el backend.
 
 ## Eventos Python → Qt
 
 Cada evento contiene `version: 1`, `seq` creciente, `timestamp` UTC ISO 8601,
-`type`, `run_id: null` y `data`. Los identificadores de conversación y mensaje
-están en `data`; `run_id` queda reservado para posibles ejecuciones futuras.
+`type`, `run_id: null` y `data`. La secuencia se serializa entre trabajadores.
 
 | Tipo | Datos |
 | --- | --- |
-| `backend.ready` | `provider: codex`, `app_version` SemVer |
+| `backend.ready` | `provider: chatgpt`, `app_version` |
 | `backend.disconnected` | `message` |
-| `history.ready` | `directory` absoluto del historial; habilita lectura local |
-| `history.list` | `chats`: lista de `chat_id`, `title` y `updated_at`, reciente primero |
-| `history.notice` | `message` sobre archivos dañados o fallas de guardado |
-| `auth.state` | `authenticated`, `method`, `email`, `plan` |
-| `auth.login.started` | `url` OAuth; sólo para abrir navegador, no guardarla en logs |
-| `auth.login.finished` | `success`, `message` |
+| `history.ready` | `directory` absoluto |
+| `history.list` | `chats`: chat_id, title y updated_at |
+| `history.notice` | `message` de persistencia |
+| `auth.state` | `authenticated`, `method`, `email`, `plan`, `plan_enabled` |
+| `auth.login.started` | `url` OAuth, para abrir el navegador; nunca registrarla |
+| `auth.login.finished` | `success`, `message`, `show_plan_welcome` |
+| `auth.refresh.started` | Objeto vacío |
+| `auth.refresh.finished` | Objeto vacío |
+| `models.list` | `models`: slug y display_name; `selected` |
+| `model.selected` | `model`: slug |
 | `chat.busy` | Objeto vacío |
-| `chat.thread` | `thread_id`, `model` |
-| `chat.saved` | `chat_id`, `title` de la conversación actual |
-| `chat.loaded` | `chat`: registro JSON completo con mensajes y metadatos |
-| `chat.delta` | `item_id`, `text` para ampliar el mensaje |
-| `chat.message` | `item_id`, `text` final que reemplaza los deltas |
+| `chat.thread` | `thread_id`: id del chat local; `model` |
+| `chat.saved` | `chat_id`, `title` |
+| `chat.loaded` | `chat`: registro local completo |
+| `chat.delta` | `item_id`, `text` que amplía el mensaje |
+| `chat.message` | `item_id`, `text` final que reemplaza fragmentos |
 | `chat.finished` | `status: completed/failed/interrupted`, `message` |
-| `chat.notice` | `message` informativo del proveedor |
 | `chat.reset` | Objeto vacío |
-| `error` | `message` de instrucción o llamada RPC rechazada |
+| `error` | `message` apto para mostrar al usuario |
 
-Un mensaje final puede llegar sin deltas previos. El cliente debe crearlo en ese
-caso. La cancelación conserva el texto parcial ya recibido. `chat.finished` con
-`completed` confirma éxito; `failed` e `interrupted` liberan controles sin anunciar éxito.
-Un error informativo no debe por sí solo marcar como terminada una respuesta activa.
-`history.ready` y `history.list` se publican antes de iniciar Codex. `chat.open`,
-`chat.new` y `history.list` funcionan sin autenticación ni conexión; `chat.send`
-continúa requiriéndolas. Abrir o cambiar de chat se rechaza durante un turno activo.
-Los eventos adicionales mantienen la versión de protocolo 1; los consumidores
-deben ignorar tipos desconocidos de esa misma versión.
+`authenticated` significa que existe una sesión con permiso para usar el plan,
+no sólo una identidad verificada. `plan` queda vacío si no hay información
+verificada sobre su nombre. Enviar requiere además un modelo disponible.
+Una actualización fallida no cierra el backend ni elimina los mensajes.
 
-Los eventos de otros threads se ignoran. No se reenvían tokens, mensajes internos
-ni razonamiento. La secuencia se serializa globalmente aunque participen varios hilos.
+Un texto final puede llegar sin deltas previos. Un mensaje usa item_id y parte
+de contenido para reconciliarse sin duplicados. Recibir texto final no confirma
+el éxito del turno: eso lo indica `chat.finished`. Eventos tardíos de respuestas
+canceladas se descartan.
 
-## Evolución del contrato
+El formato de eventos sigue en v1. Los eventos y campos nuevos son aditivos.
+En 0.3.0 cambian el proveedor de backend.ready y el significado de thread_id:
+identifica una conversación local y ya no un thread de Codex. Los cambios de
+opciones CLI se documentan en el README y en el historial de cambios.
 
-Este es el contrato inicial del chat. Los cambios incompatibles deberán incrementar
-`version` y actualizar ambos extremos, siguiendo la política SemVer de la aplicación.
-El App Server de Codex mantiene su propio esquema: no interpreta este sobre NDJSON.
+Las credenciales y el razonamiento no se publican. La única URL OAuth enviada
+al cliente sirve para abrir el navegador; puede incluir un id_token_hint durante
+reautorización y debe tratarse como información privada.

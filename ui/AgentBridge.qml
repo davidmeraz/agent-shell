@@ -2,16 +2,18 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Estado del chat. Python traduce el protocolo oficial de Codex a estos eventos.
+// Estado del chat. Python administra la sesión y el streaming directo con ChatGPT.
 QtObject {
     id: bridge
     property bool ready: false
     property bool authenticated: false
     property bool busy: false
     property bool loginBusy: false
+    property bool accountBusy: false
+    property bool planEnabled: false
     property bool historyReady: false
     property bool openingChat: false
-    property string status: "Conectando con Codex…"
+    property string status: "Preparando Agent Shell…"
     property string appVersion: ""
     property string email: ""
     property string plan: ""
@@ -23,10 +25,13 @@ QtObject {
     property var messageRows: ({})
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
+    readonly property ListModel availableModels: ListModel {}
     readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat
-    readonly property bool canSend: ready && authenticated && !busy && !loginBusy && !openingChat
+    readonly property bool canSend: ready && authenticated && availableModels.count > 0
+                                   && !busy && !loginBusy && !accountBusy && !openingChat
     signal eventReceived(var event)
     signal conversationChanged()
+    signal planConnected()
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
@@ -41,7 +46,7 @@ QtObject {
         }
         messages.append({ author: "TÚ", body: text });
         busy = true;
-        status = "Codex está preparando la respuesta…";
+        status = "Preparando la respuesta…";
         sendCommand({ type: "chat.send", prompt: text });
         conversationChanged();
     }
@@ -67,20 +72,32 @@ QtObject {
     }
 
     function login() {
-        if (!ready || busy || loginBusy) return;
+        if (!ready || busy || loginBusy || accountBusy) return;
         loginBusy = true;
         status = "Preparando el inicio de sesión…";
         sendCommand({ type: "auth.login" });
     }
 
     function cancelLogin() { sendCommand({ type: "auth.cancel" }); }
-    function refreshAccount() { sendCommand({ type: "auth.refresh" }); }
+    function refreshAccount() {
+        if (!ready || busy || loginBusy || accountBusy) return;
+        accountBusy = true;
+        sendCommand({ type: "auth.refresh" });
+    }
+
+    function logout() {
+        if (!ready || busy || loginBusy || accountBusy) return;
+        accountBusy = true;
+        sendCommand({ type: "auth.logout" });
+    }
+
+    function selectModel(slug) { if (canSend) sendCommand({ type: "model.select", model: slug }); }
 
     function updateMessage(itemId, text, append) {
         const row = messageRows[itemId];
         if (row === undefined) {
             messageRows[itemId] = messages.count;
-            messages.append({ author: "CODEX", body: text });
+            messages.append({ author: "CHATGPT", body: text });
         } else {
             messages.setProperty(row, "body", append ? messages.get(row).body + text : text);
         }
@@ -115,14 +132,13 @@ QtObject {
             for (const message of chat.messages) {
                 if (message.role === "assistant") messageRows[message.id] = messages.count;
                 messages.append({ author: message.role === "user" ? "TÚ"
-                                 : message.role === "assistant" ? "CODEX" : "SISTEMA", body: message.text });
+                                 : message.role === "assistant" ? "CHATGPT" : "SISTEMA", body: message.text });
             }
             currentChatId = chat.chat_id;
             currentTitle = chat.title;
-            modelName = chat.model || "";
             openingChat = false;
             status = authenticated ? "Conversación recuperada. Puedes continuar."
-                     : "Conversación recuperada. Conecta Codex para continuar.";
+                     : "Conversación recuperada. Conecta ChatGPT para continuar.";
             conversationChanged();
         } else if (event.type === "backend.ready") {
             ready = true;
@@ -130,12 +146,30 @@ QtObject {
             status = "Comprobando tu sesión…";
         } else if (event.type === "auth.state") {
             authenticated = data.authenticated;
+            planEnabled = !!data.plan_enabled;
             email = data.email;
             plan = data.plan;
-            if (!busy && !loginBusy)
+            if (!busy && !loginBusy && !accountBusy)
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
-                         : data.method === "apiKey" ? "La CLI usa una API key. Inicia sesión con ChatGPT."
+                         : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                          : "Inicia sesión con ChatGPT para empezar.";
+        } else if (event.type === "auth.refresh.started") {
+            accountBusy = true;
+            status = "Actualizando la cuenta y los modelos…";
+        } else if (event.type === "auth.refresh.finished") {
+            accountBusy = false;
+            if (authenticated && availableModels.count > 0)
+                status = "Conectado. Usando tu plan de ChatGPT.";
+            else if (!authenticated)
+                status = email ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
+                               : "Conecta tu cuenta de ChatGPT para conversar.";
+        } else if (event.type === "models.list") {
+            availableModels.clear();
+            for (const model of data.models)
+                availableModels.append({ slug: model.slug, displayName: model.display_name });
+            modelName = data.selected || "";
+        } else if (event.type === "model.selected") {
+            modelName = data.model || "";
         } else if (event.type === "auth.login.started") {
             authUrl = data.url;
             status = "Completa el inicio de sesión en tu navegador.";
@@ -145,13 +179,14 @@ QtObject {
             loginBusy = false;
             authUrl = "";
             status = data.success ? "Comprobando la cuenta…" : data.message || "Inicio de sesión cancelado.";
+            if (data.success && data.show_plan_welcome) planConnected();
         } else if (event.type === "chat.busy") {
             busy = true;
         } else if (event.type === "chat.thread") {
             modelName = data.model || "";
         } else if (event.type === "chat.delta") {
             updateMessage(data.item_id, data.text, true);
-            status = "Codex está respondiendo…";
+            status = "ChatGPT está respondiendo…";
         } else if (event.type === "chat.message") {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
             updateMessage(data.item_id, data.text, false);
@@ -159,12 +194,11 @@ QtObject {
             busy = false;
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? "Respuesta detenida."
-                     : data.message || "Codex no pudo completar la respuesta.";
+                     : data.message || "No se pudo completar la respuesta.";
             if (data.status === "failed") messages.append({ author: "SISTEMA", body: status });
         } else if (event.type === "chat.reset") {
             messages.clear();
             messageRows = ({});
-            modelName = "";
             currentChatId = "";
             currentTitle = "";
             status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
@@ -178,23 +212,26 @@ QtObject {
             authenticated = false;
             busy = false;
             loginBusy = false;
+            accountBusy = false;
             status = data.message;
         }
         eventReceived(event);
     }
 
     readonly property Process backend: Process {
-        command: ["python3", "-u", Quickshell.shellDir + "/backend/main.py"]
+        command: [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python", "-u",
+                  Quickshell.env("AGENT_SHELL_BACKEND_ENTRY") || Quickshell.shellDir + "/backend/main.py"]
         workingDirectory: Quickshell.shellDir
         stdinEnabled: true
         running: true
         stdout: SplitParser { onRead: data => bridge.receive(data) }
-        stderr: SplitParser { onRead: data => console.warn("Error del puente de Codex: " + data) }
+        stderr: SplitParser { onRead: data => console.warn("Error del backend: " + data) }
         onExited: (exitCode, exitStatus) => {
             bridge.ready = false;
             bridge.authenticated = false;
             bridge.busy = false;
             bridge.loginBusy = false;
+            bridge.accountBusy = false;
             bridge.historyReady = false;
             bridge.openingChat = false;
             bridge.status = "Motor desconectado (" + exitCode + "). Reinicia Agent Shell.";

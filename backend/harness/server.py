@@ -1,393 +1,366 @@
-"""Puente entre el chat Qt y el App Server oficial de Codex.
+"""Contrato Qt/Python para chat directo con ChatGPT y contexto local persistente."""
 
-Conserva el thread durante la aplicación. Las llamadas RPC ocurren fuera del
-lector de instrucciones, permitiendo cancelar aun al preparar una respuesta.
-"""
-
+import copy
 import json
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, TextIO
-from urllib.parse import urlparse
 
-from .codex import CodexClient, CodexError
 from .events import EventEmitter
 from .history import HistoryStore
+from .http import Cancelled, ServiceError, StreamControl, service_error
 from .version import get_version
 
 MAX_REQUEST_BYTES = 65536
 MAX_PROMPT_LENGTH = 16000
 CHAT_INSTRUCTIONS = (
     "You are the conversational assistant in Agent Shell. Respond in the user's language. "
-    "This application currently supports chat only. Do not use tools, inspect the filesystem, "
-    "execute commands, create files, or delegate to agents. When asked for code, include it "
-    "in your reply."
+    "This application supports chat only. When asked for code, include it in your reply."
 )
 
 
 class HarnessServer:
-    """Administra cuenta, conversación y turno; Codex conserva la autenticación."""
+    """Mantiene stdin libre durante OAuth, descubrimiento y streaming HTTP."""
 
-    def __init__(self, chat_root: Path, output: TextIO, command: list[str],
-                 history_root: Path | None = None) -> None:
-        self.root = chat_root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+    def __init__(self, history_root: Path, output: TextIO, session, client,
+                 model: str = "") -> None:
         self.events = EventEmitter(output)
-        self.history = HistoryStore(history_root if history_root is not None else self.root / "history")
+        self.history = HistoryStore(history_root)
+        self.session = session
+        self.client = client
         self.conversation: dict | None = None
-        self._resume_thread_id: str | None = None
-        self.client = CodexClient(command, self._on_message, self._disconnected)
-        self._lock = threading.RLock()
-        self._closing = threading.Event()
-        self.ready = False
+        self.model = model
+        self.models: list[dict] = []
         self.authenticated = False
         self.busy = False
         self.login_pending = False
-        self.login_id: str | None = None
-        self.thread_id: str | None = None
-        self.turn_id: str | None = None
-        self._cancel_pending = False
-        self._login_cancel_pending = False
+        self.account_pending = False
+        self._lock = threading.RLock()
+        self._closing = threading.Event()
+        self._login_cancel = threading.Event()
+        self._stream = StreamControl()
         self._generation = 0
+        self._last_saved = 0.0
+        self._workers: list[threading.Thread] = []
+
+    def _emit(self, event_type: str, **data) -> None:
+        if not self._closing.is_set():
+            self.events.emit(event_type, **data)
 
     def _spawn(self, operation) -> None:
-        """Mantiene libres stdin y el lector RPC; comunica fallas a la interfaz."""
         def guarded():
             try:
                 operation()
-            except (CodexError, OSError, KeyError, TypeError, ValueError) as error:
-                if not self._closing.is_set():
-                    self.events.emit("error", message=str(error))
-        threading.Thread(target=guarded, daemon=True).start()
+            except (ServiceError, OSError, ValueError, KeyError, TypeError):
+                self._emit("error", message="No se pudo completar la operación. Vuelve a intentarlo.")
+        worker = threading.Thread(target=guarded, daemon=True)
+        self._workers = [item for item in self._workers if item.is_alive()]
+        self._workers.append(worker)
+        worker.start()
 
     def _publish_history(self) -> None:
-        self.events.emit("history.list", chats=self.history.list())
+        self._emit("history.list", chats=self.history.list())
         if self.history.invalid_files:
-            self.events.emit("history.notice", message="Hay archivos de historial dañados o incompatibles; se conservaron.")
+            self._emit("history.notice", message="Hay archivos de historial dañados o incompatibles; se conservaron.")
 
-    def _save_message(self, item_id: str, text: str, append: bool, status: str) -> None:
-        """Persiste tanto fragmentos como texto final, sin duplicar el mismo mensaje."""
-        if self.conversation is None:
-            return
-        messages = self.conversation["messages"]
-        message = next((entry for entry in messages if entry["id"] == item_id), None)
-        if message is None:
-            messages.append({"id": item_id, "role": "assistant", "text": text, "status": status})
-        else:
-            message["text"] = message["text"] + text if append else text
-            message["status"] = status
+    def _publish_account(self) -> None:
+        account = self.session.account()
+        self.authenticated = bool(account["authenticated"])
+        self._emit("auth.state", **account)
+
+    def _refresh_account(self) -> None:
         try:
-            self.history.save(self.conversation)
-        except (OSError, ValueError):
-            self.events.emit("history.notice", message="No se pudo guardar un fragmento del chat; el texto sigue visible.")
+            with self._lock:
+                self._publish_account()
+                connected = self.authenticated
+            models = self.client.models() if connected else []
+            with self._lock:
+                if self._closing.is_set():
+                    return
+                self.models = models
+                allowed = {row["slug"] for row in models}
+                if self.model not in allowed:
+                    self.model = models[0]["slug"] if models else ""
+                self._emit("models.list", models=models, selected=self.model)
+                self._publish_account()
+        except (ServiceError, OSError) as error:
+            with self._lock:
+                self.models = []
+                self._publish_account()
+                self._emit("models.list", models=[], selected="")
+                self._emit("error", message=str(error) if isinstance(error, ServiceError) else
+                           "No se pudo leer la sesión guardada")
+        finally:
+            with self._lock:
+                self.account_pending = False
+                self._emit("auth.refresh.finished")
+
+    def _login(self, cancel: threading.Event) -> None:
+        attempt = None
+        success, message = False, "Inicio de sesión cancelado."
+        try:
+            if cancel.is_set():
+                raise Cancelled()
+            attempt = self.session.begin_login(cancel)
+            with self._lock:
+                if cancel.is_set():
+                    raise Cancelled()
+                self._emit("auth.login.started", url=attempt.url)
+            callback = attempt.wait()
+            self.session.complete_login(attempt, callback)
+            success, message = True, "Cuenta conectada."
+        except Cancelled:
+            pass
+        except ServiceError as error:
+            message = str(error)
+        except (OSError, ValueError, KeyError, TypeError):
+            message = "No se pudo iniciar sesión. Comprueba tu conexión y vuelve a intentarlo."
+        finally:
+            if attempt:
+                attempt.close()
+            with self._lock:
+                self.login_pending = False
+                welcome = (success and self.session.account()["plan_enabled"]
+                           and not (attempt.profile.get("scopes") and
+                                    "chatgpt.tokens.use.direct" in attempt.profile["scopes"]))
+                self._emit("auth.login.finished", success=success, message=message, show_plan_welcome=bool(welcome))
+                if success and not self._closing.is_set():
+                    self._publish_account()
+                    self.account_pending = True
+                    self._emit("auth.refresh.started")
+                    self._spawn(self._refresh_account)
+
+    def _logout(self) -> None:
+        try:
+            confirmed = self.session.logout()
+            with self._lock:
+                self.models = []
+                self._emit("models.list", models=[], selected="")
+                self._publish_account()
+                if not confirmed:
+                    self._emit("error", message="Sesión local cerrada. No se confirmó la revocación remota; puedes desconectar Agent Shell en los ajustes de ChatGPT.")
+        finally:
+            with self._lock:
+                self.account_pending = False
+                self._emit("auth.refresh.finished")
 
     def _open_chat(self, chat_id: str) -> None:
-        record = self.history.load(chat_id)  # Una falla conserva la conversación actual.
+        record = self.history.load(chat_id)
+        for message in record["messages"]:
+            if message["status"] == "streaming":
+                message["status"] = "interrupted"
         self.conversation = record
-        self.thread_id = None
-        self.turn_id = None
-        self._resume_thread_id = record.get("thread_id")
-        self.events.emit("chat.loaded", chat=record)
+        if record.get("model") in {row["slug"] for row in self.models}:
+            self.model = record["model"]
+        self._emit("chat.loaded", chat=record)
+        self._emit("model.selected", model=self.model)
 
-    def _thread_options(self) -> dict:
-        return {
-            "cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
-            "modelProvider": "openai", "developerInstructions": CHAT_INSTRUCTIONS,
-            "config": {
-                "features": {"shell_tool": False, "unified_exec": False, "apps": False},
-                "web_search": "disabled",
-            },
-        }
+    def _save(self) -> None:
+        if self.conversation is not None:
+            try:
+                self.history.save(self.conversation)
+                self._last_saved = time.monotonic()
+            except OSError:
+                self._emit("history.notice", message="No se pudo guardar el último estado del chat; el texto sigue visible.")
 
-    def _read_account(self) -> None:
-        account = self.client.request("account/read", {"refreshToken": False}).get("account") or {}
-        with self._lock:
-            # Una API key configurada en CLI no equivale a la cuenta solicitada.
-            self.authenticated = account.get("type") == "chatgpt"
-            self.events.emit(
-                "auth.state", authenticated=self.authenticated,
-                method=account.get("type", "none"), email=account.get("email") or "",
-                plan=account.get("planType") or "",
-            )
-
-    def _login(self) -> None:
-        try:
-            result = self.client.request("account/login/start", {"type": "chatgpt"})
-            url = result["authUrl"]
-            parsed = urlparse(url)
-            if parsed.scheme != "https" or parsed.hostname != "auth.openai.com":
-                raise CodexError("Codex devolvió una dirección de autenticación inesperada")
-            with self._lock:
-                if not self.login_pending:
-                    return
-                self.login_id = result["loginId"]
-                cancel = self._login_cancel_pending
-            if cancel:
-                self._cancel_login()
-            else:
-                self.events.emit("auth.login.started", url=url)
-        except Exception:
-            with self._lock:
-                self.login_pending = False
-            self.events.emit("auth.login.finished", success=False, message="No se pudo iniciar la sesión")
-            raise
-
-    def _cancel_login(self) -> None:
-        with self._lock:
-            login_id = self.login_id
-        if login_id:
-            self.client.request("account/login/cancel", {"loginId": login_id})
-
-    def _start_turn(self, prompt: str, generation: int | None = None) -> None:
-        try:
-            with self._lock:
-                if generation is None:
-                    generation = self._generation
-                thread_id = self.thread_id
-            if not thread_id:
-                if self._resume_thread_id:
-                    result = self.client.request("thread/resume", {
-                        **self._thread_options(), "threadId": self._resume_thread_id,
-                    })
-                else:
-                    result = self.client.request("thread/start", {
-                        **self._thread_options(), "ephemeral": False,
-                    })
-                with self._lock:
-                    self.thread_id = thread_id = result["thread"]["id"]
-                    self._resume_thread_id = None
-                    if self.conversation is not None:
-                        self.conversation["thread_id"] = thread_id
-                        self.conversation["model"] = result.get("model", "")
-                        self.history.save(self.conversation)
-                self.events.emit("chat.thread", thread_id=thread_id, model=result.get("model", ""))
-            with self._lock:
-                if self._cancel_pending:
-                    self._finish("interrupted")
-                    return
-            result = self.client.request("turn/start", {
-                "threadId": thread_id,
-                "input": [{"type": "text", "text": prompt, "text_elements": []}],
-            })
-            with self._lock:
-                # completed puede llegar antes que la respuesta al RPC turn/start.
-                if not self.busy or generation != self._generation:
-                    return
-                self.turn_id = result["turn"]["id"]
-                cancel = self._cancel_pending
-            if cancel:
-                self._interrupt()
-        except Exception:
-            with self._lock:
-                if generation == self._generation:
-                    self._finish("failed", "No se pudo iniciar la respuesta de Codex")
-            raise
-
-    def _interrupt(self) -> None:
-        with self._lock:
-            thread_id, turn_id = self.thread_id, self.turn_id
-        if thread_id and turn_id:
-            self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+    def _message(self, item_id: str, text: str, append: bool) -> None:
+        messages = self.conversation["messages"]
+        row = next((entry for entry in messages if entry["id"] == item_id), None)
+        if row is None:
+            row = {"id": item_id, "role": "assistant", "text": "", "status": "streaming"}
+            messages.append(row)
+        row["text"] = row["text"] + text if append else text
+        self._emit("chat.delta" if append else "chat.message", item_id=item_id, text=text)
+        if time.monotonic() - self._last_saved >= 0.5:
+            self._save()
 
     def _finish(self, status: str, message: str = "") -> None:
-        with self._lock:
-            self.busy = False
-            self.turn_id = None
-            self._cancel_pending = False
-            if self.conversation is not None:
-                for entry in self.conversation["messages"]:
-                    if entry["status"] == "streaming":
-                        entry["status"] = status
-                try:
-                    self.history.save(self.conversation)
-                except OSError:
-                    self.events.emit("history.notice", message="No se pudo guardar el último estado del chat")
-            self.events.emit("chat.finished", status=status, message=message)
-            if self.conversation is not None:
-                self._publish_history()
+        self.busy = False
+        if self.conversation is not None:
+            for entry in self.conversation["messages"]:
+                if entry["status"] == "streaming":
+                    entry["status"] = status
+            self._save()
+        self._emit("chat.finished", status=status, message=message)
+        self._publish_history()
 
-    def _disconnected(self) -> None:
+    def _response_event(self, event: dict, generation: int) -> bool:
+        """No publica razonamiento ni eventos de una respuesta ya cancelada."""
         with self._lock:
-            if self.busy:
-                self._finish("interrupted", "Se perdió la conexión con Codex")
-            self.ready = False
-            self.authenticated = False
-            self.busy = False
-            self.login_pending = False
-        self.events.emit("backend.disconnected", message="Codex se desconectó. Reinicia la aplicación.")
+            if not self.busy or generation != self._generation or self._closing.is_set():
+                return True
+            kind = event["type"]
+            if kind in ("response.output_text.delta", "response.output_text.done"):
+                item_id = event.get("item_id")
+                text = event.get("delta" if kind.endswith("delta") else "text")
+                if not isinstance(item_id, str) or not isinstance(text, str):
+                    raise ServiceError("El servicio devolvió un fragmento incompatible")
+                part = str(event.get("content_index", 0))
+                self._message(item_id + ":" + part, text, kind.endswith("delta"))
+            elif kind == "response.completed":
+                response = event.get("response") or {}
+                if response.get("status") != "completed":
+                    raise ServiceError("El servicio no confirmó que la respuesta terminara")
+                for item in response.get("output", []):
+                    if item.get("type") == "message" and item.get("role") == "assistant":
+                        for index, content in enumerate(item.get("content", [])):
+                            if content.get("type") in ("output_text", "refusal"):
+                                self._message(item["id"] + ":" + str(index),
+                                              content.get("text", content.get("refusal", "")), False)
+                self._finish("completed")
+                return True
+            elif kind in ("response.failed", "response.incomplete", "error"):
+                response = event.get("response") or {}
+                if kind == "response.incomplete":
+                    raise ServiceError("La respuesta quedó incompleta. Puedes pedir que continúe.")
+                raise service_error(error=response.get("error") or event.get("error") or event)
+            return False
 
-    def _on_message(self, message: dict) -> None:
-        """Normaliza datos del chat; no reenvía tokens ni eventos de razonamiento."""
-        if self._closing.is_set():
-            return
-        method, params = message.get("method"), message.get("params") or {}
-        if "id" in message:
-            # Este chat no tiene pantallas de herramientas; no dejar solicitudes
-            # del servidor pendientes ni conceder acceso de forma implícita.
-            if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
-                self.client.reply(message["id"], {"decision": "decline"})
-            elif method == "item/permissions/requestApproval":
-                self.client.reply(message["id"], {"permissions": {}, "scope": "turn"})
-            else:
-                self.client.reply(message["id"], error={
-                    "code": -32601, "message": "Agent Shell sólo admite conversación en esta versión",
-                })
-            return
-        if method == "account/login/completed":
+    def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
+                    generation: int) -> None:
+        try:
+            for event in self.client.stream(model, messages, CHAT_INSTRUCTIONS, control):
+                if self._response_event(event, generation):
+                    return
+            control.check()
+            raise ServiceError("La transmisión terminó antes de confirmar la respuesta completa")
+        except Cancelled:
             with self._lock:
-                self.login_pending = False
-                self.login_id = None
-            self.events.emit(
-                "auth.login.finished", success=bool(params.get("success")),
-                message=params.get("error") or "",
-            )
-            if params.get("success"):
-                self._spawn(self._read_account)
-            return
-        if method == "account/updated":
-            self._spawn(self._read_account)
-            return
-        with self._lock:
-            if params.get("threadId") != self.thread_id or not self.busy:
-                return
-            if method == "turn/started":
-                self.turn_id = params["turn"]["id"]
-                if self._cancel_pending:
-                    self._spawn(self._interrupt)
-            elif method == "item/agentMessage/delta":
-                self._save_message(params["itemId"], params["delta"], True, "streaming")
-                self.events.emit("chat.delta", item_id=params["itemId"], text=params["delta"])
-            elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
-                item = params["item"]
-                self._save_message(item["id"], item.get("text", ""), False, "completed")
-                self.events.emit("chat.message", item_id=item["id"], text=item.get("text", ""))
-            elif method == "turn/completed":
-                turn = params["turn"]
-                self._finish(turn["status"], (turn.get("error") or {}).get("message", ""))
-            elif method == "error":
-                self.events.emit("chat.notice", message=(params.get("error") or {}).get("message", "Error de Codex"))
+                if self.busy and generation == self._generation:
+                    self._finish("interrupted")
+        except (ServiceError, OSError, ValueError, KeyError, TypeError) as error:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self._finish("failed", str(error) if isinstance(error, ServiceError) else
+                                 "No se pudo completar la respuesta")
+                    self._publish_account()
 
     def handle(self, request: Any) -> None:
-        """Valida instrucciones de Qt antes de llamar al proveedor."""
         if not isinstance(request, dict):
-            self.events.emit("error", message="La instrucción debe ser un objeto JSON")
+            self._emit("error", message="La instrucción debe ser un objeto JSON")
             return
-        action = request.get("type")
         with self._lock:
-            # El historial local se puede leer incluso cuando Codex está desconectado.
-            if action in ("history.list", "chat.open", "chat.new"):
-                if self.busy or self.login_pending:
-                    self.events.emit("error", message="Detén la operación actual antes de abrir otro chat")
-                else:
-                    try:
-                        if action == "history.list":
-                            self._publish_history()
-                        elif action == "chat.open":
-                            self._open_chat(request.get("chat_id"))
-                        else:
-                            self.thread_id = None
-                            self.turn_id = None
-                            self.conversation = None
-                            self._resume_thread_id = None
-                            self.events.emit("chat.reset")
-                    except (OSError, ValueError, KeyError, TypeError):
-                        self.events.emit("error", message="No se pudo abrir la conversación guardada")
-                return
-            if not self.ready:
-                self.events.emit("error", message="Codex todavía no está conectado")
-                return
-            if action == "chat.send":
-                prompt = request.get("prompt")
-                if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_LENGTH:
-                    self.events.emit("error", message="Escribe entre 1 y 16000 caracteres")
-                elif not self.authenticated:
-                    self.events.emit("error", message="Inicia sesión con ChatGPT para conversar")
-                elif self.busy or self.login_pending:
-                    self.events.emit("error", message="Espera a que termine la operación actual")
-                else:
-                    try:
-                        if self.conversation is None:
-                            self.conversation = self.history.create(prompt.strip())
-                        self.conversation["messages"].append({
-                            "id": uuid.uuid4().hex, "role": "user", "text": prompt.strip(), "status": "completed",
-                        })
-                        self.history.save(self.conversation)
-                    except OSError:
-                        self.events.emit("chat.finished", status="failed", message="No se pudo guardar el mensaje")
-                        return
-                    self.events.emit("chat.saved", chat_id=self.conversation["chat_id"], title=self.conversation["title"])
-                    self._publish_history()
-                    self.busy = True
-                    self.turn_id = None
-                    self._cancel_pending = False
-                    self._generation += 1
-                    generation = self._generation
-                    self.events.emit("chat.busy")
-                    self._spawn(lambda: self._start_turn(prompt.strip(), generation))
-            elif action == "chat.cancel":
+            action = request.get("type")
+            if action == "chat.cancel":
                 if self.busy:
-                    self._cancel_pending = True
-                    self._spawn(self._interrupt)
-            elif action == "auth.login":
-                if self.busy or self.login_pending:
-                    self.events.emit("error", message="Ya hay una operación en curso")
-                else:
+                    self._stream.cancel()
+                    self._finish("interrupted")
+                return
+            if action == "auth.cancel":
+                self._login_cancel.set()
+                return
+            if action in ("chat.new", "chat.open", "history.list", "model.select"):
+                if self.busy or self.login_pending or (action == "model.select" and self.account_pending):
+                    self._emit("error", message="Espera a que termine la operación actual")
+                    return
+                try:
+                    if action == "chat.new":
+                        self.conversation = None
+                        self._emit("chat.reset")
+                        self._emit("model.selected", model=self.model)
+                    elif action == "chat.open":
+                        self._open_chat(request.get("chat_id"))
+                    elif action == "history.list":
+                        self._publish_history()
+                    elif request.get("model") in {row["slug"] for row in self.models}:
+                        self.model = request["model"]
+                        self._emit("model.selected", model=self.model)
+                    else:
+                        self._emit("error", message="Selecciona un modelo disponible en tu cuenta")
+                except (OSError, ValueError, KeyError, TypeError):
+                    self._emit("error", message="No se pudo abrir la conversación guardada")
+                return
+            if action in ("auth.login", "auth.refresh", "auth.logout"):
+                if self.busy or self.login_pending or self.account_pending:
+                    self._emit("error", message="Ya hay una operación en curso")
+                elif action == "auth.login":
                     self.login_pending = True
-                    self._login_cancel_pending = False
-                    self._spawn(self._login)
-            elif action == "auth.refresh":
-                self._spawn(self._read_account)
-            elif action == "auth.cancel":
-                self._login_cancel_pending = True
-                self._spawn(self._cancel_login)
+                    self._login_cancel = threading.Event()
+                    cancel = self._login_cancel
+                    self._spawn(lambda: self._login(cancel))
+                else:
+                    self.account_pending = True
+                    self._emit("auth.refresh.started")
+                    self._spawn(self._logout if action == "auth.logout" else self._refresh_account)
+                return
+            if action != "chat.send":
+                self._emit("error", message="Instrucción desconocida")
+                return
+            prompt = request.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_LENGTH:
+                self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
+            elif self.busy or self.login_pending or self.account_pending:
+                self._emit("error", message="Espera a que termine la operación actual")
+            elif not self.authenticated or not self.models:
+                self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
             else:
-                self.events.emit("error", message="Instrucción desconocida")
+                try:
+                    if self.conversation is None:
+                        self.conversation = self.history.create(prompt.strip())
+                    snapshot = copy.deepcopy(self.conversation)
+                    self.conversation["messages"].append({"id": uuid.uuid4().hex, "role": "user",
+                                                         "text": prompt.strip(), "status": "completed"})
+                    self.conversation["model"] = self.model
+                    self.history.save(self.conversation)
+                except OSError:
+                    if "snapshot" in locals():
+                        self.conversation = snapshot
+                    self._emit("chat.finished", status="failed", message="No se pudo guardar el mensaje")
+                    return
+                self._last_saved = time.monotonic()
+                self._emit("chat.saved", chat_id=self.conversation["chat_id"], title=self.conversation["title"])
+                self._publish_history()
+                self.busy = True
+                self._stream = StreamControl()
+                self._generation += 1
+                generation, control, model = self._generation, self._stream, self.model
+                messages = [{"role": row["role"], "content": row["text"]}
+                            for row in self.conversation["messages"] if row["text"]]
+                self._emit("chat.busy")
+                self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
+                self._spawn(lambda: self._start_turn(messages, model, control, generation))
 
     def serve(self, source: TextIO) -> None:
-        """Hace handshake y lee instrucciones; cerrar stdin libera App Server."""
         try:
-            self.events.emit("history.ready", directory=str(self.history.root))
+            self._emit("history.ready", directory=str(self.history.root))
             self._publish_history()
-            try:
-                self.client.start()
-                self.client.request("initialize", {"clientInfo": {
-                    "name": "agent_shell", "title": "Agent Shell", "version": get_version(),
-                }})
-                self.client.notify("initialized")
-                with self._lock:
-                    self.ready = True
-                self.events.emit("backend.ready", provider="codex", app_version=get_version())
-                self._read_account()
-            except (CodexError, OSError) as error:
-                self.ready = False
-                self.authenticated = False
-                self.events.emit("backend.disconnected", message=str(error))
+            self._emit("backend.ready", provider="chatgpt", app_version=get_version())
+            with self._lock:
+                try:
+                    self._publish_account()
+                except (ServiceError, OSError):
+                    self.authenticated = False
+                    self._emit("auth.state", authenticated=False, method="none", email="", plan="", plan_enabled=False)
+                    self._emit("error", message="No se pudo leer la sesión guardada. El historial sigue disponible.")
+                if self.authenticated:
+                    self.account_pending = True
+                    self._emit("auth.refresh.started")
+                    self._spawn(self._refresh_account)
+                else:
+                    self._emit("models.list", models=[], selected="")
+                    self._emit("auth.refresh.finished")
             while line := source.readline(MAX_REQUEST_BYTES + 1):
                 if len(line.encode("utf-8")) > MAX_REQUEST_BYTES:
                     while not line.endswith("\n"):
                         line = source.readline(MAX_REQUEST_BYTES + 1)
                         if not line:
                             break
-                    self.events.emit("error", message="Instrucción demasiado grande")
+                    self._emit("error", message="Instrucción demasiado grande")
                     continue
                 try:
                     request = json.loads(line)
                 except json.JSONDecodeError:
-                    self.events.emit("error", message="JSON inválido")
+                    self._emit("error", message="JSON inválido")
                     continue
                 self.handle(request)
-        except (CodexError, OSError) as error:
-            self.events.emit("backend.disconnected", message=str(error))
+        except (OSError, ServiceError):
+            self._emit("backend.disconnected", message="No se pudo leer la sesión o comunicarse con la interfaz")
         finally:
-            self._closing.set()
-            self.client.close()
+            self._login_cancel.set()
+            self._stream.cancel()
             with self._lock:
-                if self.busy and self.conversation is not None:
-                    for message in self.conversation["messages"]:
-                        if message["status"] == "streaming":
-                            message["status"] = "interrupted"
-                    try:
-                        self.history.save(self.conversation)
-                    except OSError:
-                        pass  # Los deltas anteriores ya están en el JSON atómico.
+                if self.busy:
+                    self._finish("interrupted")
+                self._closing.set()

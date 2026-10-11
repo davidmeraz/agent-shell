@@ -1,93 +1,88 @@
 # Arquitectura del chat
 
-## Objetivo
-
-Construir una interfaz propia con Quickshell sobre el motor de Codex y la cuenta
-ChatGPT que el usuario ya usa en la CLI. La aplicación actual se concentra en
-conversar; las herramientas visuales de programación se decidirán después.
+Agent Shell mantiene su propia sesión de ChatGPT y conecta directamente con
+OpenAI. Quickshell inicia únicamente el backend Python; no hay proceso de Codex.
 
 ```mermaid
 flowchart LR
-    UI[Chat Qt Quick] --> Bridge[AgentBridge]
-    Bridge -->|NDJSON v1| Python[Puente Python]
-    Python -->|RPC por stdio| Codex[Codex App Server]
-    Codex --> Account[Cuenta y servicio de Codex]
-    Codex -->|Notificaciones| Python
-    Python -->|Mensajes y estado| Bridge
-    Bridge --> UI
+    Qt[Chat Qt Quick] --> Bridge[AgentBridge]
+    Bridge -->|NDJSON v1| Python[HarnessServer]
+    Python --> Session[Sesión OAuth local]
+    Python --> Client[Cliente ChatGPT]
+    Session -->|OAuth y claves públicas| Auth[auth.openai.com]
+    Client -->|HTTPS y SSE| API[Responses API con permiso de plan]
+    API -->|Fragmentos de texto| Client
+    Python --> History[Historial JSON local]
 ```
 
 ## Responsabilidades
 
-- `ChatWindow`: cuenta visible, formulario, conversación y controles.
-- `AgentBridge`: aplica deltas, reemplaza el texto final por id de mensaje y mantiene
-  el estado que habilita los controles. Abre la URL OAuth cuando el usuario inicia sesión.
-- `HarnessServer`: valida instrucciones, consulta cuenta, crea threads y turnos,
-  traduce eventos y tramita la interrupción de una respuesta.
-- `CodexClient`: proceso hijo, handshake, ids RPC, respuestas concurrentes, notificaciones
-  y cierre del transporte. No lee archivos de autenticación ni implementa OAuth.
-- `EventEmitter`: serializa los eventos de la interfaz para varios hilos.
-- `HistoryStore`: un JSON por conversación, escritura atómica y recuperación local.
-
-## Flujo
-
-1. Python inicia `codex app-server --stdio` y envía `initialize` con identidad y versión
-   de Agent Shell. Después envía la notificación `initialized`.
-2. `account/read` consulta la cuenta administrada por Codex. Sólo `type: chatgpt`
-   habilita el chat. Se muestran únicamente correo, plan y estado.
-3. El primer mensaje crea un thread persistente con un directorio de contexto vacío,
-   proveedor OpenAI, sandbox `read-only`, shell y conectores desactivados, búsqueda
-   web desactivada e instrucciones para conversar.
-4. Cada mensaje inicia `turn/start` en el mismo thread. `item/agentMessage/delta`
-   amplía el mensaje correspondiente; `item/completed` reconcilia su texto final.
-5. `turn/completed` libera los controles con resultado completado, fallido o interrumpido.
-   Se verifica el estado final, no se trata cualquier evento de cierre como éxito.
-6. Detener invoca `turn/interrupt`. Si aún no existe turno, se recuerda la cancelación
-   para no perderla durante la creación del thread o el inicio del turno.
-
-Las llamadas RPC esperan en trabajadores. El hilo lector sigue entregando deltas,
-respuestas y peticiones del servidor. Una generación evita que una respuesta RPC
-tardía del turno anterior cambie el estado de uno nuevo.
+- `ChatWindow`: chat, cuenta, modelo, control de respuesta e historial.
+- `AgentBridge`: aplica eventos, reconcilia texto final por identificador y abre
+  la autorización sólo al solicitar el usuario iniciar sesión.
+- `HarnessServer`: valida instrucciones, construye contexto local, coordina
+  operaciones en trabajadores y emite el contrato NDJSON.
+- `ChatGPTSession`: registro dinámico de cliente, callback loopback, validación
+  de identidad, permisos, persistencia y renovación.
+- `HttpClient`: HTTPS verificado sin redirecciones automáticas, errores sin
+  diagnósticos privados, lectura SSE y cierre de sockets al cancelar.
+- `ChatGPTClient`: descubre modelos de la cuenta y solicita respuestas.
+- `HistoryStore`: metadatos y mensajes en JSON atómico.
+- `EventEmitter`: secuencia global y escritura serializada entre trabajadores.
 
 ## Autenticación
 
-Al pulsar Iniciar sesión se solicita `account/login/start` de tipo `chatgpt`. Se
-valida una URL HTTPS de `auth.openai.com` antes de enviarla a Qt. App Server gestiona
-callback, tokens y almacenamiento. La aplicación espera `account/login/completed`
-y vuelve a consultar la cuenta. Cancelar usa `account/login/cancel`.
+Antes de autorizar se crea un host estable, `ext_agent_host_id`, independiente de
+la identidad de usuario. El registro inicial usa `dynamic_agent_client`, nombre
+`Agent Shell`, scopes de identidad y permiso `chatgpt.tokens.use.direct`.
+Las nuevas conexiones usan el cliente emitido por OpenAI, asociado a esa cuenta.
+La implementación actual mantiene una sola cuenta registrada por directorio de
+sesión; un selector de cuentas queda pendiente.
 
-La sesión pertenece a Codex y puede compartirse con la CLI. Agent Shell no almacena
-contraseñas, access tokens ni refresh tokens. Tampoco importa conversaciones de
-ChatGPT. Los eventos de razonamiento y diagnósticos crudos del App Server no se
-reenvían a la interfaz.
+Cada intento tiene state, nonce y PKCE nuevos. El listener está ligado únicamente
+a `127.0.0.1` y a `/auth/callback`. El intercambio usa exactamente el mismo URI,
+incluyendo puerto. Un callback con state incorrecto no consume el intento válido.
 
-## Ciclo de vida y límites
+Se verifica la firma RS256 del ID token con JWKS de OpenAI, emisor, audiencia,
+vencimiento, nonce y sujeto. Una reautorización no puede sustituir la identidad de
+la cuenta. Sólo el permiso concedido de plan habilita inferencia.
 
-El historial local vive en `.runtime/chats/`, separado de `.runtime/chat/`, el
-directorio de contexto. Al aceptar un mensaje se crea su conversación y se guarda el
-texto. Cada delta amplía el JSON; el mensaje final reemplaza los fragmentos por id.
-Un temporal con permisos 0600 se vacía a disco y se reemplaza mediante `os.replace`.
-Así una escritura interrumpida conserva un JSON completo anterior o posterior.
+El archivo de sesión contiene el host, cliente, identidad verificada y tokens.
+Las renovaciones se serializan con un bloqueo entre procesos, reemplazando tokens
+rotativos atómicamente. Los ajustes de Codex nunca se leen ni se modifican.
 
-Los threads de Codex se crean con `ephemeral: false`. Abrir un historial carga los
-mensajes locales sin depender del motor; al enviar otra solicitud se usa `thread/resume`
-con las mismas opciones de conversación. Si el thread falta, se conserva el archivo
-local y se informa el error, sin reemplazarlo por un contexto nuevo silenciosamente.
-Nuevo chat desacopla la conversación actual sin borrar sus archivos. El arranque
-publica la ubicación y lista del historial antes de conectar con Codex, de modo que
-los mensajes siguen siendo consultables cuando App Server no está disponible.
+## Inferencia y contexto
 
-Cerrar stdin o recibir SIGTERM cierra también el proceso de Codex. Si éste desaparece,
-se desbloquean llamadas pendientes y el chat muestra desconexión; se debe relanzar.
-Las respuestas parciales conservan su texto y quedan marcadas como interrumpidas.
-El lanzador evita iniciar otra instancia del mismo shell con `--no-duplicate`.
+El catálogo viene de `GET https://api.openai.com/v1/models` con el token OAuth.
+Se muestran entradas con `visibility: list`, se conserva su orden y se envía el
+`slug` del modelo seleccionado. No hay un modelo de pago independiente como fallback.
 
-No hay implementación de herramientas propias, editor ni terminal. Las solicitudes
-RPC de aprobación se rechazan y otras peticiones interactivas no soportadas reciben
-un error de método. La política del thread limita escrituras de herramientas del
-agente; no sustituye las políticas de servicios externos o la configuración gestionada
-de Codex. Esta versión no es una implementación genérica de permisos de agentes.
+Cada turno envía instrucciones y los mensajes locales mediante
+`POST https://api.openai.com/v1/responses`, con `store: false` y `stream: true`.
+No se envían herramientas. Los fragmentos y el texto final se reconcilian por
+item y parte de contenido. Sólo `response.completed` con estado confirmado
+marca éxito. Fallos, respuestas incompletas y cortes de conexión conservan el texto
+parcial y liberan los controles.
 
-La prueba Qt usa un doble de Codex seleccionado explícitamente. Comprueba nuestra
-integración, pero no garantiza login ni inferencia real. El arranque real en el entorno
-de desarrollo está limitado por el directorio de Codex de sólo lectura.
+Los JSON de 0.2.0 siguen siendo legibles. Su antiguo thread_id no se consulta:
+continuar utiliza los mensajes locales. Si faltaba contexto interno, no puede
+reconstruirse. Las conversaciones demasiado largas pueden superar el contexto;
+todavía no hay compactación.
+
+## Persistencia y ciclo de vida
+
+El primer mensaje crea el chat y se guarda antes de solicitar inferencia. El
+streaming actualiza Qt antes del guardado y agrupa escrituras cada medio segundo.
+Al terminar, cancelar o recibir SIGTERM se guarda el estado final y el texto pendiente.
+
+Cancelar cierra el socket de streaming y marca inmediatamente el turno como
+interrumpido. Una generación impide que eventos tardíos contaminen el siguiente
+turno. El backend sigue disponible después de errores de red para reintentar.
+Cerrar stdin o SIGTERM cancela operaciones; los trabajadores de red tienen timeout.
+
+El historial está separado de las credenciales. Puede leerse sin autenticación,
+durante el descubrimiento del catálogo y si el archivo de sesión es incompatible.
+La prueba Qt usa un backend real con cuenta de prueba y servicio HTTP local.
+El usuario confirmó la autenticación real desde el escritorio. También se verificó
+una respuesta real con el backend y la sesión propia de Agent Shell, hasta recibir
+texto y `response.completed`.

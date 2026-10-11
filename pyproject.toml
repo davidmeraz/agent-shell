@@ -1,10 +1,17 @@
 [project]
 name = "agent-shell"
-version = "0.2.0"
-description = "Cliente de chat de Codex con Quickshell y Qt"
+version = "0.3.0"
+description = "Cliente de ChatGPT con sesión propia, Quickshell y Qt"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["PyJWT[crypto]>=2.10,<3"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["backend"]

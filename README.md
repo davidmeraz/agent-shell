@@ -1,166 +1,127 @@
 # Agent Shell
 
-Cliente de chat para **Codex**, construido con **Quickshell y Qt Quick** para Linux
-con Hyprland. Reutiliza la cuenta de ChatGPT iniciada en Codex CLI y muestra la
-respuesta conforme llega. El motor es el App Server oficial de Codex.
+Aplicación de chat para Linux con **Quickshell y Qt Quick**, sesión propia de
+**ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
+el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión actual: 0.2.0**, con historial persistente y etiqueta Git local `v0.2.0`.
-La base inicial `0.1.0`
-permanece identificada con la etiqueta Git local `v0.1.0`.
+**Versión: 0.3.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` y `v0.2.0` conservan las versiones anteriores.
 
-La visión es construir una aplicación de escritorio propia, inspirada en la
-experiencia de Codex y ChatGPT, usando Quickshell y Qt. Esta primera etapa se
-concentra en el chat autenticado; el trabajo visual sobre proyectos se diseñará
-después. Consulta la [visión del proyecto](docs/vision.md).
+## Preparar y ejecutar
 
-## Ejecutar
-
-Requisitos: Python 3.11+, Quickshell 0.3.x con Qt Quick Controls y Layouts, Codex CLI
-con `app-server --stdio` y una sesión gráfica. La interfaz de la CLI se inspeccionó
-con Codex 0.162.1. Python no requiere paquetes externos.
+Requisitos: Python 3.11+, Quickshell 0.3.x con Qt Quick Controls y Layouts, acceso
+a Internet y una sesión gráfica. La validación de identidad usa PyJWT con
+cryptography; la instalación prepara un entorno Python dentro del proyecto.
 
 ```bash
-cd /home/dav3e/Dev/quickshell/agent-shell
+./scripts/setup.sh
 ./scripts/run.sh
 ```
 
-Al arrancar, el chat consulta la sesión de Codex. Si ya has iniciado sesión con
-ChatGPT, puedes enviar un mensaje inmediatamente. Usa **Enter** para enviar y
-**Shift+Enter** para un salto de línea. **Detener** interrumpe la respuesta y
-**Nuevo chat** inicia otra conversación. Puedes seleccionar y copiar los mensajes.
+Pulsa **Continuar con ChatGPT**, inicia sesión en el navegador y autoriza el uso
+de tu plan. La cuenta debe ser elegible para esta integración; disponibilidad,
+modelos y límites los determina OpenAI. Esta modalidad consume el uso autorizado
+de tu plan, sin configurar una API key ni una facturación de API independiente.
 
-Se usa el proveedor OpenAI con la cuenta ChatGPT; el modelo lo decide la configuración
-efectiva de Codex. Esta versión no incluye selector de modelos. El contenido se
-presenta como texto, incluido el código.
+La aplicación descubre los modelos disponibles para tu cuenta y permite elegirlos.
+Usa **Enter** para enviar, **Shift+Enter** para un salto de línea, **Detener** para
+interrumpir y **Nuevo chat** para otra conversación. Los mensajes se pueden copiar
+y seleccionar; actualmente se presentan como texto sin formato Markdown.
 
-## Autenticación con tu cuenta
+**Administrar uso** abre los ajustes de ChatGPT. **Actualizar** renueva el
+catálogo y consulta la sesión local. **Salir** cierra la sesión de Agent Shell e
+intenta revocarla en OpenAI; si la revocación no se confirma, se informa para que
+puedas desconectar la aplicación desde los ajustes de ChatGPT.
 
-El estado se consulta a través de `account/read` del App Server, sin abrir ni copiar
-credenciales. El botón **Iniciar sesión** solicita el flujo oficial de Codex y abre
-la URL de autorización en el navegador. Codex recibe la confirmación local y guarda
-la sesión en su propio almacén. El botón **Actualizar** vuelve a consultar la cuenta
-si has iniciado sesión desde otra terminal.
+## Sesión independiente
 
-También puedes preparar la sesión antes de abrir el chat:
+Agent Shell registra su propia conexión, recibe tokens OAuth y los renueva
+automáticamente. No importa la sesión ni las credenciales de Codex ni el historial
+de ChatGPT. Tras actualizar desde 0.2.0, debes conectar tu cuenta una vez aquí.
 
-```bash
-codex login
-codex login status
-```
+El flujo usa PKCE, state y nonce por intento. El callback escucha temporalmente
+en `127.0.0.1`, en un puerto disponible, con un límite de diez minutos. La firma
+del ID token se verifica con las claves públicas de OpenAI, junto con emisor,
+audiencia, vencimiento e identidad de la cuenta. No se confunde iniciar sesión
+con conceder permiso para consumir el plan.
 
-Si el callback del navegador no funciona en tu entorno, utiliza el flujo de
-código de dispositivo de la CLI y vuelve a abrir el chat:
+La sesión se guarda por defecto en `.runtime/session/session.json`, con
+directorio `0700` y archivo `0600`. Contiene credenciales: no lo compartas ni lo
+incluyas en Git. La aplicación no las publica en el protocolo de la interfaz ni
+en registros. Una URL de autorización puede contener un ID token de la sesión
+anterior como pista de cuenta: tampoco debe registrarse o compartirse.
 
-```bash
-codex login --device-auth
-```
+## Historial y contexto
 
-Se acepta una cuenta de tipo ChatGPT. Si la CLI está configurada con una API key,
-el chat pide iniciar sesión con ChatGPT. Disponibilidad, límites y acceso a modelos
-los determina tu cuenta y Codex. Las conversaciones de esta aplicación son nuevas;
-no se importa el historial de ChatGPT ni se sincronizan chats entre aplicaciones.
-No hay botón de cierre de sesión porque la sesión se comparte con la CLI.
+Cada conversación se guarda automáticamente en un JSON de `.runtime/chats/`.
+El panel **Historial** permite abrir chats anteriores, copiar la ubicación y abrir
+la carpeta. El texto local sigue disponible sin conexión y sin iniciar sesión.
 
-## Alcance actual
+Las solicitudes llevan los mensajes guardados de la conversación y no dependen
+de threads remotos. Se envían con `store: false` y `stream: true`. Los chats de
+0.2.0 conservan su formato y pueden continuarse desde sus mensajes; el antiguo
+`thread_id` queda como metadato y no se usa para pedir contexto a Codex.
+No se recupera razonamiento ni contexto interno que no figure en el historial local.
 
-Una sola ventana para conversar, con historial persistente. Pulsa **Historial** para
-ver las conversaciones recientes y abrir una. **Nuevo chat** inicia otra sin borrar
-las anteriores. Puedes leer el historial aunque Codex esté desconectado; para enviar
-mensajes necesitas la conexión y la cuenta autenticada.
+Las escrituras son atómicas. Durante streaming se agrupan cada medio segundo al
+recibir fragmentos; finalizar, cancelar o cerrar normalmente guarda el texto
+pendiente. Un cierre forzado o un corte de energía puede perder los fragmentos
+más recientes. Los archivos dañados se conservan y se omiten de la lista.
 
-## Directorio del historial
+Una conversación muy larga puede superar el contexto del modelo. Se informa del
+error para iniciar otro chat; aún no hay resumen automático ni compactación.
 
-La ruta por defecto es:
+## Configuración
 
-```text
-/home/dav3e/Dev/quickshell/agent-shell/.runtime/chats/
-```
+| Variable / opción del backend | Uso |
+| --- | --- |
+| `AGENT_SHELL_HISTORY_DIR` / `--history-root` | Directorio del historial |
+| `AGENT_SHELL_SESSION_DIR` / `--session-root` | Directorio privado de sesión |
+| `AGENT_SHELL_MODEL` / `--model` | Modelo inicial si aparece en el catálogo |
+| `AGENT_SHELL_PYTHON` | Intérprete del backend, por defecto `.venv/bin/python` |
 
-Cada conversación se guarda como `<chat_id>.json` en UTF-8, con título, fechas,
-mensajes, estado de respuestas, modelo e identificador del thread de Codex. El panel
-Historial muestra la ruta real, permite copiarla y ofrece **Abrir carpeta**.
-
-El guardado es automático, incluso durante una respuesta y al detenerla. Los archivos
-se reemplazan de forma atómica y están excluidos de Git. No contienen credenciales.
-Un JSON dañado se conserva y no impide listar los demás chats.
-
-Codex conserva el contexto del modelo en su propio almacén. Al continuar una
-conversación recuperada se utiliza `thread/resume` con el identificador guardado.
-Si ese thread ya no existe, los mensajes locales siguen disponibles, pero no se
-simula una continuación sin contexto. No se pueden recuperar conversaciones
-anteriores que sólo existieron en memoria y ya se cerraron.
-
-Puedes cambiar la ubicación antes de abrir la aplicación:
-
-```bash
-AGENT_SHELL_HISTORY_DIR=/ruta/a/mis-chats ./scripts/run.sh
-```
-
-El backend también acepta `--history-root`. `.runtime/chat/` sigue siendo el
-directorio de contexto del agente; `.runtime/chats/` contiene los mensajes guardados.
-
-## Límites de la interfaz
-
-Los chats usan `.runtime/chat/` como directorio de contexto, política `read-only`, herramientas
-shell desactivadas e instrucciones de conversación. No hay herramientas propias
-para crear proyectos, terminal, adjuntos ni edición de archivos. No se modifica la
-configuración de Hyprland ni se selecciona una API key.
-
-## Estructura
-
-```text
-shell.qml                 Abre la ventana del chat
-ui/AgentBridge.qml        Estado de cuenta, mensajes y eventos
-ui/ChatWindow.qml         Interfaz del chat y autenticación
-ui/components/            Controles visuales compartidos
-backend/main.py           Entrada y ciclo de vida del puente
-backend/harness/codex.py   Cliente RPC del App Server oficial
-backend/harness/server.py Traducción de cuenta, threads y turnos
-backend/harness/history.py Historial JSON y reemplazo atómico de archivos
-backend/harness/events.py Eventos de la interfaz NDJSON v1
-backend/harness/version.py Versión centralizada en pyproject.toml
-tests/                    Pruebas y doble de App Server
-smoke.qml                 Integración Qt para las pruebas
-scripts/                  Lanzamiento y comprobaciones
-docs/                     Arquitectura, protocolo y versiones
-```
+Las opciones anteriores `--codex-executable`, `--chat-root` y
+`AGENT_SHELL_CODEX` fueron retiradas.
+`AGENT_SHELL_BACKEND_ENTRY` permite a las pruebas seleccionar una entrada local
+explícita; el lanzamiento normal usa `backend/main.py` y el servicio real.
 
 ## Comprobaciones
 
 ```bash
 ./scripts/check.sh
 ./scripts/smoke.sh
-python3 backend/main.py --version
+.venv/bin/python backend/main.py --version
 ```
 
-Las pruebas usan un doble de App Server explícito, sin red ni consumo de tu cuenta.
-La integración arranca Qt offscreen, atraviesa Python y un proceso simulado de Codex,
-y comprueba cuenta, streaming, cancelación, nuevo chat y apertura del historial.
-También se verifica persistencia al reiniciar el backend y continuación del mismo
-thread con Codex simulado. No prueba una respuesta
-real del modelo ni completa OAuth. En entornos restringidos se tolera únicamente
-el diagnóstico del socket IPC auxiliar de Quickshell bloqueado.
+Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTTP
+usa un servidor loopback de prueba y el cliente de streaming real. La integración
+Qt offscreen comprueba cuenta, modelos, streaming, cancelación e historial.
+Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
+confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
+una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto
+y el evento `response.completed` de OpenAI.
 
-Para comprobar el App Server real, sin abrir el navegador ni pedir una respuesta:
+## Estructura
 
-```bash
-python3 backend/main.py < /dev/null
+```text
+shell.qml                    Ventana principal
+ui/AgentBridge.qml           Estado y contrato de eventos
+ui/ChatWindow.qml            Chat, cuenta, modelos e historial
+backend/main.py              Entrada del backend
+backend/harness/auth.py      OAuth, identidad y sesión propia
+backend/harness/http.py      HTTP y streaming SSE cancelable
+backend/harness/chatgpt.py   Modelos e inferencia con tu plan
+backend/harness/server.py    Traducción a eventos Qt y contexto local
+backend/harness/history.py   Historial atómico compatible con 0.2.0
+tests/                       OAuth, HTTP y procesos de prueba
+scripts/                     Instalación, ejecución y comprobaciones
 ```
-
-Debe publicar `backend.ready` y `auth.state`, y salir. Este comando muestra datos
-básicos de cuenta (correo y plan), nunca tokens. Si publica `backend.disconnected`,
-comprueba `codex app-server --stdio < /dev/null` y los permisos de tu directorio de
-Codex. El entorno restringido de desarrollo permitió consultar `codex login status`,
-pero impidió arrancar App Server porque el directorio de Codex era de sólo lectura.
-La interacción real con tu cuenta debe comprobarse desde tu sesión de escritorio.
-
-`AGENT_SHELL_CODEX` permite indicar la ruta del ejecutable si no está en PATH. Sólo
-el script de pruebas la cambia a `tests/fake_codex.py`; el lanzador normal usa Codex.
 
 Consulta [arquitectura](docs/architecture.md), [protocolo](docs/protocol.md),
-[versiones](docs/versioning.md), [historial](CHANGELOG.md) y
+[visión](docs/vision.md), [próximos pasos](docs/roadmap.md),
+[versiones](docs/versioning.md), [historial de cambios](CHANGELOG.md) y
 [contribución](CONTRIBUTING.md).
 
-Referencias oficiales: [Codex App Server](https://learn.chatgpt.com/docs/app-server),
-[autenticación](https://learn.chatgpt.com/docs/auth) y
-[configuración](https://learn.chatgpt.com/docs/config-file/config-reference).
+Referencias oficiales: [registro e inicio de sesión](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[cuentas y renovación](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
+y [modelos e inferencia](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).

@@ -1,8 +1,8 @@
 """Historial local legible: un JSON por conversación, sin credenciales.
 
 Las escrituras reemplazan el archivo completo de forma atómica. Un lector ve la
-versión anterior o la nueva, nunca un JSON escrito a medias. Codex mantiene por
-separado el thread que se necesita para recuperar el contexto del modelo.
+versión anterior o la nueva, nunca un JSON escrito a medias. Los mensajes locales
+son el contexto del modelo; thread_id se conserva por compatibilidad con 0.2.0.
 """
 
 import json

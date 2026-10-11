@@ -15,9 +15,8 @@ from unittest.mock import Mock, patch
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "backend"))
 
-from harness.codex import CodexError
 from harness.history import HistoryStore
-from harness.server import HarnessServer
+from test_harness import BackendSession
 
 
 class StoreTests(unittest.TestCase):
@@ -81,107 +80,8 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
-class HistoryServerTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.output = io.StringIO()
-        self.server = HarnessServer(Path(self.temp.name), self.output, ["codex"])
-        self.server.client = Mock()
-        self.record = self.server.history.create("Mi chat")
-        self.record.update(thread_id="stored-thread", model="stored-model")
-        self.record["messages"] = [{"id": "first", "role": "user", "text": "Mi chat", "status": "completed"}]
-        self.server.history.save(self.record)
-
-    def events(self):
-        return [json.loads(line) for line in self.output.getvalue().splitlines()]
-
-    def test_offline_chat_can_be_opened_without_calling_codex(self):
-        self.server.handle({"type": "chat.open", "chat_id": self.record["chat_id"]})
-        self.assertEqual(self.events()[-1]["type"], "chat.loaded")
-        self.assertEqual(self.server.conversation["messages"], self.record["messages"])
-        self.server.client.request.assert_not_called()
-
-    def test_reopened_chat_resumes_original_thread(self):
-        self.server._open_chat(self.record["chat_id"])
-        self.server.busy = True
-        self.server.client.request.side_effect = [
-            {"thread": {"id": "stored-thread"}, "model": "stored-model"},
-            {"turn": {"id": "turn-a"}},
-        ]
-        self.server._start_turn("continúa")
-        calls = self.server.client.request.call_args_list
-        self.assertEqual([call.args[0] for call in calls], ["thread/resume", "turn/start"])
-        self.assertEqual(calls[0].args[1]["threadId"], "stored-thread")
-
-    def test_missing_codex_thread_does_not_replace_local_context(self):
-        self.server._open_chat(self.record["chat_id"])
-        self.server.busy = True
-        self.server.client.request.side_effect = CodexError("Thread no encontrado")
-        with self.assertRaises(CodexError):
-            self.server._start_turn("continúa")
-        self.assertEqual(self.server._resume_thread_id, "stored-thread")
-        self.assertIsNone(self.server.thread_id)
-        self.assertFalse(self.server.busy)
-        self.assertEqual(self.server.history.load(self.record["chat_id"])["messages"], self.record["messages"])
-
-    def test_interrupted_response_keeps_partial_text_without_duplicate_message(self):
-        self.server._open_chat(self.record["chat_id"])
-        self.server.thread_id = "stored-thread"
-        self.server.busy = True
-        for text in ("Hola ", "mundo"):
-            self.server._on_message({"method": "item/agentMessage/delta", "params": {
-                "threadId": "stored-thread", "itemId": "assistant-a", "delta": text}})
-        self.server._finish("interrupted")
-        saved = self.server.history.load(self.record["chat_id"])
-        self.assertEqual(len(saved["messages"]), 2)
-        self.assertEqual(saved["messages"][-1]["text"], "Hola mundo")
-        self.assertEqual(saved["messages"][-1]["status"], "interrupted")
-
-
-class BackendSession:
-    """Proceso real del puente con directorios temporales y Codex de prueba."""
-
-    def __init__(self, root):
-        self.process = subprocess.Popen([
-            sys.executable, "-u", str(PROJECT / "backend/main.py"),
-            "--chat-root", str(root / "context"), "--history-root", str(root / "chats"),
-            "--codex-executable", str(PROJECT / "tests/fake_codex.py"),
-        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.events = queue.Queue()
-        self.reader = threading.Thread(
-            target=lambda: [self.events.put(json.loads(line)) for line in self.process.stdout], daemon=True,
-        )
-        self.reader.start()
-
-    def __enter__(self):
-        self.wait_for("auth.state")
-        return self
-
-    def send(self, message):
-        self.process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-        self.process.stdin.flush()
-
-    def wait_for(self, event_type):
-        while True:
-            event = self.events.get(timeout=5)
-            if event["type"] == event_type:
-                return event
-
-    def __exit__(self, *args):
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
-        self.reader.join(timeout=2)
-        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
-            stream.close()
-
-
 class RestartTests(unittest.TestCase):
-    def test_chat_survives_backend_restart_and_can_continue(self):
+    def test_chat_survives_restart_and_continues_without_codex_thread(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with BackendSession(root) as session:
@@ -197,6 +97,5 @@ class RestartTests(unittest.TestCase):
                 session.send({"type": "chat.send", "prompt": "continúa"})
                 self.assertEqual(session.wait_for("chat.finished")["data"]["status"], "completed")
             final = HistoryStore(root / "chats").load(chat_id)
-            self.assertEqual(final["thread_id"], first["thread_id"])
             self.assertEqual(len(final["messages"]), 4)
             self.assertEqual(len(list((root / "chats").glob("*.json"))), 1)
