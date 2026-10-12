@@ -33,6 +33,8 @@ FloatingWindow {
     property string performanceModel: ""
     property double elapsedMs: 0
 
+    readonly property ProjectExplorerWindow explorerWindow: ProjectExplorerWindow { bridge: window.bridge }
+
     Shortcut {
         sequence: "Ctrl+B"
         enabled: !window.dialogVisible
@@ -168,6 +170,14 @@ FloatingWindow {
                         font.pixelSize: 10
                         elide: Text.ElideMiddle
                     }
+                }
+                ActionButton {
+                    objectName: "workExplorerButton"
+                    text: "Explorador"
+                    font.pixelSize: 11
+                    verticalPadding: 7
+                    enabled: window.bridge.ready
+                    onClicked: window.explorerWindow.visible = true
                 }
                 ActionButton {
                     text: "Abrir carpeta"

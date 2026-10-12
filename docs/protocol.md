@@ -1,7 +1,8 @@
 # Protocolo de interfaz NDJSON v2
 
 Contrato UTF-8 entre Qt y Python, con un objeto por línea y terminador `\n`.
-Límite de línea de entrada Qt → Python: 65 536 bytes; mensaje de usuario: entre 1 y 16000 caracteres.
+Límite de línea de entrada Qt → Python: 8 MiB; mensaje de usuario: hasta 16000 caracteres,
+con texto no vacío o una imagen válida.
 Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 
 Los comandos escritos con `/` se resuelven en Qt antes de enviar mensajes.
@@ -21,9 +22,12 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 
 | Tipo | Campos | Acción |
 | --- | --- | --- |
-| `chat.send` | `prompt` | Solicitar respuesta con los mensajes locales |
+| `chat.send` | `prompt`, `image` opcional | Solicitar respuesta con texto y, opcionalmente, una imagen como URL de datos base64 |
+| `clipboard.paste` | `request_id`: 1–128 caracteres | Leer una imagen del portapapeles gráfico en un trabajador, sin inferencia |
 | `area.select` | `area: chat/work`, `project_id` opcional | Cambiar de área o proyecto y restaurar la conversación de la sesión |
 | `project.create` | `name`: 1–80 caracteres, `workdir` | Registrar una carpeta existente y abrir su proyecto en Work |
+| `explorer.list` | `project_id`, `request_id`, `path` relativa (vacía para raíz) | Listar una carpeta del proyecto activo, sin inferencia |
+| `explorer.read` | `project_id`, `request_id`, `path` relativa | Leer vista previa UTF-8 de un archivo del proyecto activo |
 | `projects.list` | Ninguno | Consultar los proyectos registrados sin contactar a OpenAI |
 | `chat.cancel` | Ninguno | Cerrar streaming o detener shell local; conservar el texto y la salida parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
@@ -62,6 +66,7 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | --- | --- |
 | `backend.ready` | `provider: chatgpt`, `app_version` |
 | `backend.disconnected` | `message` |
+| `clipboard.result` | `request_id`, `image`: URL de datos o cadena vacía; `message` opcional si falló |
 | `area.state` | `area: chat/work`, `project`: registro del proyecto seleccionado o `null` |
 | `area.rejected` | `message`: selección o registro rechazado; el área activa se conserva |
 | `projects.list` | `projects`: project_id, name, workdir, fechas y schema_version |
@@ -156,6 +161,29 @@ El protocolo v2 elimina `tool.decide`, `tool.approval` y `tool.approval.resolved
 el directorio. Backend e interfaz deben actualizarse juntos. El historial mantiene
 `schema_version: 1`, incluidos los resultados y estados de versiones anteriores.
 
+## Imágenes y portapapeles
+
+`chat.send.image` admite exclusivamente una URL `data:image/png;base64,...`,
+`data:image/jpeg;base64,...` o `data:image/webp;base64,...`. El backend valida base64,
+formato real y dimensiones con Pillow, con límites de 4 MiB decodificados y
+16 megapíxeles. No lee rutas ni descarga URLs externas. `prompt` puede estar vacío
+si hay una imagen válida. Una petición nueva durante un turno se rechaza mediante
+`error` antes de validar la imagen, sin terminar la respuesta activa.
+
+Los mensajes del historial añaden `image` opcional sólo al rol `user`. El contexto
+de Responses combina `input_text` e `input_image` con `detail: auto`; la imagen
+continúa en el contexto de los siguientes turnos y no se cuenta como caracteres
+de texto en las métricas. Qt muestra una miniatura en el editor y la imagen enviada
+en la conversación, y conserva el adjunto del borrador por área durante la sesión.
+
+`clipboard.paste` no necesita autenticación y usa `wl-paste` en Wayland o `xclip`
+en X11. Acota la lectura por tamaño y tiempo; jamás interpreta contenido como
+comandos. Qt correlaciona `request_id`, bloquea pegados duplicados y descarta una
+respuesta después de quitar el adjunto, enviar, cargar otro chat o cambiar de área.
+El pegado de texto sigue siendo nativo. Las imágenes no se adjuntan a comandos `/`.
+Estos campos y eventos son ampliaciones compatibles del protocolo v2 y del
+historial con esquema 1.
+
 ## Áreas y proyectos
 
 `area.select` con `area: work` y sin `project_id` restaura el último proyecto usado
@@ -187,3 +215,39 @@ opciones CLI se documentan en el README y en el historial de cambios.
 Las credenciales y el razonamiento no se publican. La única URL OAuth enviada
 al cliente sirve para abrir el navegador; puede incluir un id_token_hint durante
 reautorización y debe tratarse como información privada.
+
+## Explorador de Work
+
+Ampliación compatible de v2. Las lecturas funcionan sin sesión y durante una
+respuesta o shell; no cambian conversación, directorio ni historial. Sólo se
+aceptan solicitudes para el proyecto activo en Work. `request_id` es una cadena
+de hasta 128 caracteres y `path` una cadena de hasta 4096, sin NUL, rutas absolutas
+ni componentes `..`. No se siguen enlaces simbólicos en ningún componente;
+las carpetas excluidas por el explorador tampoco son accesibles por solicitud.
+
+Respuestas, siempre con `project_id` y `request_id` para correlación:
+
+- `explorer.list`: `path`, `entries`, `truncated`. Cada entrada incluye `name`,
+  `path` relativa, `directory` booleano, `size` y `modified_ns` como cadena para
+  conservar precisión en JavaScript. Carpetas primero, nombres ordenados sin
+  distinguir mayúsculas. Máximo 1000 entradas por carpeta.
+- `explorer.file`: `path`, `text`, `truncated`. Archivo regular, texto UTF-8,
+  máximo 128 KiB. NUL o codificación inválida se rechazan; un fragmento truncado
+  puede sustituir un carácter UTF-8 cortado en el límite.
+- `explorer.error`: `message`, y `path` cuando corresponde; no usa el evento
+  genérico `error`, para no afectar el estado de turnos o cuenta.
+
+Qt separa el árbol y hasta dos visores de texto en ventanas independientes,
+sin modificar el contrato. Cada una consulta cada 1500 ms sólo mientras está
+visible: el árbol usa `explorer.list` y los visores `explorer.read`. Los identificadores
+del árbol tienen prefijo `explorer-`; cada visor incluye su número del 1 al 2 y una
+secuencia creciente en `file-viewer-N-secuencia`, para no mezclar respuestas.
+Un archivo ya abierto conserva su visor; nuevos archivos ocupan un visor libre.
+Con dos visores visibles, el tercer archivo muestra un aviso local, sin solicitar
+lectura ni reemplazar contenido. Cerrar una ventana descarta sus solicitudes pendientes y no
+cierra ni detiene la otra. Seleccionar otro archivo invalida la lectura anterior;
+las respuestas con un identificador no pendiente o de otro proyecto se descartan.
+Cambiar de espacio limpia ambos estados y cierra las ventanas; cambiar la carpeta
+de trabajo limpia el árbol y cierra todos los visores. Las marcas de cambios son locales al
+árbol y no prueban autoría de la IA. No se observan carpetas plegadas ni se ofrece
+un registro persistente de modificaciones.

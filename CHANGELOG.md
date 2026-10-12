@@ -3,6 +3,25 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.11.0] — 2026-10-11
+
+- Imágenes mediante Ctrl+V en Chat y Work, con miniatura discreta, botón para quitar, envío con o sin texto y recuperación desde el historial; adjuntos del borrador por área y descarte de respuestas tardías del portapapeles.
+- Entradas multimodales de Responses con una imagen PNG/JPEG/WebP por mensaje, validada hasta 4 MiB y 16 megapíxeles; lectura binaria acotada mediante wl-paste o xclip, dependencia Pillow y ampliación compatible de NDJSON v2 hasta 8 MiB por línea.
+- Pruebas de formato, límites, contexto, historial, reinicio, lectura del portapapeles y recorrido Qt de imágenes con datos y servidor HTTP locales de prueba.
+- Validación completa con 157 pruebas del motor, revisión QML y siete escenarios de interfaz; incluye el explorador, la colocación de visores y la integración de imágenes, sin consumir una cuenta ni modificar el portapapeles del usuario.
+
+- Colocación inicial de los visores en Hyprland adaptada al monitor y sus zonas reservadas: visor 1 abajo a la izquierda y visor 2 alto a la derecha; reapertura restaura la disposición sin impedir mover o redimensionar después.
+- Hasta dos visores de texto simultáneos, numerados e independientes, con identificadores de lectura únicos; archivos ya abiertos no se duplican, un visor cerrado se reutiliza y el tercer archivo muestra un aviso sin sustituir los demás. Prueba gráfica del límite, lectura aislada y limpieza de los dos visores.
+
+- Separación del árbol de carpetas y el visor de archivos en dos ventanas mate independientes; selección de archivos abre o reutiliza el visor, con sondeo y cierre propios y limpieza al cambiar de espacio. Prueba gráfica de actualización con el árbol cerrado, reapertura y descarte de respuestas tardías.
+
+- Fondo glassmorphism mate del explorador, con transparencia, reflejos suaves y desenfoque nativo en compositores compatibles; vista previa y selección integradas en el acabado monocromático.
+
+- Explorador independiente en Work: árbol perezoso de carpetas, sondeo cada 1,5 segundos y marcas de archivos nuevos o modificados durante la apertura.
+- Vista previa UTF-8 de solo lectura, con límite de 128 KiB; rutas confinadas al proyecto, rechazo de enlaces simbólicos y archivos especiales, y exclusión de carpetas pesadas o internas.
+- Eventos compatibles `explorer.list`, `explorer.file` y `explorer.error` en NDJSON v2; lectura sin IA, independiente de los turnos, con correlación de solicitudes y limpieza al cambiar de espacio.
+- Pruebas del backend y escenario gráfico para apertura, expansión, texto, cambios y cierre al cambiar de área.
+
 ## [0.10.0] — 2026-10-11
 
 - Selector Chat | Work centrado arriba de la ventana; conversación general y trabajo sobre proyectos con el mismo diseño mate.

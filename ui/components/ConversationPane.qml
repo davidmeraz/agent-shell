@@ -138,13 +138,15 @@ GlassPanel {
             required property string turnId
             required property string performanceJson
             required property string toolJson
+            required property var model
+            readonly property string imageUrl: model.imageUrl || ""
             readonly property bool isTool: !!toolJson
             readonly property bool fromUser: author === "TÚ"
             readonly property bool systemMessage: author === "SISTEMA"
             readonly property bool streaming: pane.bridge.busy && turnId === pane.bridge.activeTurnId
             readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
             readonly property real cardWidth: fromUser ? Math.min(width * 0.84, 640,
-                Math.max(72, Math.ceil(userTextSize.implicitWidth) + 30)) : width
+                Math.max(imageUrl ? 320 : 72, Math.ceil(userTextSize.implicitWidth) + 30)) : width
             width: conversation.width
             implicitHeight: isTool ? toolCard.implicitHeight : messageContent.implicitHeight + (fromUser ? 20 : 16)
             // Mide la línea más ancha, respetando saltos explícitos y el mismo tipo de letra.
@@ -179,6 +181,18 @@ GlassPanel {
                 y: message.fromUser ? 10 : 8
                 width: message.cardWidth - 28
                 spacing: 8
+                Image {
+                    objectName: "chatMessageImage"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(220, implicitHeight * width / Math.max(1, implicitWidth))
+                    visible: !!message.imageUrl && message.fromUser
+                    source: message.imageUrl
+                    sourceSize: Qt.size(640, 640)
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    asynchronous: true
+                    Accessible.name: "Imagen enviada"
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     visible: !message.fromUser
@@ -214,6 +228,7 @@ GlassPanel {
                     selectedTextColor: "#000000"
                     Layout.fillWidth: true
                     text: message.body
+                    visible: !!message.body
                     readOnly: true
                     selectByMouse: true
                     color: "#f5f5f5"

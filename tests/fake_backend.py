@@ -17,6 +17,10 @@ from harness.server import HarnessServer
 
 def main():
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+    if os.environ.get("AGENT_SHELL_TEST_CLIPBOARD") == "1":
+        from harness import server
+        from fake_clipboard import read_clipboard
+        server.read_clipboard = read_clipboard
     with FakeService() as service:
         session = FakeSession()
         client = ChatGPTClient(session, HttpClient(allow_loopback=True), service.url)

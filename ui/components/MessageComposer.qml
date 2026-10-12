@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Quickshell
 import ".."
 import "../ChatCommands.js" as ChatCommands
 import "../Performance.js" as Performance
@@ -14,6 +15,10 @@ GlassPanel {
     property string statusText: bridge.status
     property bool commandsDismissed: false
     property var drafts: ({})
+    property var imageDrafts: ({})
+    property string attachedImage: ""
+    property string pendingPasteId: ""
+    property bool areaTransition: false
     signal performanceRequested(var measurement)
     readonly property var contextMeasurement: bridge.latestPerformance
     readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
@@ -37,7 +42,7 @@ GlassPanel {
         return rows;
     }
     readonly property bool showCommands: prompt.activeFocus && !commandsDismissed && (completions.length > 0 || modelMode)
-    readonly property bool canSubmit: prompt.text.trim().startsWith("/") || bridge.canSend
+    readonly property bool canSubmit: !pendingPasteId && (prompt.text.trim().startsWith("/") || bridge.canSend)
     readonly property string activeModelLabel: {
         if (bridge.shellRunning || !bridge.authenticated || !bridge.modelName) return "";
         for (let i = 0; i < bridge.availableModels.count; ++i) {
@@ -58,9 +63,23 @@ GlassPanel {
         prompt.cursorPosition = prompt.length;
     }
     function send() {
-        if (!prompt.text.trim()) return;
+        if (pendingPasteId || (!prompt.text.trim() && !attachedImage)) return;
         if (showCommands && completions.length) { executeSelected(); return; }
-        if (bridge.submit(prompt.text)) prompt.clear();
+        const command = ChatCommands.parse(prompt.text);
+        if (bridge.submit(prompt.text, command ? "" : attachedImage)) {
+            prompt.clear();
+            if (!command) attachedImage = "";
+        }
+    }
+    function cancelPaste() {
+        pendingPasteId = "";
+        pasteTimeout.stop();
+    }
+    function pasteImage() {
+        if (pendingPasteId) return;
+        pendingPasteId = bridge.pasteClipboard();
+        if (pendingPasteId) pasteTimeout.start();
+        else bridge.status = "Espera a que el motor esté disponible para pegar una imagen.";
     }
     function executeSelected() {
         const option = completions[completionList.currentIndex];
@@ -85,9 +104,40 @@ GlassPanel {
         target: composer.bridge
         function onAreaChanged(previousKey, currentKey) {
             composer.drafts[previousKey] = prompt.text;
+            composer.imageDrafts[previousKey] = composer.attachedImage;
+            composer.cancelPaste();
+            composer.areaTransition = true;
             prompt.text = composer.drafts[currentKey] || "";
+            composer.attachedImage = composer.imageDrafts[currentKey] || "";
             prompt.cursorPosition = prompt.length;
             composer.commandsDismissed = false;
+        }
+        function onClipboardResult(result) {
+            if (!composer.pendingPasteId || result.request_id !== composer.pendingPasteId) return;
+            composer.cancelPaste();
+            if (result.image) {
+                composer.attachedImage = result.image;
+                composer.bridge.status = "Imagen adjunta. Puedes añadir un mensaje y enviarla.";
+            } else if (result.message) composer.bridge.status = result.message;
+            else prompt.paste();
+        }
+        function onEventReceived(event) {
+            if (event.type === "chat.reset" || event.type === "chat.loaded") {
+                composer.cancelPaste();
+                if (!composer.areaTransition) composer.attachedImage = "";
+                composer.areaTransition = false;
+            }
+        }
+        function onReadyChanged() {
+            if (!composer.bridge.ready) composer.cancelPaste();
+        }
+    }
+    Timer {
+        id: pasteTimeout
+        interval: 6500
+        onTriggered: {
+            composer.pendingPasteId = "";
+            composer.bridge.status = "No se pudo obtener la imagen del portapapeles. Intenta pegarla otra vez.";
         }
     }
 
@@ -96,6 +146,48 @@ GlassPanel {
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
+        RowLayout {
+            objectName: "chatAttachmentPreview"
+            Layout.fillWidth: true
+            visible: !!composer.attachedImage || !!composer.pendingPasteId
+            spacing: 10
+            GlassPanel {
+                implicitWidth: 48
+                implicitHeight: 48
+                radius: 8
+                Image {
+                    objectName: "chatAttachmentThumbnail"
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    source: composer.attachedImage
+                    sourceSize: Qt.size(96, 96)
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    asynchronous: true
+                }
+                BusyIndicator { anchors.centerIn: parent; width: 24; height: 24; running: !!composer.pendingPasteId; visible: running }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: composer.pendingPasteId ? "Pegando imagen…" : "Imagen adjunta"
+                color: "#bbbbbb"
+                font.pixelSize: 12
+            }
+            Button {
+                objectName: "chatRemoveAttachment"
+                text: "×"
+                implicitWidth: 28
+                implicitHeight: 28
+                padding: 0
+                hoverEnabled: true
+                onClicked: { composer.cancelPaste(); composer.attachedImage = ""; prompt.forceActiveFocus(); }
+                Accessible.name: "Quitar imagen adjunta"
+                ToolTip.visible: hovered
+                ToolTip.text: "Quitar imagen"
+                contentItem: Text { text: parent.text; color: "#cccccc"; font.pixelSize: 20; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: 8; color: parent.hovered ? "#12ffffff" : "transparent"; border.color: "#30ffffff"; border.width: parent.visualFocus ? 1 : 0 }
+            }
+        }
         ScrollView {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -113,12 +205,18 @@ GlassPanel {
                 placeholderTextColor: "#aaaaaa"
                 color: "#f5f5f5"
                 font.pixelSize: 14
+                textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
                 onTextChanged: { composer.commandsDismissed = false; completionList.currentIndex = 0; }
                 padding: 4
                 background: null
                 Keys.onPressed: event => {
+                    if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && !Quickshell.clipboardText) {
+                        composer.pasteImage();
+                        event.accepted = true;
+                        return;
+                    }
                     if (composer.showCommands && event.modifiers === Qt.NoModifier) {
                         if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
                             if (composer.completions.length) {
@@ -313,7 +411,7 @@ GlassPanel {
                 objectName: "chatSendButton"
                 text: "Enviar  ↑"
                 accent: true
-                enabled: composer.canSubmit && prompt.text.trim().length > 0 && prompt.text.length <= 16000
+                enabled: composer.canSubmit && (!!prompt.text.trim() || !!composer.attachedImage) && prompt.text.length <= 16000
                 onClicked: composer.send()
             }
         }

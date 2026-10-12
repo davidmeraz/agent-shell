@@ -41,6 +41,13 @@ flowchart LR
 - `ShellExecutor`: ejecuta automáticamente comandos validados, acota la salida y termina grupos de procesos.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
+- `images.py`: valida imágenes y construye contenido multimodal de Responses.
+- `clipboard.py`: lectura binaria acotada del portapapeles; Qt conserva miniaturas,
+  adjuntos del borrador y correlación de solicitudes sin mezclar conversaciones.
+- `ProjectExplorer`, `ProjectExplorerWindow` y `ProjectFileWindow`: lectura confinada de carpetas y texto,
+  árbol y hasta dos visores de texto en ventanas independientes en Work, cada una con su
+  propio sondeo mientras está visible; sin inferencia,
+  escrituras ni atribución de cambios al modelo.
 - `ProjectStore`: nombres y carpetas de proyectos de Work en JSON privado y atómico.
 - `TurnPerformance`: reloj monotónico, etapas del turno, contexto de la última llamada,
   conteos acumulados y velocidad en tokens basada en uso reportado y tiempo HTTP por solicitud.
@@ -148,3 +155,10 @@ texto y `response.completed`.
 En `0.7.0`, la integración de shell también se comprobó con la sesión real: solicitud de
 `pwd`, ejecución aprobada en una carpeta temporal y respuesta basada en su salida,
 seguida de continuación desde ese contexto con la terminal desactivada.
+
+La posición inicial de los dos visores en Hyprland se aplica con
+`scripts/place-text-viewer.py`: espera acotada al mapeo, selección por PID y título
+y operaciones por dirección de ventana. El visor 1 queda abajo a la izquierda
+y el 2 alto a la derecha, en coordenadas lógicas del monitor y descontando las
+zonas reservadas. Sólo actúa en la apertura; no instala reglas globales ni impide
+mover o redimensionar las ventanas. Otros compositores deciden la posición.

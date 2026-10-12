@@ -8,6 +8,9 @@ import uuid
 from pathlib import Path
 from typing import Any, TextIO
 
+from .clipboard import read_clipboard
+from .images import validate_image, user_content
+from .explorer import ProjectExplorer
 from .events import EventEmitter
 from .context import append_result, close_pending_calls, replay_items, visible_chat
 from .history import HistoryStore
@@ -17,7 +20,7 @@ from .performance import TurnPerformance
 from .shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
 from .version import get_version
 
-MAX_REQUEST_BYTES = 65536
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_PROMPT_LENGTH = 16000
 MAX_AGENT_STEPS = 8
 MAX_TOOL_CALLS = 8
@@ -594,6 +597,40 @@ class HarnessServer:
                                  "No se pudo completar la respuesta")
                     self._publish_account()
 
+    def _explore(self, request: dict) -> None:
+        project_id = request.get("project_id")
+        request_id = request.get("request_id")
+        path = request.get("path", "")
+        if (not isinstance(request_id, str) or len(request_id) > 128
+                or not isinstance(path, str) or len(path) > 4096):
+            self._emit("explorer.error", project_id=project_id, request_id=request_id,
+                       message="Solicitud de explorador inválida")
+            return
+        if self.active_area != "work" or not self.project or project_id != self.project["project_id"]:
+            self._emit("explorer.error", project_id=project_id, request_id=request_id,
+                       message="Selecciona el proyecto activo en Work")
+            return
+        root = Path(self.project["workdir"])
+        def read_project():
+            try:
+                explorer = ProjectExplorer(root)
+                reading = request["type"] == "explorer.read"
+                result = explorer.read(path) if reading else explorer.list(path)
+                self._emit("explorer.file" if reading else "explorer.list",
+                           project_id=project_id, request_id=request_id, **result)
+            except (OSError, ValueError):
+                self._emit("explorer.error", project_id=project_id, request_id=request_id,
+                           path=path, message="No se pudo leer la ruta. Puede haber desaparecido, ser binaria o no estar permitida.")
+        self._spawn(read_project)
+
+    def _paste_clipboard(self, request_id: str) -> None:
+        try:
+            self._emit("clipboard.result", request_id=request_id, **read_clipboard())
+        except (OSError, ValueError) as error:
+            self._emit("clipboard.result", request_id=request_id, image="",
+                       message=str(error) if isinstance(error, ValueError) else
+                       "No se pudo leer el portapapeles")
+
     def handle(self, request: Any) -> None:
         received = time.perf_counter()
         if not isinstance(request, dict):
@@ -601,6 +638,16 @@ class HarnessServer:
             return
         with self._lock:
             action = request.get("type")
+            if action == "clipboard.paste":
+                request_id = request.get("request_id")
+                if isinstance(request_id, str) and 0 < len(request_id) <= 128:
+                    self._spawn(lambda: self._paste_clipboard(request_id))
+                else:
+                    self._emit("error", message="Solicitud de portapapeles inválida")
+                return
+            if action in ("explorer.list", "explorer.read"):
+                self._explore(request)
+                return
             if action == "projects.list":
                 self._publish_projects()
                 return
@@ -723,11 +770,21 @@ class HarnessServer:
             if action != "chat.send":
                 self._emit("error", message="Instrucción desconocida")
                 return
-            prompt = request.get("prompt")
-            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_LENGTH:
-                self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
-            elif self.busy or self.login_pending or self.account_pending:
+            if self.busy or self.login_pending or self.account_pending:
                 self._emit("error", message="Espera a que termine la operación actual")
+                return
+            prompt = request.get("prompt")
+            image = request.get("image", "")
+            try:
+                if not isinstance(image, str):
+                    raise ValueError("Imagen inválida")
+                if image:
+                    image = validate_image(image)
+            except ValueError as error:
+                self._emit("chat.finished", status="failed", message=str(error))
+                return
+            if not isinstance(prompt, str) or (not prompt.strip() and not image) or len(prompt) > MAX_PROMPT_LENGTH:
+                self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
             elif not self.authenticated or not self.models:
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
             elif self.active_area == "work" and self.project is None:
@@ -735,21 +792,21 @@ class HarnessServer:
             else:
                 try:
                     if self.conversation is None:
-                        self.conversation = self._create_conversation(prompt.strip())
+                        self.conversation = self._create_conversation(prompt.strip() or "Imagen adjunta")
                     snapshot = copy.deepcopy(self.conversation)
                     turn_id = uuid.uuid4().hex
                     self.conversation["messages"].append({"id": turn_id, "role": "user",
                                                          "text": prompt.strip(), "status": "completed",
-                                                         "turn_id": turn_id})
-                    messages = [{"role": row["role"], "content": row["text"]}
-                                for row in self.conversation["messages"] if row["text"]]
+                                                         "turn_id": turn_id, **({"image": image} if image else {})})
+                    messages = [{"role": row["role"], "content": user_content(row["text"], row.get("image", ""))}
+                                for row in self.conversation["messages"] if row["text"] or row.get("image")]
                     turn_performance = TurnPerformance(turn_id, self.model, received)
-                    turn_performance.input_characters = sum(len(row["content"]) for row in messages)
+                    turn_performance.input_characters = sum(len(row["text"]) for row in self.conversation["messages"])
                     turn_performance.context_messages = len(messages)
                     if "context" not in self.conversation:
                         self.conversation["context"] = copy.deepcopy(messages)
                     elif "context" in self.conversation:
-                        self.conversation["context"].append({"role": "user", "content": prompt.strip()})
+                        self.conversation["context"].append({"role": "user", "content": user_content(prompt.strip(), image)})
                     if "context" in self.conversation:
                         messages = copy.deepcopy(self.conversation["context"])
                     self.conversation.setdefault("performance", []).append(turn_performance.snapshot())

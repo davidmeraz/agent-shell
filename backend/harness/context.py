@@ -7,6 +7,8 @@ llamadas del historial; los trabajos pendientes se cierran como interrumpidos.
 import copy
 import json
 
+from .images import validate_image
+
 
 def replay_items(items: list) -> list[dict]:
     if not isinstance(items, list):
@@ -22,12 +24,17 @@ def replay_items(items: list) -> list[dict]:
             content = value.get("content")
             if not isinstance(content, (str, list)):
                 raise ValueError("Contenido de contexto inválido")
-            if isinstance(content, list) and any(
-                not isinstance(part, dict) or part.get("type") not in ("input_text", "output_text", "refusal")
-                or not isinstance(part.get("refusal" if part.get("type") == "refusal" else "text"), str)
-                for part in content
-            ):
-                raise ValueError("Texto de contexto inválido")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        raise ValueError("Contenido de contexto inválido")
+                    if part.get("type") == "input_image":
+                        if value["role"] != "user" or part.get("detail", "auto") not in ("auto", "low", "high"):
+                            raise ValueError("Imagen de contexto inválida")
+                        validate_image(part.get("image_url"))
+                    elif (part.get("type") not in ("input_text", "output_text", "refusal")
+                          or not isinstance(part.get("refusal" if part.get("type") == "refusal" else "text"), str)):
+                        raise ValueError("Texto de contexto inválido")
             result.append(copy.deepcopy(value))
         elif kind == "reasoning":
             item = {"type": "reasoning", "summary": []}

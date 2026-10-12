@@ -3,8 +3,15 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.10.0`, con áreas Chat y Work seleccionadas
-desde el centro superior de la ventana. Work registra proyectos con carpetas
+La última versión etiquetada es `0.11.0`, con imágenes mediante Ctrl+V en Chat y
+Work, miniatura, envío con o sin texto y conservación en el historial. Admite una
+imagen PNG/JPEG/WebP de hasta 4 MiB y 16 megapíxeles por mensaje. Work incorpora
+un explorador de carpetas y hasta dos visores de texto independientes, con lectura
+local de solo lectura y disposición inicial adaptada al monitor en Hyprland.
+Son ampliaciones compatibles de NDJSON v2 y del historial con esquema 1; el límite
+por línea aumenta a 8 MiB para admitir imágenes sin cambiar la versión del protocolo.
+Conserva las áreas Chat y Work de `0.10.0`, seleccionadas desde el centro superior
+de la ventana. Work registra proyectos con carpetas
 locales, conversaciones y contextos separados; el cambio de espacio conserva
 la conversación abierta y el borrador durante la sesión. Los chats anteriores
 siguen disponibles en Chat. Son ampliaciones compatibles de NDJSON v2 y del

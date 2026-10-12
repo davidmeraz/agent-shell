@@ -44,6 +44,7 @@ QtObject {
     property double submittedAt: 0
     property double firstReceivedAt: 0
     property bool framePending: false
+    property int clipboardSequence: 0
     readonly property var modelPerformance: Performance.models(performanceHistory)
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
@@ -62,12 +63,20 @@ QtObject {
     signal planConnected()
     signal localCommandRequested(string command)
     signal areaChanged(string previousKey, string currentKey)
+    signal clipboardResult(var result)
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
     }
 
-    function submit(prompt) {
+    function pasteClipboard() {
+        if (!ready) return "";
+        const requestId = "clipboard-" + Date.now() + "-" + (++clipboardSequence);
+        sendCommand({ type: "clipboard.paste", request_id: requestId });
+        return requestId;
+    }
+
+    function submit(prompt, image = "") {
         const text = prompt.trim();
         const command = ChatCommands.parse(prompt);
         if (command) {
@@ -99,7 +108,7 @@ QtObject {
             else localCommandRequested(command.name);
             return true;
         }
-        if (!canSend || !text) return false;
+        if (!canSend || (!text && !image)) return false;
         if (text.length > 16000) {
             status = "El mensaje puede tener como máximo 16000 caracteres.";
             return false;
@@ -109,10 +118,12 @@ QtObject {
         framePending = false;
         activeTurnId = "";
         latestPerformance = ({});
-        messages.append({ author: "TÚ", body: text, turnId: "", performanceJson: "", toolJson: "" });
+        messages.append({ author: "TÚ", body: text, imageUrl: image, turnId: "", performanceJson: "", toolJson: "" });
         busy = true;
         status = "Preparando la respuesta…";
-        sendCommand({ type: "chat.send", prompt: text });
+        const request = { type: "chat.send", prompt: text };
+        if (image) request.image = image;
+        sendCommand(request);
         conversationChanged();
         return true;
     }
@@ -170,7 +181,7 @@ QtObject {
         if (messageRows[key] === undefined) {
             messageRows[key] = messages.count;
             messages.append({ author: "TERMINAL", body: "", turnId: call.turn_id || "",
-                              performanceJson: "", toolJson: JSON.stringify(call) });
+                              imageUrl: "", performanceJson: "", toolJson: JSON.stringify(call) });
         } else messages.setProperty(messageRows[key], "toolJson", JSON.stringify(call));
         conversationChanged();
     }
@@ -244,7 +255,7 @@ QtObject {
         const row = messageRows[itemId];
         if (row === undefined) {
             messageRows[itemId] = messages.count;
-            messages.append({ author: "CHATGPT", body: text, turnId: turnId || "", performanceJson: "", toolJson: "" });
+            messages.append({ author: "CHATGPT", body: text, imageUrl: "", turnId: turnId || "", performanceJson: "", toolJson: "" });
         } else {
             messages.setProperty(row, "body", append ? messages.get(row).body + text : text);
         }
@@ -262,7 +273,9 @@ QtObject {
             return;
         }
         const data = event.data;
-        if (event.type === "area.state") {
+        if (event.type === "clipboard.result") {
+            clipboardResult(data);
+        } else if (event.type === "area.state") {
             const previousKey = areaKey;
             activeArea = data.area;
             projectId = data.project ? data.project.project_id : "";
@@ -317,6 +330,7 @@ QtObject {
                 if (message.role === "assistant") messageRows[message.id] = messages.count;
                 messages.append({ author: message.role === "user" ? "TÚ"
                                  : message.role === "assistant" ? "CHATGPT" : "SISTEMA", body: message.text,
+                                 imageUrl: message.image || "",
                                  turnId: message.turn_id || "", performanceJson: "", toolJson: "" });
             }
             for (const measurement of chat.performance || [])
@@ -413,7 +427,7 @@ QtObject {
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? data.message || "Respuesta detenida."
                      : data.message || "No se pudo completar la respuesta.";
-            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status, turnId: "", performanceJson: "", toolJson: "" });
+            if (data.status === "failed") messages.append({ author: "SISTEMA", body: status, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
         } else if (event.type === "performance.updated") {
             updatePerformance(data.measurement);
         } else if (event.type === "performance.list") {
@@ -432,7 +446,7 @@ QtObject {
             openingChat = false;
             if (event.type === "error") deletingChatId = "";
             status = data.message;
-            messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "", toolJson: "" });
+            messages.append({ author: "SISTEMA", body: data.message, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
             areaBusy = false;

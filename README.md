@@ -4,8 +4,8 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.10.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.9.0` conservan las versiones anteriores.
+**Versión: 0.11.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.10.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -64,6 +64,68 @@ se recuperan desde su historial. El historial muestra sólo el área o proyecto 
 **Rendimiento** sigue reuniendo las mediciones de todos los chats. La terminal permanece
 disponible también en Chat. Las respuestas y comandos en curso deben terminar o detenerse
 antes de cambiar de espacio.
+
+## Explorador del proyecto
+
+En **Work**, abre un proyecto y pulsa **Explorador** en su cabecera. Se abre el
+**visor de carpetas**, con un árbol expandible. Al seleccionar un archivo se abre
+un **visor de archivos en otra ventana**, con texto UTF-8 de solo lectura que
+puedes seleccionar y copiar. Puedes abrir **hasta dos visores de texto a la vez**:
+cada archivo distinto ocupa una ventana libre, numerada del 1 al 2. Seleccionar
+un archivo que ya está abierto conserva su visor, sin duplicarlo. Si los dos
+están ocupados, aparece un aviso: cierra uno para abrir otro archivo, sin reemplazar
+los que estás leyendo. Todas las ventanas tienen fondo de vidrio mate translúcido, reflejos suaves y
+desenfoque nativo en compositores compatibles.
+
+En Hyprland, al abrirlos se colocan como en la distribución de referencia:
+**visor 1 abajo a la izquierda** (30 % del ancho y 48 % del alto útil) y
+**visor 2 a la derecha** (30 % del ancho y 95 % del alto útil). La posición y
+el tamaño se adaptan al monitor de la ventana y respetan las zonas reservadas
+por barras. Al cerrar y reabrir un visor se recupera esa disposición; seleccionar
+un archivo ya abierto no lo mueve. No se modifica la configuración de Hyprland.
+En otros compositores, la posición inicial la decide el gestor de ventanas.
+
+Puedes mover, redimensionar y cerrar cada ventana por separado. Cerrar el árbol
+no cierra los archivos ni detiene su actualización; cerrar un visor no cierra el
+árbol ni los demás visores. Para reabrir un visor, selecciona un archivo en el árbol. Todas las ventanas
+siguen disponibles mientras la IA o `/shell` trabaja.
+
+Cada ventana se actualiza automáticamente cada 1,5 segundos mientras está visible;
+**Actualizar** permite consultar de inmediato. El árbol sólo consulta la raíz y
+las carpetas expandidas visibles, sin recorrer todo el proyecto; el visor consulta
+únicamente su archivo abierto. Los archivos nuevos y modificados se marcan respecto
+al último listado de su carpeta durante esa apertura del árbol; las marcas se
+reinician al reabrirlo. Las eliminaciones desaparecen del árbol y los renombrados
+aparecen como eliminación y creación. Los cambios pueden venir de la IA o de otra
+aplicación: no se atribuyen al modelo. Cambiar de área, proyecto o carpeta de
+trabajo limpia los visores y cierra las ventanas de archivos; cambiar de área o
+proyecto también cierra el árbol.
+
+Esta base excluye `.git`, `.venv`, `venv`, `node_modules`, `__pycache__` y `.runtime`,
+y no sigue enlaces simbólicos ni admite rutas fuera del proyecto. Cada listado
+se limita a 1000 entradas y la vista previa a 128 KiB; los archivos binarios o
+con otra codificación muestran un aviso. No incluye edición, diferencias ni
+seguimiento persistente de cambios. El explorador funciona sin conectar una cuenta
+y sus lecturas no se envían a la IA ni se guardan en el historial.
+
+## Imágenes en el chat
+
+Copia una captura o imagen y pulsa **Ctrl+V** en el editor de Chat o Work. Aparece
+una miniatura discreta que puedes quitar con **×**. Puedes enviarla sola o añadir
+una descripción; una nueva imagen reemplaza la anterior. Los comandos locales
+con `/` conservan el adjunto sin enviarlo a la IA. El pegado de texto sigue usando
+el editor nativo de Qt.
+
+Se admite una imagen PNG, JPEG o WebP por mensaje, de hasta **4 MiB y 16 megapíxeles**.
+La imagen se conserva en el historial local y en el contexto de la conversación;
+el borrador con su imagen se mantiene al cambiar de área durante la sesión.
+Abrir otra conversación o preparar un nuevo chat descarta el adjunto pendiente.
+Se necesita un modelo que admita imágenes. El envío usa `input_image` con una URL
+de datos base64, según [OpenAI Docs](https://developers.openai.com/api/docs/guides/images-vision?api-mode=responses).
+
+Para pegar imágenes, Wayland requiere **wl-clipboard** (`wl-paste`) y X11 requiere
+**xclip**. La lectura tiene límites de tamaño y tiempo; las respuestas tardías del
+portapapeles se descartan al cambiar de conversación o área.
 
 ## Comandos del chat
 
@@ -284,6 +346,11 @@ comprueba el selector centrado, registro y validación de proyectos, conversacio
 y borradores separados, y ejecución de shell en las carpetas de dos proyectos.
 Las comprobaciones
 de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
+`images-smoke.qml` comprueba Ctrl+V, miniaturas, envío con o sin texto,
+historial, cambio de modelo y adjuntos del borrador entre áreas. Usa un PNG
+de prueba y un lector inyectado sólo en `tests/fake_backend.py`; no toca el
+portapapeles del usuario. Las pruebas unitarias comprueban por separado los
+lectores Wayland/X11, límites binarios y formato multimodal.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto

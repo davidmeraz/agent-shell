@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .performance import safe_measurement
 from .context import replay_items
+from .images import validate_image
 
 
 def now() -> str:
@@ -93,6 +94,10 @@ class HistoryStore:
             if (not isinstance(message, dict) or message.get("role") not in ("user", "assistant", "system")
                 or not all(isinstance(message.get(key), str) for key in ("id", "text", "status"))):
                 raise ValueError("Mensaje del historial inválido")
+            if "image" in message:
+                if message["role"] != "user":
+                    raise ValueError("Imagen del historial inválida")
+                validate_image(message["image"])
         measurements = record.get("performance")
         record["performance"] = []
         if isinstance(measurements, list):
