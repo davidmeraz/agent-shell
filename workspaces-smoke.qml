@@ -14,6 +14,7 @@ ShellRoot {
     property string chatId: ""
     property string workId: ""
     property string firstProject: ""
+    property string secondProject: ""
     AgentBridge { id: agent }
     ChatWindow { id: chat; bridge: agent; implicitWidth: 560; implicitHeight: 680 }
     TestCase { id: inspector; parent: chat.contentItem; when: false }
@@ -34,6 +35,21 @@ ShellRoot {
         inspector.findChild(chat, "workProjectName").text = name;
         inspector.findChild(chat, "workProjectDirectory").text = workdir;
         return click("workCreateProject");
+    }
+    function requestDelete(projectId) {
+        const list = inspector.findChild(chat, "workProjectList");
+        for (let index = 0; index < list.count; ++index) {
+            const row = list.itemAtIndex(index);
+            if (row && row.projectId === projectId) {
+                const button = inspector.findChild(row, "workDeleteProject");
+                if (!check(!!button && button.enabled, "papelera del proyecto ausente")) return false;
+                inspector.mouseClick(button);
+                inspector.wait(160);
+                return check(inspector.findChild(chat, "workDeleteProjectDialog").visible && !agent.projectId,
+                             "la papelera abre el proyecto o no pide confirmación");
+            }
+        }
+        return check(false, "fila del proyecto no encontrada");
     }
     Timer {
         id: steps
@@ -132,6 +148,7 @@ ShellRoot {
                     if (!scenario.check(agent.projectName === "Proyecto B" && agent.projectId !== scenario.firstProject
                         && !agent.messages.count && scenario.prompt.text === "" && !agent.conversations.count,
                         "el segundo proyecto comparte mensajes o borradores")) return;
+                    scenario.secondProject = agent.projectId;
                     agent.submit("/shell pwd");
                     scenario.stage = 11;
                 } else if (scenario.stage === 11) {
@@ -146,7 +163,53 @@ ShellRoot {
                     if (!scenario.check(agent.currentChatId === scenario.workId && scenario.prompt.text === "Borrador del proyecto A"
                         && agent.messages.count === 3 && agent.conversations.count === 1,
                         "volver al proyecto A altera historial o borrador")) return;
-                    console.log("WORKSPACES_OK: selector centrado, proyectos, validación, contextos, borradores e historial separados y shell en cada carpeta");
+                    if (!scenario.click("workProjectsButton")) return;
+                    scenario.stage = 13;
+                } else if (scenario.stage === 13) {
+                    if (agent.areaBusy || agent.projectId) return;
+                    inspector.wait(160);
+                    if (!scenario.requestDelete(scenario.secondProject)) return;
+                    if (!scenario.click("workCancelDeleteProject")) return;
+                    scenario.stage = 14;
+                } else if (scenario.stage === 14) {
+                    if (inspector.findChild(chat, "workDeleteProjectDialog").visible) return;
+                    if (!scenario.check(agent.projects.count === 2, "cancelar elimina el proyecto")) return;
+                    if (!scenario.requestDelete(scenario.secondProject)) return;
+                    if (!scenario.click("workConfirmDeleteProject")) return;
+                    scenario.stage = 15;
+                } else if (scenario.stage === 15) {
+                    if (agent.areaBusy || agent.projects.count !== 1) return;
+                    if (!scenario.check(agent.projects.get(0).projectId === scenario.firstProject,
+                                        "se eliminó el proyecto incorrecto")) return;
+                    agent.selectArea("work", scenario.firstProject);
+                    scenario.stage = 16;
+                } else if (scenario.stage === 16) {
+                    if (agent.areaBusy || agent.projectId !== scenario.firstProject) return;
+                    if (!scenario.check(agent.currentChatId === scenario.workId && agent.messages.count === 3
+                        && scenario.prompt.text === "Borrador del proyecto A", "eliminar B altera el proyecto A")) return;
+                    if (!scenario.click("workProjectsButton")) return;
+                    scenario.stage = 17;
+                } else if (scenario.stage === 17) {
+                    if (agent.areaBusy || agent.projectId) return;
+                    inspector.wait(160);
+                    if (!scenario.requestDelete(scenario.firstProject)) return;
+                    if (!scenario.click("workConfirmDeleteProject")) return;
+                    scenario.stage = 18;
+                } else if (scenario.stage === 18) {
+                    if (agent.areaBusy || agent.projects.count) return;
+                    const composer = inspector.findChild(chat, "chatComposer");
+                    if (!scenario.check(!agent.messages.count && !agent.conversations.count
+                        && composer.drafts["work:" + scenario.firstProject] === undefined
+                        && composer.imageDrafts["work:" + scenario.firstProject] === undefined
+                        && !agent.performanceHistory.some(row => row.chat_id === scenario.workId),
+                        "el proyecto eliminado conserva contexto, borradores o métricas")) return;
+                    if (!scenario.click("chatAreaButton")) return;
+                    scenario.stage = 19;
+                } else if (scenario.stage === 19) {
+                    if (agent.areaBusy || agent.activeArea !== "chat") return;
+                    if (!scenario.check(agent.currentChatId === scenario.chatId && agent.messages.count === 2
+                        && scenario.prompt.text === "Borrador de Chat", "eliminar proyectos afecta Chat")) return;
+                    console.log("WORKSPACES_OK: selector centrado, proyectos, contextos e historial separados, shell, papelera, cancelación y eliminación sin afectar otros espacios ni conservar borradores o métricas");
                     steps.stop(); Qt.callLater(Qt.quit);
                 }
             } catch (error) {

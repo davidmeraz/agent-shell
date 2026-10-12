@@ -122,6 +122,11 @@ GlassPanel {
             else prompt.paste();
         }
         function onEventReceived(event) {
+            if (event.type === "project.deleted") {
+                const key = "work:" + event.data.project_id;
+                delete composer.drafts[key];
+                delete composer.imageDrafts[key];
+            }
             if (event.type === "chat.reset" || event.type === "chat.loaded") {
                 composer.cancelPaste();
                 if (!composer.areaTransition) composer.attachedImage = "";
@@ -378,11 +383,6 @@ GlassPanel {
                     }
                 }
             }
-            ActionButton {
-                text: "Detener"
-                visible: composer.bridge.busy
-                onClicked: composer.bridge.cancel()
-            }
             Button {
                 id: contextButton
                 objectName: "chatComposerContext"
@@ -409,10 +409,16 @@ GlassPanel {
             }
             ActionButton {
                 objectName: "chatSendButton"
-                text: "Enviar  ↑"
+                implicitWidth: 90
+                text: composer.bridge.busy ? "Detener  ◼" : "Enviar  ↑"
                 accent: true
-                enabled: composer.canSubmit && (!!prompt.text.trim() || !!composer.attachedImage) && prompt.text.length <= 16000
-                onClicked: composer.send()
+                enabled: composer.bridge.busy || (composer.canSubmit
+                    && (!!prompt.text.trim() || !!composer.attachedImage) && prompt.text.length <= 16000)
+                Accessible.name: composer.bridge.busy ? "Detener ejecución" : "Enviar mensaje"
+                onClicked: {
+                    if (composer.bridge.busy) composer.bridge.cancel();
+                    else composer.send();
+                }
             }
         }
     }

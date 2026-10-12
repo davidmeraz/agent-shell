@@ -121,10 +121,13 @@ ShellRoot {
             inspector.wait(100);
             const thinking = inspector.findChild(chat, "chatThinkingIndicator");
             if (!scenario.check(thinking.visible, "espera de la IA sin indicación")) return;
+            if (!scenario.check(send.text.startsWith("Detener") && send.enabled,
+                "el botón no cambia a Detener durante respuesta de IA")) return;
             scenario.append("CHATGPT", "Empiezo a responder…", "pending-turn", null);
             inspector.wait(100);
             if (!scenario.check(!thinking.visible, "indicador de espera sigue después del primer texto")) return;
             agent.busy = false;
+            if (!scenario.check(send.text.startsWith("Enviar"), "el botón no recupera Enviar al terminar la IA")) return;
             console.log("CONVERSATION_OK: burbujas compactas, Markdown, código, copia original, métricas, espera y lectura sin saltos");
             Qt.callLater(Qt.quit);
         }

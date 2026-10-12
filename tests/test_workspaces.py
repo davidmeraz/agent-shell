@@ -256,3 +256,106 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.server.conversation["chat_id"], work_id)
         self.assertEqual(self.server.workspace, self.folders[0])
         self.assertEqual(len(self.service.requests), 1)
+
+    def test_delete_active_project_clears_all_histories_context_and_keeps_source(self):
+        chat_id = self.send("conversación general")
+        project_id = self.create()
+        work_id = self.send("primero")
+        self.server.handle({"type": "chat.new"})
+        self.output.wait_for("chat.reset")
+        second_id = self.send("segundo")
+        source = self.folders[0] / "main.py"
+        source.write_text("print('conservar')")
+        requests = len(self.service.requests)
+        self.server.handle({"type": "project.delete", "project_id": project_id})
+        deleted = self.output.wait_for("project.deleted")
+        self.assertEqual(set(deleted["chat_ids"]), {work_id, second_id})
+        self.assertEqual(self.server.active_area, "work")
+        self.assertIsNone(self.server.project)
+        self.assertIsNone(self.server.conversation)
+        self.assertIsNone(self.server._performance)
+        self.assertEqual(self.server.workspace, self.root)
+        self.assertEqual(self.server._last_project_id, "")
+        self.assertNotIn("work:" + project_id, self.server._area_chats)
+        self.assertEqual(source.read_text(), "print('conservar')")
+        self.assertEqual([row["chat_id"] for row in self.server.history.list()], [chat_id])
+        self.assertEqual(self.server.projects.list(), [])
+        self.assertFalse(any(row["chat_id"] in deleted["chat_ids"] for row in self.server.history.performance()))
+        self.assertEqual(len(self.service.requests), requests)
+        self.select("chat")
+        self.assertEqual(self.server.conversation["chat_id"], chat_id)
+        self.stop()
+        self.server = self.new_server()
+        self.assertEqual(self.server.projects.list(), [])
+        self.assertEqual([row["chat_id"] for row in self.server.history.list()], [chat_id])
+        self.select("work")
+        self.assertIsNone(self.server.project)
+        self.create()  # La misma carpeta puede vincularse de nuevo con otra identidad.
+        self.assertIsNone(self.server.conversation)
+
+    def test_delete_inactive_project_preserves_other_project_and_missing_folder_is_allowed(self):
+        first = self.create()
+        first_chat = self.send("A")
+        second = self.create(1)
+        second_chat = self.send("B")
+        self.folders[0].rmdir()
+        self.server.authenticated = False
+        self.server.handle({"type": "project.delete", "project_id": first})
+        self.output.wait_for("project.deleted")
+        self.assertEqual(self.server.project["project_id"], second)
+        self.assertEqual(self.server.conversation["chat_id"], second_chat)
+        self.assertEqual(self.server.workspace, self.folders[1])
+        self.assertFalse(self.server.history._path(first_chat).exists())
+        self.assertTrue(self.server.history._path(second_chat).exists())
+
+    def test_project_delete_failure_restores_records_and_memory(self):
+        project_id = self.create()
+        chat_id = self.send("conservar")
+        record = self.server.conversation
+        replace = os.replace
+        def fail_project(source, destination):
+            if source == self.server.projects._path(project_id):
+                raise OSError("disk error")
+            return replace(source, destination)
+        with patch("harness.server.os.replace", side_effect=fail_project):
+            self.server.handle({"type": "project.delete", "project_id": project_id})
+        self.output.wait_for("area.rejected")
+        self.assertIs(self.server.conversation, record)
+        self.assertEqual(self.server.project["project_id"], project_id)
+        self.assertEqual(self.server.history.load(chat_id)["chat_id"], chat_id)
+        self.assertEqual(self.server.projects.load(project_id)["project_id"], project_id)
+        self.assertEqual(list(self.server.history.root.glob(".deleted-project-*")), [])
+
+    def test_delete_invalid_symlink_missing_ids_and_corrupt_history_preserve_unrelated_files(self):
+        project_id = self.create()
+        corrupt = self.server.history.root / ("c" * 32 + ".json")
+        corrupt.write_text("{broken")
+        outside = self.root / "outside.json"
+        outside.write_text("{}")
+        symlink = self.server.projects.root / ("a" * 32 + ".json")
+        symlink.symlink_to(outside)
+        for invalid in (None, "../outside", "a" * 32, "b" * 32):
+            self.server.handle({"type": "project.delete", "project_id": invalid})
+            self.output.wait_for("area.rejected")
+            self.assertEqual(self.server.project["project_id"], project_id)
+        self.server.handle({"type": "project.delete", "project_id": project_id})
+        self.output.wait_for("project.deleted")
+        self.assertEqual(outside.read_text(), "{}")
+        self.assertTrue(symlink.is_symlink())
+        self.assertEqual(corrupt.read_text(), "{broken")
+
+    def test_project_delete_rejected_during_shell_login_or_account_refresh(self):
+        project_id = self.create()
+        self.server.handle({"type": "shell.execute", "command": "printf iniciado; sleep 30"})
+        self.output.wait_for("shell.started")
+        self.server.handle({"type": "project.delete", "project_id": project_id})
+        self.output.wait_for("area.rejected")
+        self.assertEqual(self.server.projects.load(project_id)["project_id"], project_id)
+        self.server.handle({"type": "chat.cancel"})
+        self.output.wait_for("shell.finished")
+        for flag in ("login_pending", "account_pending"):
+            setattr(self.server, flag, True)
+            self.server.handle({"type": "project.delete", "project_id": project_id})
+            self.output.wait_for("area.rejected")
+            setattr(self.server, flag, False)
+            self.assertEqual(self.server.projects.load(project_id)["project_id"], project_id)

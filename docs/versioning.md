@@ -3,7 +3,15 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.12.0`: incorpora seguimiento automático del
+La última versión etiquetada es `0.13.0`: incorpora consulta de cuotas mediante
+Codex en una tarjeta flotante compacta, escritura progresiva en los visores de
+Work, eliminación de proyectos conservando sus archivos locales y un único
+botón Enviar/Detener. Codex es opcional y sólo se usa para consultar cuotas de la
+misma cuenta, sin inferencia ni copia de credenciales; el chat y la terminal
+conservan su conexión independiente. Añade eventos compatibles de uso y borrado
+de proyectos a NDJSON v2, sin cambiar el esquema 1 del historial. Incrementa
+MENOR por nuevas funciones y diseño.
+Conserva el seguimiento automático de `0.12.0` del
 trabajo de la IA en Work, apertura y rotación de visores, instantáneas de archivos
 creados o modificados y animaciones de carpetas, archivos y líneas de código.
 Los visores presentan la ruta y metadatos discretos, sin títulos grandes ni

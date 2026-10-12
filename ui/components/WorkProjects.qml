@@ -8,6 +8,7 @@ GlassPanel {
     id: panel
     required property AgentBridge bridge
     signal newProjectRequested()
+    signal deleteProjectRequested(string projectId, string name, string workdir)
     radius: 16
     topColor: "#14292929"
     bottomColor: "#24171717"
@@ -67,10 +68,52 @@ GlassPanel {
                 padding: 16
                 enabled: panel.bridge.canSelectArea
                 onClicked: panel.bridge.selectArea("work", projectId)
-                contentItem: Column {
-                    spacing: 6
-                    Text { width: parent.width; text: projectRow.name; textFormat: Text.PlainText; color: "#f5f5f5"; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight }
-                    Text { width: parent.width; text: projectRow.workdir; textFormat: Text.PlainText; color: "#aaaaaa"; font.pixelSize: 11; elide: Text.ElideMiddle }
+                contentItem: RowLayout {
+                    spacing: 12
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        spacing: 6
+                        Text { Layout.fillWidth: true; text: projectRow.name; textFormat: Text.PlainText; color: "#f5f5f5"; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight }
+                        Text { Layout.fillWidth: true; text: projectRow.workdir; textFormat: Text.PlainText; color: "#aaaaaa"; font.pixelSize: 11; elide: Text.ElideMiddle }
+                    }
+                    ActionButton {
+                        id: deleteProjectButton
+                        objectName: "workDeleteProject"
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        horizontalPadding: 7
+                        verticalPadding: 7
+                        Accessible.name: "Eliminar proyecto: " + projectRow.name
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Eliminar proyecto"
+                        onClicked: panel.deleteProjectRequested(projectRow.projectId, projectRow.name, projectRow.workdir)
+                        contentItem: Item {
+                            Rectangle {
+                                anchors.centerIn: parent
+                                anchors.verticalCenterOffset: 2
+                                width: 10; height: 11; radius: 2
+                                color: "transparent"
+                                border.width: 1
+                                border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                            }
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: parent.height / 2 - 5
+                                width: 14; height: 1
+                                color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                            }
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: parent.height / 2 - 8
+                                width: 6; height: 3; radius: 1
+                                color: "transparent"
+                                border.width: 1
+                                border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                            }
+                        }
+                    }
                 }
                 background: GlassPanel {
                     radius: 12

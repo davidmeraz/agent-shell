@@ -7,6 +7,8 @@ Prepara el entorno con `./scripts/setup.sh`. Ejecuta `./scripts/check.sh` y
 `./scripts/smoke.sh` antes de un commit. Las pruebas no abren autorización real
 ni consumen una cuenta. `tests/fake_backend.py` inyecta cuenta de prueba y servicio
 HTTP loopback en el backend real; el lanzamiento normal no usa ese doble.
+Las consultas de cuotas usan el adaptador RPC real con `tests/fake_codex.py`
+inyectado como proceso; las pruebas nunca arrancan el Codex instalado.
 
 El acceso real se comprueba desde el escritorio del usuario con la sesión propia
 de Agent Shell. Usa el flujo oficial Sign in with ChatGPT para aplicaciones locales.

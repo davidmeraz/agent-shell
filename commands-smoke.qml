@@ -53,6 +53,7 @@ ShellRoot {
             try {
                 if (scenario.stage === 0) {
                     if (!agent.canSend) return;
+                    inspector.wait(50); // Aplicar el catálogo y completar la disposición de la fila.
                     scenario.prompt = inspector.findChild(chat, "chatPrompt");
                     scenario.menu = inspector.findChild(chat, "chatInlineSuggestions");
                     scenario.list = inspector.findChild(chat, "chatCommandList");

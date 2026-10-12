@@ -4,8 +4,9 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.12.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.11.1` conservan las versiones anteriores.
+**Versión: 0.13.0.** El chat y la terminal no requieren Codex. Consultar cuotas
+desde la aplicación requiere Codex CLI, como dependencia opcional.
+Las etiquetas locales `v0.1.0` a `v0.12.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -28,8 +29,31 @@ Usa **Enter** para enviar, **Shift+Enter** para un salto de línea, **Detener** 
 interrumpir y **Nuevo chat** para otra conversación. Los mensajes se pueden copiar
 y seleccionar; las respuestas presentan Markdown, tablas y bloques de código.
 
-**Cuenta** reúne los controles de sesión. **Administrar uso del plan** abre los
-ajustes de ChatGPT. **Actualizar cuenta** renueva el catálogo y consulta la sesión
+**Cuenta** reúne los controles de sesión. **Ver uso del plan** abre una ventana
+flotante compacta con las cuotas reportadas por Codex: cada límite, su porcentaje
+restante, una barra fina y el tiempo hasta la renovación. El saldo coincide con
+la presentación de la web (`35% usado = 65% restante`); consumo y fecha local
+están disponibles al pasar el puntero por la renovación informada.
+La tarjeta mide 320 píxeles de ancho y adapta su altura a los datos, sin cabecera,
+botones, cuenta ni estadísticas históricas visibles. Si hay varias categorías
+de cuotas, muestra sus nombres para distinguirlas.
+Puedes dejarla abierta mientras escribes en Chat o trabajas en Work, arrastrarla
+desde la tarjeta y cerrarla con Esc o el compositor. F5 actualiza de inmediato.
+Volver a pulsar **Ver uso del plan** reutiliza la ventana. Cerrar pausa la actualización automática;
+reabrir consulta de nuevo, conservando la conversación y el borrador.
+No estima mensajes restantes ni representa el consumo de todas las funciones de ChatGPT.
+
+Instala Codex CLI e inicia sesión con `codex login` usando la misma cuenta de
+ChatGPT que en Agent Shell. La consulta usa la sesión administrada por Codex;
+no copia sus credenciales. Si los correos no coinciden, no muestra las cuotas.
+Esto no verifica que ambas conexiones pertenezcan al mismo espacio de trabajo:
+la ventana informa los límites de la cuenta/espacio seleccionado en Codex.
+Se actualiza al abrir, manualmente y cada minuto mientras esté visible, sin
+generar respuestas ni añadir mensajes al historial. Los datos faltantes se
+indican como desconocidos; un error elimina la instantánea mostrada.
+Puedes indicar el ejecutable con `AGENT_SHELL_CODEX_BINARY`.
+
+**Actualizar cuenta** renueva el catálogo y consulta la sesión
 local. **Salir** cierra la sesión de Agent Shell e
 intenta revocarla en OpenAI; si la revocación no se confirma, se informa para que
 puedas desconectar la aplicación desde los ajustes de ChatGPT.
@@ -57,6 +81,12 @@ Cada proyecto tiene sus conversaciones, comandos y contexto propios. La terminal
 y `/shell` usan su carpeta; la IA recibe instrucciones para inspeccionar, implementar
 y comprobar el trabajo solicitado. **Abrir carpeta** abre el proyecto en el explorador
 y **Proyectos** permite elegir otro o registrar uno nuevo.
+
+En la lista de **Proyectos**, la papelera de cada fila permite eliminarlo después
+de confirmar. Se borran su registro de Work, conversaciones, mediciones y borradores;
+la carpeta local y sus archivos se conservan. Puedes volver a vincular esa carpeta
+como un proyecto nuevo. El borrado funciona sin conexión a ChatGPT y requiere
+que no haya una respuesta, comando o cambio de cuenta en curso.
 
 Cambiar de área o proyecto conserva la conversación abierta y el borrador durante
 la sesión. Después de reiniciar, los proyectos siguen registrados y sus conversaciones
@@ -125,8 +155,8 @@ y sus lecturas no se envían a la IA ni se guardan en el historial.
 El seguimiento en vivo usa inotify durante cada comando de la IA, con cambios
 agrupados aproximadamente cada 180 ms, hasta 1024 carpetas y 512 cambios pendientes.
 Las vistas reciben instantáneas reales de hasta 128 KiB y resaltan suavemente los
-cambios; una escritura por partes se ve progresivamente y una escritura de golpe
-aparece completa. Se muestran estados de ejecución, finalización y cancelación;
+cambios. El texto recibido se revela progresivamente, incluso si el comando guarda
+todo el archivo de una vez. Se muestran estados de ejecución, finalización y cancelación;
 un archivo eliminado conserva su última vista con un aviso. No se añade este
 contenido al contexto ni al historial. `/shell` conserva su ejecución directa y
 la actualización periódica de las vistas, sin activar el seguimiento automático.
@@ -141,7 +171,16 @@ conserva sus filas durante las consultas para no repetir animaciones sin cambios
 Al escribir, el visor resalta el intervalo de líneas modificado y lo señala con una
 barra lateral tenue; respeta el ajuste de línea y se adapta al redimensionar.
 Cambiar de archivo tiene una transición independiente. El punto de actividad pulsa
-sólo mientras la IA trabaja con la ventana visible; cerrar no espera a la animación.
+sólo durante trabajo o escritura animada con la ventana visible; cerrar no espera
+a la animación. La escritura conserva las partes intactas, añade caracteres con un
+cursor discreto y sigue el último texto recibido. Su duración se adapta al tamaño,
+entre 180 y 1600 ms, sin retrasar comandos ni modificar archivos. El pie indica
+**Mostrando cambios** mientras termina de presentar el contenido ya recibido.
+Cancelar, cerrar o eliminar el archivo completa la última vista y detiene la
+animación. Abrir un archivo manualmente muestra su contenido inmediatamente.
+El visor sigue el cursor al escribir; desplazarte para leer pausa ese seguimiento
+y volver al final lo reactiva. El sondeo periódico del archivo se pausa durante
+la presentación, mientras los eventos de cambios siguen llegando.
 
 ## Imágenes en el chat
 
@@ -264,7 +303,7 @@ Consulta [definiciones y límites de las métricas](docs/performance.md).
 ## Sesión independiente
 
 Agent Shell registra su propia conexión, recibe tokens OAuth y los renueva
-automáticamente. No importa la sesión ni las credenciales de Codex ni el historial
+automáticamente. El chat no importa la sesión ni las credenciales de Codex ni el historial
 de ChatGPT. Tras actualizar desde 0.2.0, debes conectar tu cuenta una vez aquí.
 
 El flujo usa PKCE, state y nonce por intento. El callback escucha temporalmente
@@ -378,7 +417,8 @@ copia, métricas y desplazamiento sin saltos, con las barras ocultas.
 `shell-command-smoke.qml` verifica `/shell` desde el editor sin sesión: completado,
 salida real, argumentos, errores, cancelación e historial. `workspaces-smoke.qml`
 comprueba el selector centrado, registro y validación de proyectos, conversaciones
-y borradores separados, y ejecución de shell en las carpetas de dos proyectos.
+y borradores separados, ejecución de shell en las carpetas de dos proyectos,
+cancelación y confirmación del borrado, y limpieza sin afectar otros espacios.
 Las comprobaciones
 de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
 `images-smoke.qml` comprueba Ctrl+V, miniaturas, envío con o sin texto,
@@ -386,9 +426,19 @@ historial, cambio de modelo y adjuntos del borrador entre áreas. Usa un PNG
 de prueba y un lector inyectado sólo en `tests/fake_backend.py`; no toca el
 portapapeles del usuario. Las pruebas unitarias comprueban por separado los
 lectores Wayland/X11, límites binarios y formato multimodal.
+`usage-smoke.qml` comprueba la tarjeta flotante compacta de cuotas, ausencia de
+controles/datos secundarios, barras finas, F5, chat simultáneo, cambio
+Chat/Work, cierre por Esc/compositor, sondeo visible, consulta y actualización RPC,
+datos desconocidos, reapertura, cambio de cuenta y recuperación. Usa el adaptador
+real con `tests/fake_codex.py` como proceso aislado; no ejecuta Codex instalado,
+no lee sus credenciales y no contacta a servicios externos. Las pruebas unitarias
+comprueban límites de lectura, plazos, errores, aislamiento y limpieza del proceso.
 `activity-smoke.qml` comprueba herramientas de IA por HTTP con comandos reales:
 apertura automática, carpetas, escritura por partes, animación, rotación de visores,
 renombrado, eliminación, reapertura, cancelación y aislamiento entre áreas.
+`writing-smoke.qml` comprueba un guardado atómico real por shell y su presentación
+progresiva, además de Unicode, actualizaciones sucesivas, partes intactas,
+cancelación, vistas de 128 KiB, seguimiento y reapertura.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto

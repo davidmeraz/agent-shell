@@ -2,6 +2,9 @@
 
 import copy
 import json
+import os
+import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -10,6 +13,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .clipboard import read_clipboard
+from .codex_usage import CodexUsageReader, UsageError
 from .activity import ProjectActivity
 from .images import validate_image, user_content
 from .explorer import ProjectExplorer
@@ -49,7 +53,7 @@ class HarnessServer:
     """Mantiene stdin libre durante OAuth, descubrimiento y streaming HTTP."""
 
     def __init__(self, history_root: Path, output: TextIO, session, client,
-                 model: str = "", workspace: Path | None = None) -> None:
+                 model: str = "", workspace: Path | None = None, usage_reader=None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
         self.projects = ProjectStore(self.history.root / "projects")
@@ -66,6 +70,8 @@ class HarnessServer:
         self.busy = False
         self.login_pending = False
         self.account_pending = False
+        self.usage_reader = usage_reader if usage_reader is not None else CodexUsageReader()
+        self.usage_pending = False
         self._lock = threading.RLock()
         self._closing = threading.Event()
         self._login_cancel = threading.Event()
@@ -159,10 +165,65 @@ class HarnessServer:
     def _create_conversation(self, prompt: str) -> dict:
         return self.history.create(prompt, self.active_area, self.project["project_id"] if self.project else "")
 
+    def _delete_project(self, project_id: str) -> None:
+        """Retira sólo registros privados; nunca recorre ni borra la carpeta del proyecto."""
+        self.projects.load(project_id)
+        chats = [row["chat_id"] for row in self.history.list()
+                 if row["area"] == "work" and row["project_id"] == project_id]
+        paths = [self.history._path(chat_id) for chat_id in chats]
+        paths.append(self.projects._path(project_id))
+        # Apartar primero permite restaurar todos los registros si falla un traslado.
+        # Los JSON ilegibles se conservan: no se puede atribuir su propiedad con certeza.
+        temporary = Path(tempfile.mkdtemp(prefix=".deleted-project-", dir=self.history.root))
+        moved = []
+        try:
+            for index, source in enumerate(paths):
+                destination = temporary / str(index)
+                os.replace(source, destination)
+                moved.append((source, destination))
+        except OSError:
+            # Si también falla la restauración, conservar lo apartado para recuperación.
+            for source, destination in reversed(moved):
+                os.replace(destination, source)
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+        shutil.rmtree(temporary, ignore_errors=True)
+        key = "work:" + project_id
+        if self._last_project_id == project_id:
+            self._last_project_id = ""
+        if self.project and self.project["project_id"] == project_id:
+            self._select_area("work", "")
+        self._area_chats.pop(key, None)
+        self._emit("project.deleted", project_id=project_id, chat_ids=chats)
+        self._publish_projects()
+        self._publish_history()
+        self._publish_performance()
+
     def _publish_account(self) -> None:
         account = self.session.account()
         self.authenticated = bool(account["authenticated"])
         self._emit("auth.state", **account)
+
+    def _usage_identity(self):
+        account = self.session.account()
+        selected = next((row.get("id") for row in account.get("accounts", []) if row.get("active")), "")
+        return (account.get("authenticated"), account.get("email", ""), selected)
+
+    def _read_usage(self, request_id, identity):
+        try:
+            result = self.usage_reader.read(expected_email=identity[1])
+            with self._lock:
+                if self._usage_identity() != identity:
+                    raise UsageError("account_changed", "La cuenta activa cambió. Vuelve a consultar el uso.")
+                self._emit("usage.state", request_id=request_id, **result)
+        except (UsageError, ServiceError, OSError, ValueError, TypeError) as error:
+            self._emit("usage.error", request_id=request_id,
+                       code=error.code if isinstance(error, UsageError) else "unavailable",
+                       message=str(error) if isinstance(error, UsageError) else "No se pudo consultar el uso de Codex.")
+        finally:
+            with self._lock:
+                self.usage_pending = False
+                self._emit("usage.finished", request_id=request_id)
 
     def _refresh_account(self) -> None:
         try:
@@ -661,6 +722,24 @@ class HarnessServer:
             return
         with self._lock:
             action = request.get("type")
+            if action == "usage.read":
+                request_id = request.get("request_id")
+                if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+                    self._emit("usage.error", request_id="", code="invalid_request", message="Solicitud de uso inválida.")
+                    return
+                if self.usage_pending or self.login_pending or self.account_pending:
+                    self._emit("usage.error", request_id=request_id, code="busy", message="Espera a que termine la consulta o el cambio de cuenta.")
+                    self._emit("usage.finished", request_id=request_id)
+                    return
+                identity = self._usage_identity()
+                if not identity[0] or not identity[1]:
+                    self._emit("usage.error", request_id=request_id, code="login_required", message="Conecta tu cuenta de ChatGPT en Agent Shell antes de consultar el uso.")
+                    self._emit("usage.finished", request_id=request_id)
+                    return
+                self.usage_pending = True
+                self._emit("usage.started", request_id=request_id)
+                self._spawn(lambda: self._read_usage(request_id, identity))
+                return
             if action == "clipboard.paste":
                 request_id = request.get("request_id")
                 if isinstance(request_id, str) and 0 < len(request_id) <= 128:
@@ -674,19 +753,22 @@ class HarnessServer:
             if action == "projects.list":
                 self._publish_projects()
                 return
-            if action in ("area.select", "project.create"):
+            if action in ("area.select", "project.create", "project.delete"):
                 if self.busy or self.login_pending or self.account_pending:
                     self._emit("area.rejected", message="Espera a que termine la operación actual antes de cambiar de espacio.")
                     return
                 try:
-                    if action == "project.create":
+                    if action == "project.delete":
+                        self._delete_project(request.get("project_id"))
+                    elif action == "project.create":
                         project = self.projects.create(request.get("name"), request.get("workdir"))
                         self._select_area("work", project["project_id"])
                     else:
                         self._select_area(request.get("area"), request.get("project_id"))
                 except (OSError, ValueError, KeyError, TypeError) as error:
-                    self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else
-                               "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
+                    message = ("No se pudo eliminar el proyecto. Vuelve a intentarlo." if action == "project.delete"
+                               else "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
+                    self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else message)
                 return
             if action == "shell.execute":
                 self._start_local_shell(request)
@@ -905,3 +987,4 @@ class HarnessServer:
                     else:
                         self._finish("interrupted")
                 self._closing.set()
+            self.usage_reader.close()

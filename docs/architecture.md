@@ -1,7 +1,8 @@
 # Arquitectura del chat
 
 Agent Shell mantiene su propia sesión de ChatGPT y conecta directamente con
-OpenAI. Quickshell inicia únicamente el backend Python; no hay proceso de Codex.
+OpenAI. Quickshell inicia el backend Python. Sólo al consultar cuotas, Python
+abre un proceso transitorio de Codex App Server; el chat y shell siguen siendo propios.
 
 ```mermaid
 flowchart LR
@@ -15,6 +16,8 @@ flowchart LR
     Python --> History[Historial JSON local]
     Python -->|Comando validado, ejecución automática| Shell[Ejecutor local de shell]
     Shell -->|Salida y estado| Python
+    Python -->|Consulta de cuotas opcional| Usage[CodexUsageReader]
+    Usage -->|RPC stdio, sin turnos| Codex[Codex App Server]
 ```
 
 ## Responsabilidades
@@ -56,6 +59,49 @@ flowchart LR
 
 ## Autenticación
 
+### Cuotas mediante Codex
+
+`CodexUsageReader` inicia `codex app-server --listen stdio://` fuera del proyecto
+y usa los métodos oficiales `initialize`, `account/read`, `account/rateLimits/read`
+y, cuando se admite, `account/usage/read`. No crea hilos ni turnos de inferencia,
+no copia tokens, no importa historiales y no inicia/cierra sesiones de Codex.
+Codex administra su propia autenticación y renovación. La consulta exige una
+sesión ChatGPT y que su correo coincida con el de Agent Shell; no verifica el
+espacio de trabajo de la conexión SIWC. La fuente mostrada es siempre Codex.
+
+El trabajador de cuotas tiene estado propio, no bloquea respuestas/shell y admite
+una consulta a la vez. Se invalida la instantánea si cambia la cuenta activa;
+Qt descarta resultados tardíos por `request_id`. Las ventanas de cuota se toman
+del servicio, sin asumir que duren cinco horas o una semana. Porcentaje cero,
+datos desconocidos y créditos ilimitados son estados distintos. Los tokens del
+resumen de Codex no son una estimación de cuota ni de consumo global de ChatGPT.
+
+El transporte usa lectura sin buffering y separa líneas antes de esperar de nuevo
+en el selector. Tiene plazo total de 20 segundos, resumen opcional de 3 segundos,
+límites de 2 MiB por acumulación y 8 MiB por consulta, mensajes de error locales
+sin propagar contenido remoto y cierre del proceso en éxito, error o cierre del
+backend. `AccountUsageWindow` consulta al abrir y cada minuto visible; conserva
+el aspecto mate monocromático. Es una tarjeta de 320 píxeles de ancho con altura
+adaptativa (140–420), con límites de altura que también ajustan la ventana nativa
+cuando llegan las cuotas en Wayland, sin cabecera, botones, identidad, créditos, totales históricos
+ni pie de actualización visibles. Los nombres sólo aparecen si hay más de una
+categoría de cuotas; las ventanas ausentes no crean filas adicionales, conservando
+«Sin datos» si no se informa ninguna. El arrastre se inicia con `DragHandler`
+desde la tarjeta; Esc cierra y F5 actualiza mediante atajos limitados a su ventana.
+Es un `FloatingWindow` independiente de Chat. No participa en `dialogVisible` ni en el desenfoque/modalidad
+del chat. Cambiar de área conserva la ventana; cerrar pausa el temporizador y
+`onClosed` sincroniza la intención de visibilidad para permitir reapertura tras
+cierre nativo. Abrir una ventana ya visible la reutiliza y la activa.
+La cifra y la barra principales muestran `100 - used_percent` disponible para
+facilitar la comparación con la web; el consumo permanece en el tooltip. Una
+ventana desconocida conserva «Sin datos» y una barra vacía. La renovación se
+calcula desde `resets_at`, con fecha local española en el tooltip. El resumen
+histórico opcional sigue disponible en el protocolo, sin mostrarse en la tarjeta.
+
+Las pruebas inyectan un servidor RPC de Python y nunca arrancan Codex real. Se
+validó además el adaptador con Codex instalado y la sesión real del usuario:
+cuenta coincidente, dos ventanas con porcentaje informado y resumen disponible.
+
 Antes de autorizar se crea un host estable, `ext_agent_host_id`, independiente de
 la identidad de usuario. El registro inicial usa `dynamic_agent_client`, nombre
 `Agent Shell`, scopes de identidad y permiso `chatgpt.tokens.use.direct`.
@@ -83,7 +129,8 @@ la cuenta. Sólo el permiso concedido de plan habilita inferencia.
 
 El archivo de sesión contiene el host, cliente, identidad verificada y tokens.
 Las renovaciones se serializan con un bloqueo entre procesos, reemplazando tokens
-rotativos atómicamente. Los ajustes de Codex nunca se leen ni se modifican.
+rotativos atómicamente. El cliente de chat no lee ni modifica ajustes de Codex;
+el proceso opcional de cuotas administra su propia sesión y configuración.
 
 ## Inferencia y contexto
 
@@ -120,6 +167,16 @@ sesión. Cambiar restaura esa conversación y el directorio; `MessageComposer`
 conserva un borrador por espacio en memoria. Los proyectos se registran en
 `projects/`, bajo el directorio del historial, y permanecen después de reiniciar.
 Sus conversaciones se recuperan desde el historial correspondiente.
+
+Eliminar un proyecto retira únicamente su registro y los historiales válidos de
+Work asociados. El servidor valida las rutas privadas y aparta sus JSON en una
+carpeta temporal privada; un fallo de traslado restaura lo ya movido. Si falla
+también la restauración, conserva los archivos apartados para recuperación.
+No es una transacción resistente a interrupciones del proceso; los JSON dañados
+o enlaces simbólicos no se atribuyen a un proyecto y se conservan. La carpeta de
+código nunca se recorre ni se borra. Se limpia la referencia al último proyecto,
+su contexto en memoria y, mediante `project.deleted`, sus borradores y adjuntos
+en Qt. El proyecto activo vuelve a la lista de Work; los demás espacios se conservan.
 
 Work usa instrucciones orientadas a inspección, implementación y comprobación
 de proyectos. Chat prioriza conversación general. Ambos utilizan el mismo cliente,
@@ -204,6 +261,25 @@ el resaltado de la fila correspondiente.
 las instantáneas UTF-16 y lo extiende a líneas completas. El visor calcula la banda
 con [`positionToRectangle`](https://doc.qt.io/qt-6/qml-qtquick-textedit.html#positionToRectangle-method)
 para respetar el ajuste de texto. No es un diff persistente: cambios separados
-pueden compartir una banda. El texto se aplica inmediatamente, sin animar
-caracteres ni alterar su contenido; un número de revisión invalida tareas visuales
+pueden compartir una banda. Un número de revisión invalida tareas visuales
 pendientes al cambiar de archivo o cerrar.
+
+`FileWriteReveal` conserva un único texto de destino y actualiza el documento del
+visor con inserciones incrementales cada 24 ms durante 180–1600 ms. Compara el
+texto mostrado con el último recibido, conserva prefijo/sufijo comunes y sustituye
+sólo el intervalo afectado; nuevas versiones reemplazan el destino sin una cola.
+Respeta pares Unicode y uniones comunes de emoji. Normaliza CRLF/CR a LF sólo en
+el documento visible para mantener índices de inserción correctos; `preview`
+conserva inmediatamente la instantánea completa con sus saltos originales.
+`displayedPreview` representa la presentación progresiva.
+La animación es local y no representa tokens ni velocidad del modelo. No escribe
+en disco ni añade pausas a shell. Al terminar correctamente el comando deja acabar
+la presentación; cancelar/fallar, cerrar o eliminar completa la última vista y
+detiene el temporizador. Rotar un visor lo reinicia con el nuevo archivo.
+
+El cursor de presentación sigue la posición insertada. La lectura manual pausa
+el seguimiento del desplazamiento hasta volver al final. Durante la animación
+no se solicitan sondeos periódicos del archivo, pero sí se aplican eventos reales
+del observador. La lectura manual conserva su presentación inmediata. El documento
+usa `TextEdit` dentro de `ScrollView`, de modo que insertar texto no activa el
+desplazamiento automático de `TextArea` y el visor controla el seguimiento.

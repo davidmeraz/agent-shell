@@ -26,6 +26,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `clipboard.paste` | `request_id`: 1–128 caracteres | Leer una imagen del portapapeles gráfico en un trabajador, sin inferencia |
 | `area.select` | `area: chat/work`, `project_id` opcional | Cambiar de área o proyecto y restaurar la conversación de la sesión |
 | `project.create` | `name`: 1–80 caracteres, `workdir` | Registrar una carpeta existente y abrir su proyecto en Work |
+| `project.delete` | `project_id` | Eliminar registro e historiales válidos del proyecto, conservando su carpeta local |
 | `explorer.list` | `project_id`, `request_id`, `path` relativa (vacía para raíz) | Listar una carpeta del proyecto activo, sin inferencia |
 | `explorer.read` | `project_id`, `request_id`, `path` relativa | Leer vista previa UTF-8 de un archivo del proyecto activo |
 | `projects.list` | Ninguno | Consultar los proyectos registrados sin contactar a OpenAI |
@@ -43,6 +44,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `auth.logout` | Ninguno | Revocar y cerrar la sesión local |
 | `model.select` | `model` | Seleccionar un slug del catálogo de la cuenta |
 | `performance.list` | Ninguno | Consultar los últimos 200 turnos medidos de todos los chats, sin llamadas a OpenAI |
+| `usage.read` | `request_id`: 1–128 caracteres | Consultar cuotas de la sesión ChatGPT de Codex, sin inferencia |
 | `performance.presented` | `turn_id`, `first_visible_ms`, `ui_frame_ms` | Confirmar la aproximación de presentación del primer texto en Qt |
 
 Sólo una respuesta, ejecución local u operación de cuenta a la vez. El historial puede leerse sin
@@ -57,6 +59,17 @@ confirmaciones de presentación y respuestas tardías no recrean el archivo.
 Un archivo inexistente o un fallo de borrado produce `error` y conserva el estado
 actual. El borrado funciona sin sesión y no hace llamadas a OpenAI.
 
+La interfaz también confirma `project.delete` e informa que la carpeta local se
+conserva. Se rechaza durante una respuesta, shell, login o actualización de cuenta.
+El backend valida el identificador y los registros, aparta los JSON privados y
+restaura los traslados si falla la operación. Los historiales dañados o enlaces
+simbólicos se conservan porque no permiten atribuir con certeza el proyecto.
+Si se elimina el proyecto activo, se vuelve a la lista de Work, se invalida su
+contexto y se limpian sus visores. Después emite `project.deleted` con los chats
+retirados, seguido de listas actualizadas de proyectos, historial y rendimiento.
+Qt descarta también borradores y adjuntos del proyecto. El borrado no necesita
+que su carpeta exista y no contacta a OpenAI.
+
 ## Eventos Python → Qt
 
 Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
@@ -68,7 +81,8 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `backend.disconnected` | `message` |
 | `clipboard.result` | `request_id`, `image`: URL de datos o cadena vacía; `message` opcional si falló |
 | `area.state` | `area: chat/work`, `project`: registro del proyecto seleccionado o `null` |
-| `area.rejected` | `message`: selección o registro rechazado; el área activa se conserva |
+| `area.rejected` | `message`: selección, registro o borrado rechazado; el área activa se conserva |
+| `project.deleted` | `project_id`, `chat_ids`: conversaciones locales eliminadas con el proyecto |
 | `projects.list` | `projects`: project_id, name, workdir, fechas y schema_version |
 | `history.ready` | `directory` absoluto |
 | `history.list` | `chats`: chat_id, title, updated_at, area y project_id |
@@ -78,6 +92,10 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `auth.login.finished` | `success`, `message`, `show_plan_welcome` |
 | `auth.refresh.started` | Objeto vacío |
 | `auth.refresh.finished` | Objeto vacío |
+| `usage.started` | `request_id` |
+| `usage.state` | `request_id`, `source: codex`, `account: {email, plan}`, `limits`, `summary` opcional y `checked_at` UTC |
+| `usage.error` | `request_id`, `code`, `message` local apto para mostrar |
+| `usage.finished` | `request_id`: libera el estado de consulta de la interfaz |
 | `models.list` | `models`: slug y display_name; `selected` |
 | `model.selected` | `model`: slug |
 | `chat.busy` | `turn_id` del mensaje de usuario y la medición |
@@ -102,6 +120,25 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 no sólo una identidad verificada. `plan` queda vacío si no hay información
 verificada sobre su nombre. Enviar requiere además un modelo disponible.
 Una actualización fallida no cierra el backend ni elimina los mensajes.
+
+`usage.read` usa un trabajador independiente y puede ejecutarse durante una
+respuesta o shell. Rechaza otra consulta en curso, login o actualización de
+cuenta; requiere una sesión activa de Agent Shell. Codex debe tener una sesión
+ChatGPT con correo coincidente. La coincidencia no verifica el espacio de trabajo
+SIWC: los datos corresponden al espacio seleccionado en Codex, identificado como fuente.
+No crea conversaciones, no modifica métricas de turnos ni usa el evento `error`.
+
+Cada límite contiene `{id, name, primary, secondary, credits}`. Las ventanas son
+`null` o `{used_percent, window_minutes, resets_at}`; cada dato no informado es
+`null`, y `resets_at` usa segundos Unix. Los créditos, si existen, incluyen
+`{unlimited, has_credits, balance}`; balance desconocido es `null`. El resumen
+opcional contiene `lifetime_tokens`, acumulación registrada por Codex que no se
+interpreta como consumo de todas las funciones de ChatGPT. No se incluyen tokens
+de autenticación, identificadores privados ni el texto original de errores RPC.
+Cambiar la cuenta activa invalida la vista; Qt usa `request_id` para descartar
+respuestas de consultas anteriores. Un error borra los datos mostrados y
+`usage.finished` permite reintentar. La interfaz sólo consulta periódicamente
+mientras la ventana esté visible.
 `shell.execute` funciona sin autenticación ni catálogo de modelos. Guarda la
 llamada antes de iniciar el proceso y publica salida mediante `tool.updated`.
 Usa los límites y la cancelación del ejecutor compartido. No emite `chat.busy`,
@@ -280,7 +317,13 @@ eventos ni se reenvían al modelo.
 Qt abre el árbol automáticamente, expande las carpetas afectadas y muestra los
 dos archivos de texto más recientes, reutilizando los visores cuando están ocupados.
 Invalida lecturas anteriores antes de aplicar una instantánea y anima el resaltado
-del cambio, conservando el texto real. Los eliminados muestran la última vista.
+del cambio, conservando el texto real. La instantánea completa es el destino del
+visor; el documento visible revela progresivamente el intervalo nuevo, con cursor
+y la indicación «Mostrando cambios». Es una animación local de contenido ya recibido,
+sin eventos nuevos ni cambios en shell. Actualizaciones sucesivas reemplazan ese
+destino. Cancelar, cerrar o eliminar el archivo completa la última vista y detiene
+la animación; terminar correctamente permite completar la presentación pendiente.
+Los eliminados muestran la última vista.
 Se descartan eventos de otra área, proyecto, comando, secuencia anterior o comando
 terminado. `chat.finished` también detiene el seguimiento al cancelar o fallar;
 el servidor invalida callbacks del turno cancelado. El sondeo de las ventanas

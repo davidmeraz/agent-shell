@@ -21,11 +21,12 @@ FloatingWindow {
     BackgroundEffect.blurRegion: Region { item: glassSurface; radius: glassSurface.radius }
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
+    property var projectToDelete: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || shellSettings.visible
                                            || commandHelp.visible
-                                           || projectDialog.visible
+                                           || projectDialog.visible || deleteProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
     property bool sidebarKeyboardOpen: false
@@ -34,6 +35,7 @@ FloatingWindow {
     property double elapsedMs: 0
 
     readonly property ProjectExplorerWindow explorerWindow: ProjectExplorerWindow { bridge: window.bridge }
+    readonly property AccountUsageWindow usageWindow: AccountUsageWindow { bridge: window.bridge }
 
     Shortcut {
         sequence: "Ctrl+B"
@@ -201,6 +203,10 @@ FloatingWindow {
                 visible: !window.bridge.workspaceSelected
                 bridge: window.bridge
                 onNewProjectRequested: projectDialog.open()
+                onDeleteProjectRequested: (projectId, name, workdir) => {
+                    window.projectToDelete = ({ project_id: projectId, name: name, workdir: workdir });
+                    deleteProjectDialog.open();
+                }
             }
             ConversationPane {
                 objectName: "chatConversation"
@@ -275,6 +281,11 @@ FloatingWindow {
                 performanceDetails.close();
                 window.selectedPerformance = ({});
             }
+            if (event.type === "project.deleted"
+                && event.data.chat_ids.indexOf(window.selectedPerformance.chat_id) >= 0) {
+                performanceDetails.close();
+                window.selectedPerformance = ({});
+            }
             if (event.type === "performance.updated"
                 && event.data.measurement.turn_id === window.selectedPerformance.turn_id)
                 window.selectedPerformance = event.data.measurement;
@@ -290,6 +301,58 @@ FloatingWindow {
         bridge: window.bridge
         anchors.centerIn: parent
         width: Math.min(480, window.width - 40)
+    }
+    GlassDialog {
+        id: deleteProjectDialog
+        objectName: "workDeleteProjectDialog"
+        title: "Eliminar proyecto"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, window.width - 40)
+        contentItem: ColumnLayout {
+            spacing: 12
+            Text {
+                Layout.fillWidth: true
+                text: window.projectToDelete.name || "Proyecto"
+                textFormat: Text.PlainText
+                color: "#f5f5f5"
+                font.pixelSize: 15
+                font.bold: true
+                wrapMode: Text.WrapAnywhere
+            }
+            Text {
+                Layout.fillWidth: true
+                text: window.projectToDelete.workdir || ""
+                textFormat: Text.PlainText
+                color: "#aaaaaa"
+                font.pixelSize: 11
+                wrapMode: Text.WrapAnywhere
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Se eliminarán el proyecto de Work, sus conversaciones y sus mediciones. La carpeta y sus archivos se conservarán. Esta acción no se puede deshacer."
+                color: "#bbbbbb"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: null
+            ActionButton {
+                objectName: "workCancelDeleteProject"
+                text: "Cancelar"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ActionButton {
+                objectName: "workConfirmDeleteProject"
+                text: "Eliminar"
+                enabled: window.bridge.canSelectArea
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        onAccepted: window.bridge.deleteProject(window.projectToDelete.project_id)
     }
     Drawer {
         id: narrowSidebar
@@ -457,10 +520,11 @@ FloatingWindow {
                 onClicked: window.bridge.login(true)
             }
             ActionButton {
+                objectName: "chatUsageButton"
                 Layout.fillWidth: true
                 visible: window.bridge.authenticated
-                text: "Administrar uso del plan"
-                onClicked: Qt.openUrlExternally("https://chatgpt.com/#settings/Usage")
+                text: "Ver uso del plan"
+                onClicked: { accountPanel.close(); window.usageWindow.open(); }
             }
             Text {
                 Layout.fillWidth: true

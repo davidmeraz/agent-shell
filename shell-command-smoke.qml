@@ -88,13 +88,22 @@ ShellRoot {
                         && !inspector.findChild(chat, "chatThinkingIndicator").visible
                         && !inspector.findChild(chat, "chatActiveModel").visible
                         && !agent.submit("/shell pwd"), "ejecución simultánea o indicador de IA en comando local")) return;
-                    scenario.submit("/detener");
+                    const stop = inspector.findChild(chat, "chatSendButton");
+                    if (!scenario.check(stop.text.startsWith("Detener") && stop.enabled && scenario.prompt.text === "",
+                        "el botón no permite detener con editor vacío y sin sesión")) return;
+                    scenario.prompt.text = "Borrador para después";
+                    inspector.mouseClick(stop);
                     scenario.stage = 4;
                 } else if (scenario.stage === 4) {
                     if (agent.busy) return;
                     if (!scenario.check(!agent.shellRunning && scenario.call(2).status === "interrupted"
                         && scenario.call(2).output === "ready" && !agent.performanceHistory.length,
                         "detener pierde salida o conserva ejecución activa")) return;
+                    const send = inspector.findChild(chat, "chatSendButton");
+                    if (!scenario.check(send.text.startsWith("Enviar") && !send.enabled
+                        && scenario.prompt.text === "Borrador para después",
+                        "detener no recupera Enviar o elimina el borrador")) return;
+                    scenario.prompt.clear();
                     agent.newChat();
                     scenario.stage = 5;
                 } else if (scenario.stage === 5) {

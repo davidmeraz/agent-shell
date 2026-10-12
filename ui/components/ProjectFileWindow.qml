@@ -37,6 +37,31 @@ FloatingWindow {
     property real changeHeight: 0
     property int changeRevision: 0
     property real contentProgress: 1
+    readonly property bool writing: writeReveal.running
+    readonly property string displayedPreview: code.text
+    property bool followWriting: true
+    readonly property var scroller: codeScroll.contentItem
+    onActivityStateChanged: {
+        if (["interrupted", "failed", "error", "timeout"].includes(activityState)) writeReveal.finish();
+    }
+    FileWriteReveal {
+        id: writeReveal
+        editor: code
+        onAdvanced: Qt.callLater(viewer.followWritingCursor)
+    }
+    function followWritingCursor() {
+        if (!visible || !writing || !followWriting || scroller.moving || code.selectedText) return;
+        const cursor = code.positionToRectangle(Math.min(writeReveal.position, code.length));
+        if (cursor.y < scroller.contentY) scroller.contentY = Math.max(0, cursor.y - 12);
+        else if (cursor.y + cursor.height > scroller.contentY + scroller.height)
+            scroller.contentY = Math.min(Math.max(0, scroller.contentHeight - scroller.height),
+                cursor.y + cursor.height - scroller.height + 12);
+    }
+    Connections {
+        target: viewer.scroller
+        function onMovementStarted() { viewer.followWriting = false; }
+        function onMovementEnded() { viewer.followWriting = viewer.scroller.atYEnd; }
+    }
 
     function updateChangeGeometry() {
         const first = code.positionToRectangle(Math.min(changeStart, code.length));
@@ -47,10 +72,12 @@ FloatingWindow {
 
     function applyPreview(data, animated) {
         const changed = preview !== data.text;
-        const range = changed ? FileChanges.range(previewLines < 0 ? "" : preview, data.text) : null;
+        const text = FileChanges.visibleText(data.text);
+        const range = changed ? FileChanges.range(previewLines < 0 ? "" : FileChanges.visibleText(preview), text) : null;
         preview = data.text;
         previewTruncated = data.truncated;
-        previewLines = data.text ? data.text.split("\n").length - (data.text.endsWith("\n") ? 1 : 0) : 0;
+        previewLines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
+        writeReveal.apply(data.text, animated && visible && !deleted);
         if (changed) {
             changeStart = range.start;
             changeEnd = range.end;
@@ -63,7 +90,7 @@ FloatingWindow {
         }
     }
     function followChange(data) {
-        if (!visible || filePath !== data.path) openFile(data.path);
+        if (!visible || filePath !== data.path) openFile(data.path, true);
         // La instantánea del disco invalida cualquier lectura periódica anterior.
         pendingId = "";
         deleted = false;
@@ -71,6 +98,7 @@ FloatingWindow {
         applyPreview(data.preview, true);
     }
     function markDeleted() {
+        writeReveal.finish();
         pendingId = "";
         deleted = true;
         activityState = "deleted";
@@ -93,24 +121,27 @@ FloatingWindow {
         pendingId = "";
         filePath = "";
         preview = "";
+        writeReveal.reset("");
         previewTruncated = false;
         previewLines = -1;
         activityState = ""; deleted = false;
         highlight.stop(); changeGlow = 0;
         ++changeRevision; changeStart = 0; changeEnd = 0; changeHeight = 0;
     }
-    function openFile(path) {
+    function openFile(path, following = false) {
         const wasVisible = visible;
         const switching = wasVisible && filePath !== path;
         highlight.stop(); changeGlow = 0; ++changeRevision; changeHeight = 0;
         pendingId = "";
         filePath = path;
-        preview = "Cargando…";
+        preview = following ? "" : "Cargando…";
+        writeReveal.reset(preview);
+        followWriting = true;
         previewTruncated = false;
         previewLines = -1;
         activityState = ""; deleted = false;
         visible = true;
-        refresh();
+        if (!following) refresh();
         if (switching) fileTransition.restart();
         // Wayland delega la posición al compositor; sólo se aplica al abrir.
         if (!wasVisible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
@@ -121,7 +152,7 @@ FloatingWindow {
         }
     }
     function refresh() {
-        if (!visible || !filePath || pendingId || deleted || !bridge.ready
+        if (!visible || !filePath || pendingId || deleted || writing || !bridge.ready
             || bridge.activeArea !== "work" || !bridge.projectId) return;
         pendingId = "file-viewer-" + viewerId + "-" + (++serial);
         bridge.sendCommand({ type: "explorer.read", project_id: bridge.projectId,
@@ -130,6 +161,7 @@ FloatingWindow {
     onVisibleChanged: {
         if (!visible) {
             pendingId = "";
+            writeReveal.finish();
             placement.running = false;
             highlight.stop(); changeGlow = 0;
             fileTransition.stop(); contentProgress = 1;
@@ -155,6 +187,7 @@ FloatingWindow {
             } else if (event.type === "explorer.error") {
                 viewer.pendingId = "";
                 viewer.preview = data.message;
+                writeReveal.reset(data.message);
                 viewer.previewTruncated = false;
                 viewer.previewLines = -1;
             }
@@ -214,6 +247,8 @@ FloatingWindow {
             }
             Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#1affffff" }
             ScrollView {
+                id: codeScroll
+                objectName: "projectCodeScroll"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
@@ -221,10 +256,13 @@ FloatingWindow {
                 transform: Translate { x: 6 * (1 - viewer.contentProgress) }
                 ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                TextArea {
+                // TextEdit conserva el control del desplazamiento en el visor;
+                // TextArea desplaza automáticamente al insertar incluso sin foco.
+                TextEdit {
                     id: code
                     objectName: "projectExplorerPreview"
-                    text: viewer.preview
+                    text: ""
+                    width: codeScroll.availableWidth
                     textFormat: TextEdit.PlainText
                     readOnly: true
                     selectByMouse: true
@@ -236,9 +274,22 @@ FloatingWindow {
                     selectedTextColor: "#000000"
                     padding: 0
                     leftPadding: 10
-                    background: null
                     onTextChanged: Qt.callLater(viewer.updateChangeGeometry)
                     onWidthChanged: Qt.callLater(viewer.updateChangeGeometry)
+                    Rectangle {
+                        objectName: "projectCodeWritingCursor"
+                        readonly property rect location: {
+                            const currentText = code.text;
+                            return code.positionToRectangle(Math.min(writeReveal.position, currentText.length));
+                        }
+                        x: location.x
+                        y: location.y + 1
+                        width: 1
+                        height: Math.max(1, location.height - 2)
+                        color: "white"
+                        opacity: 0.7
+                        visible: viewer.writing
+                    }
                     Rectangle {
                         objectName: "projectCodeChangeBand"
                         z: -1
@@ -266,9 +317,10 @@ FloatingWindow {
                 Layout.fillWidth: true
                 WorkStatusNote {
                     Layout.fillWidth: true
-                    busy: viewer.activityState === "running" && !viewer.deleted
+                    busy: (viewer.writing || viewer.activityState === "running") && !viewer.deleted
                     windowVisible: viewer.visible
                     text: viewer.deleted ? "Archivo eliminado · última vista"
+                          : viewer.writing ? "Mostrando cambios"
                           : viewer.activityState === "running" ? "IA · cambios en vivo"
                           : viewer.activityState === "completed" ? "Actualizado · solo lectura"
                           : viewer.activityState === "interrupted" ? "Detenido · solo lectura"
@@ -276,7 +328,7 @@ FloatingWindow {
                     HoverHandler { id: statusHover }
                     ToolTip {
                         visible: statusHover.hovered
-                        text: "Actualización automática cada 1,5 s. Esc para cerrar."
+                        text: "La escritura animada muestra texto ya recibido del archivo. Esc para cerrar."
                         delay: 500
                     }
                 }

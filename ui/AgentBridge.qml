@@ -12,6 +12,12 @@ QtObject {
     property bool busy: false
     property bool loginBusy: false
     property bool accountBusy: false
+    property bool usageBusy: false
+    property var accountUsage: ({})
+    property string usageError: ""
+    property string usageRequestId: ""
+    property int usageSequence: 0
+    property string usageAccountKey: ""
     property bool planEnabled: false
     property bool historyReady: false
     property bool openingChat: false
@@ -67,6 +73,14 @@ QtObject {
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
+    }
+
+    function refreshUsage() {
+        if (!ready || usageBusy || accountBusy || loginBusy) return;
+        usageBusy = true;
+        usageError = "";
+        usageRequestId = "usage-" + (++usageSequence);
+        sendCommand({ type: "usage.read", request_id: usageRequestId });
     }
 
     function pasteClipboard() {
@@ -152,6 +166,14 @@ QtObject {
         areaBusy = true;
         areaError = "";
         sendCommand({ type: "project.create", name: name, workdir: workdir });
+    }
+
+    function deleteProject(projectId) {
+        if (!canSelectArea || !projectId) return;
+        areaBusy = true;
+        areaError = "";
+        status = "Eliminando proyecto…";
+        sendCommand({ type: "project.delete", project_id: projectId });
     }
 
     function openChat(chatId) {
@@ -287,6 +309,11 @@ QtObject {
             areaBusy = false;
             areaError = data.message;
             status = data.message;
+        } else if (event.type === "project.deleted") {
+            areaBusy = false;
+            areaError = "";
+            performanceHistory = performanceHistory.filter(row => data.chat_ids.indexOf(row.chat_id) < 0);
+            status = "Proyecto eliminado. La carpeta local se conserva.";
         } else if (event.type === "projects.list") {
             projects.clear();
             for (const project of data.projects)
@@ -348,6 +375,15 @@ QtObject {
             appVersion = data.app_version;
             status = "Comprobando tu sesión…";
         } else if (event.type === "auth.state") {
+            const active = (data.accounts || []).find(account => account.active);
+            const identity = (data.authenticated ? "connected:" : "offline:") + (active ? active.id : "") + ":" + (data.email || "");
+            if (identity !== usageAccountKey) {
+                usageAccountKey = identity;
+                accountUsage = ({});
+                usageError = "";
+                usageRequestId = "";
+                usageBusy = false;
+            }
             authenticated = data.authenticated;
             planEnabled = !!data.plan_enabled;
             email = data.email;
@@ -363,6 +399,14 @@ QtObject {
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
                          : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                          : "Inicia sesión con ChatGPT para empezar.";
+        } else if (event.type === "usage.state" && data.request_id === usageRequestId) {
+            accountUsage = data;
+            usageError = "";
+        } else if (event.type === "usage.error" && data.request_id === usageRequestId) {
+            accountUsage = ({});
+            usageError = data.message;
+        } else if (event.type === "usage.finished" && data.request_id === usageRequestId) {
+            usageBusy = false;
         } else if (event.type === "auth.refresh.started") {
             accountBusy = true;
             status = "Actualizando la cuenta y los modelos…";
@@ -449,6 +493,9 @@ QtObject {
             messages.append({ author: "SISTEMA", body: data.message, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
+            usageBusy = false;
+            accountUsage = ({});
+            usageError = "Motor desconectado. Reinicia Agent Shell.";
             areaBusy = false;
             shellRunning = false;
             ready = false;
@@ -473,6 +520,9 @@ QtObject {
         stdout: SplitParser { onRead: data => bridge.receive(data) }
         stderr: SplitParser { onRead: data => console.warn("Error del backend: " + data) }
         onExited: (exitCode, exitStatus) => {
+            bridge.usageBusy = false;
+            bridge.accountUsage = ({});
+            bridge.usageError = "Motor desconectado. Reinicia Agent Shell.";
             bridge.areaBusy = false;
             bridge.ready = false;
             bridge.authenticated = false;

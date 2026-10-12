@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.13.0] — 2026-10-12
+
+- Uso del plan en tarjeta flotante compacta: sólo límites, porcentajes restantes, barras finas y renovación; 320 píxeles de ancho y altura adaptativa, sin cabecera, botones ni datos secundarios, arrastre desde la tarjeta, Esc/F5, actualización sólo visible y reapertura, con chat simultáneo y conservación entre Chat/Work.
+- Consulta nativa de cuotas mediante Codex: RPC acotado sin inferencia, comprobación de correo e invalidación al cambiar de cuenta, porcentajes comparables con la web y fecha local en tooltip; pruebas de extremos, datos desconocidos, aislamiento, interacción y ciclo de vida, además de consulta real verificada.
+- Un único botón de envío cambia a Detener durante respuestas y comandos; permite cancelar incluso con el editor vacío y recupera Enviar al finalizar, conservando el borrador.
+- Eliminación de proyectos desde Work con papelera discreta y confirmación: retira registro, conversaciones, mediciones y borradores, conservando la carpeta y los archivos locales; valida el aislamiento, los errores y la persistencia después de reiniciar.
+- Escritura progresiva del código en los visores de Work, con cursor, duración adaptativa y seguimiento que respeta la lectura; anima contenido real ya recibido incluso después de un guardado atómico, sin retrasar comandos.
+- Actualizaciones sucesivas sobre un único destino, conservación de prefijo/sufijo intactos, soporte de Unicode y finalización de la última vista al cancelar, cerrar o eliminar; apertura manual inmediata.
+- Nuevo escenario gráfico de guardado real por shell, animación posterior al comando, modificaciones en ráfaga, cursor, Unicode, sondeo, cancelación, 128 KiB, seguimiento y reapertura.
+
 ## [0.12.0] — 2026-10-12
 
 - Animaciones suaves en Work: entrada de ventanas, aparición y retirada de carpetas/archivos, recolocación de filas, giro de flechas y transición al rotar los visores.
