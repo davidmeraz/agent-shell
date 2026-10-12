@@ -40,9 +40,13 @@ def hyprctl(*args: str) -> str:
 
 def place(pid: int, title: str, viewer_id: int) -> bool:
     # Espera acotada al mapeo de la superficie; nunca busca sólo por título.
+    prefix = f"Visor {viewer_id} · " if viewer_id else ""
     for _ in range(20):
         clients = json.loads(hyprctl("-j", "clients"))
-        client = next((c for c in clients if c.get("pid") == pid and c.get("title") == title
+        # La IA puede rotar el archivo antes de que Wayland mapee la ventana.
+        client = next((c for c in clients if c.get("pid") == pid
+                       and (c.get("title") == title or (prefix and title.startswith(prefix)
+                            and c.get("title", "").startswith(prefix)))
                        and c.get("mapped", True)), None)
         if client:
             monitors = json.loads(hyprctl("-j", "monitors"))

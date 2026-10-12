@@ -5,10 +5,12 @@ import json
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, TextIO
 
 from .clipboard import read_clipboard
+from .activity import ProjectActivity
 from .images import validate_image, user_content
 from .explorer import ProjectExplorer
 from .events import EventEmitter
@@ -513,10 +515,18 @@ class HarnessServer:
                 return {"status": "error", "output": error}
             shell_control = self._shell_control
             executor = ShellExecutor(self.workspace)
+            project_id = self.project["project_id"] if self.active_area == "work" and self.project else ""
+            if project_id:
+                self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                           turn_id=call["turn_id"], status="running")
         control.check()
         try:
-            result = executor.execute(command, shell_control,
-                                      lambda output: self._tool_output(call, output, generation))
+            observer = ProjectActivity(executor.workspace, lambda change:
+                self._work_changed(change, project_id, call, generation),
+                ignored=(self.history.root,)) if project_id else nullcontext()
+            with observer:
+                result = executor.execute(command, shell_control,
+                                          lambda output: self._tool_output(call, output, generation))
         except OSError:
             result = {"status": "error", "output": "No se pudo iniciar el proceso shell.", "exit_code": None}
         with self._lock:
@@ -525,7 +535,18 @@ class HarnessServer:
             call.update(result)
             self._performance.tool_ms += result.get("duration_ms", 0)
             self._emit("tool.updated", call=call)
+            if project_id:
+                self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                           turn_id=call["turn_id"], status=result["status"])
         return result
+
+    def _work_changed(self, change: dict, project_id: str, call: dict, generation: int) -> None:
+        with self._lock:
+            if (self._current_turn(generation) and not self._stream.cancelled.is_set()
+                    and self.active_area == "work" and self.project
+                    and self.project["project_id"] == project_id):
+                self._emit("work.changed", project_id=project_id, call_id=call["id"],
+                           turn_id=call["turn_id"], **change)
 
     def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
                     generation: int) -> None:
@@ -539,6 +560,8 @@ class HarnessServer:
                         "Plan substantial work, implement coherent changes, run relevant checks, "
                         "and report the result and any unresolved limitations. "
                         "Each project has separate conversations and a local working directory. "
+                        "The UI automatically follows real file changes during shell commands in this project. "
+                        "Make efficient edits; do not add sleeps or artificial writes for visual animation. "
                         "Project name (user-provided metadata): " + json.dumps(self.project["name"]) + ". "
                     )
                 else:

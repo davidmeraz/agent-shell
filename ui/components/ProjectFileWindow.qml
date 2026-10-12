@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import ".."
+import "../FileChanges.js" as FileChanges
 
 // Visor independiente: sólo lee el archivo abierto y descarta respuestas tardías.
 FloatingWindow {
@@ -24,8 +25,68 @@ FloatingWindow {
     property string filePath: ""
     property string preview: ""
     property bool previewTruncated: false
+    property int previewLines: -1
     property string pendingId: ""
     property int serial: 0
+    property string activityState: ""
+    property bool deleted: false
+    property real changeGlow: 0
+    property int changeStart: 0
+    property int changeEnd: 0
+    property real changeTop: 0
+    property real changeHeight: 0
+    property int changeRevision: 0
+    property real contentProgress: 1
+
+    function updateChangeGeometry() {
+        const first = code.positionToRectangle(Math.min(changeStart, code.length));
+        const last = code.positionToRectangle(Math.min(changeEnd, code.length));
+        changeTop = first.y;
+        changeHeight = Math.max(first.height, last.y + last.height - first.y);
+    }
+
+    function applyPreview(data, animated) {
+        const changed = preview !== data.text;
+        const range = changed ? FileChanges.range(previewLines < 0 ? "" : preview, data.text) : null;
+        preview = data.text;
+        previewTruncated = data.truncated;
+        previewLines = data.text ? data.text.split("\n").length - (data.text.endsWith("\n") ? 1 : 0) : 0;
+        if (changed) {
+            changeStart = range.start;
+            changeEnd = range.end;
+            const revision = ++changeRevision;
+            Qt.callLater(function() {
+                if (!viewer.visible || viewer.changeRevision !== revision) return;
+                viewer.updateChangeGeometry();
+                if (animated) highlight.restart();
+            });
+        }
+    }
+    function followChange(data) {
+        if (!visible || filePath !== data.path) openFile(data.path);
+        // La instantánea del disco invalida cualquier lectura periódica anterior.
+        pendingId = "";
+        deleted = false;
+        activityState = "running";
+        applyPreview(data.preview, true);
+    }
+    function markDeleted() {
+        pendingId = "";
+        deleted = true;
+        activityState = "deleted";
+    }
+    SequentialAnimation {
+        id: highlight
+        NumberAnimation { target: viewer; property: "changeGlow"; to: 0.035; duration: 90 }
+        NumberAnimation { target: viewer; property: "changeGlow"; to: 0; duration: 800; easing.type: Easing.OutCubic }
+    }
+    NumberAnimation {
+        id: fileTransition
+        target: viewer
+        property: "contentProgress"
+        from: 0.65; to: 1; duration: 200
+        easing.type: Easing.OutCubic
+    }
 
     function clear() {
         visible = false;
@@ -33,16 +94,26 @@ FloatingWindow {
         filePath = "";
         preview = "";
         previewTruncated = false;
+        previewLines = -1;
+        activityState = ""; deleted = false;
+        highlight.stop(); changeGlow = 0;
+        ++changeRevision; changeStart = 0; changeEnd = 0; changeHeight = 0;
     }
     function openFile(path) {
+        const wasVisible = visible;
+        const switching = wasVisible && filePath !== path;
+        highlight.stop(); changeGlow = 0; ++changeRevision; changeHeight = 0;
         pendingId = "";
         filePath = path;
         preview = "Cargando…";
         previewTruncated = false;
+        previewLines = -1;
+        activityState = ""; deleted = false;
         visible = true;
         refresh();
+        if (switching) fileTransition.restart();
         // Wayland delega la posición al compositor; sólo se aplica al abrir.
-        if (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
+        if (!wasVisible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
             placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
                 Quickshell.shellDir + "/scripts/place-text-viewer.py",
                 String(Quickshell.processId), title, String(viewerId)];
@@ -50,7 +121,7 @@ FloatingWindow {
         }
     }
     function refresh() {
-        if (!visible || !filePath || pendingId || !bridge.ready
+        if (!visible || !filePath || pendingId || deleted || !bridge.ready
             || bridge.activeArea !== "work" || !bridge.projectId) return;
         pendingId = "file-viewer-" + viewerId + "-" + (++serial);
         bridge.sendCommand({ type: "explorer.read", project_id: bridge.projectId,
@@ -60,6 +131,9 @@ FloatingWindow {
         if (!visible) {
             pendingId = "";
             placement.running = false;
+            highlight.stop(); changeGlow = 0;
+            fileTransition.stop(); contentProgress = 1;
+            ++changeRevision;
         }
     }
     Process {
@@ -77,63 +151,143 @@ FloatingWindow {
                 || data.request_id !== viewer.pendingId) return;
             if (event.type === "explorer.file" && data.path === viewer.filePath) {
                 viewer.pendingId = "";
-                viewer.preview = data.text;
-                viewer.previewTruncated = data.truncated;
+                viewer.applyPreview(data, viewer.activityState === "running");
             } else if (event.type === "explorer.error") {
                 viewer.pendingId = "";
                 viewer.preview = data.message;
                 viewer.previewTruncated = false;
+                viewer.previewLines = -1;
             }
         }
     }
     Timer { interval: 1500; repeat: true; running: viewer.visible && viewer.bridge.ready; onTriggered: viewer.refresh() }
-    MattePanel {
-        id: matteSurface
-        objectName: "projectFileMatteSurface"
+    ViewerMotion {
+        id: windowMotion
         anchors.fill: parent
-        anchors.margins: 1
-        radius: 20
-        topColor: "#90303030"
-        bottomColor: "#a01c1c1c"
-        edgeColor: "#50ffffff"
-    }
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
-        RowLayout {
-            Layout.fillWidth: true
-            Text { Layout.fillWidth: true; text: "Visor de archivos " + viewer.viewerId + " / 2"; color: "white"; font.pixelSize: 18 }
-            ActionButton { text: "Actualizar"; onClicked: viewer.refresh() }
-            ActionButton { objectName: "projectFileClose"; text: "Cerrar"; onClicked: viewer.visible = false }
+        shown: viewer.visible
+        MattePanel {
+            id: matteSurface
+            objectName: "projectFileMatteSurface"
+            anchors.fill: parent
+            anchors.margins: 1
+            radius: 20
+            topColor: "#90303030"
+            bottomColor: "#a01c1c1c"
+            edgeColor: "#50ffffff"
+            Rectangle {
+                anchors.fill: parent
+                radius: 20
+                color: "white"
+                opacity: viewer.changeGlow
+            }
         }
-        Text { Layout.fillWidth: true; text: viewer.filePath; textFormat: Text.PlainText; color: "#dddddd"; elide: Text.ElideMiddle }
-        ScrollView {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            TextArea {
-                objectName: "projectExplorerPreview"
-                text: viewer.preview
-                textFormat: TextEdit.PlainText
-                readOnly: true
-                selectByMouse: true
-                wrapMode: TextEdit.Wrap
-                font.family: "monospace"
-                font.pixelSize: 12
-                color: "#eeeeee"
-                selectionColor: "#ffffff"
-                selectedTextColor: "#000000"
-                background: GlassPanel {
-                    radius: 10
-                    reflective: false
-                    topColor: "#20181818"
-                    bottomColor: "#30101010"
-                    edgeColor: "#24ffffff"
+        ColumnLayout {
+            focus: true
+            Keys.onEscapePressed: event => { viewer.visible = false; event.accepted = true; }
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 12
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: 20
+                Text {
+                    anchors.fill: parent
+                    verticalAlignment: Text.AlignVCenter
+                    text: viewer.filePath
+                    textFormat: Text.PlainText
+                    color: "#bbbbbb"
+                    font.pixelSize: 12
+                    elide: Text.ElideMiddle
+                    HoverHandler { id: pathHover }
+                    ToolTip {
+                        id: pathTip
+                        visible: pathHover.hovered
+                        text: viewer.bridge.workspace + "/" + viewer.filePath
+                        contentItem: Text { text: pathTip.text; textFormat: Text.PlainText; color: pathTip.palette.toolTipText; font: pathTip.font }
+                        delay: 500
+                    }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    onPressed: viewer.startSystemMove()
+                }
+            }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#1affffff" }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                opacity: viewer.contentProgress
+                transform: Translate { x: 6 * (1 - viewer.contentProgress) }
+                ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                TextArea {
+                    id: code
+                    objectName: "projectExplorerPreview"
+                    text: viewer.preview
+                    textFormat: TextEdit.PlainText
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.Wrap
+                    font.family: "monospace"
+                    font.pixelSize: 13
+                    color: "#eeeeee"
+                    selectionColor: "#ffffff"
+                    selectedTextColor: "#000000"
+                    padding: 0
+                    leftPadding: 10
+                    background: null
+                    onTextChanged: Qt.callLater(viewer.updateChangeGeometry)
+                    onWidthChanged: Qt.callLater(viewer.updateChangeGeometry)
+                    Rectangle {
+                        objectName: "projectCodeChangeBand"
+                        z: -1
+                        x: 0
+                        y: viewer.changeTop
+                        width: code.width
+                        height: viewer.changeHeight
+                        radius: 3
+                        color: "white"
+                        opacity: viewer.changeGlow * 2
+                    }
+                    Rectangle {
+                        objectName: "projectCodeChangeMarker"
+                        x: 0
+                        y: viewer.changeTop
+                        width: 2
+                        height: viewer.changeHeight
+                        radius: 1
+                        color: "white"
+                        opacity: viewer.changeGlow * 18
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                WorkStatusNote {
+                    Layout.fillWidth: true
+                    busy: viewer.activityState === "running" && !viewer.deleted
+                    windowVisible: viewer.visible
+                    text: viewer.deleted ? "Archivo eliminado · última vista"
+                          : viewer.activityState === "running" ? "IA · cambios en vivo"
+                          : viewer.activityState === "completed" ? "Actualizado · solo lectura"
+                          : viewer.activityState === "interrupted" ? "Detenido · solo lectura"
+                          : "Solo lectura"
+                    HoverHandler { id: statusHover }
+                    ToolTip {
+                        visible: statusHover.hovered
+                        text: "Actualización automática cada 1,5 s. Esc para cerrar."
+                        delay: 500
+                    }
+                }
+                Text {
+                    visible: viewer.previewLines >= 0
+                    text: viewer.previewLines + (viewer.previewLines === 1 ? " línea" : " líneas")
+                          + (viewer.previewTruncated ? " · vista parcial (128 KiB)" : "")
+                    color: "#888888"
+                    font.pixelSize: 11
                 }
             }
         }
-        Text { visible: viewer.previewTruncated; text: "Vista previa limitada a 128 KiB."; color: "#aaaaaa" }
-        Text { Layout.fillWidth: true; text: "Solo lectura · actualización cada 1,5 s"; color: "#888888"; font.pixelSize: 11 }
     }
 }

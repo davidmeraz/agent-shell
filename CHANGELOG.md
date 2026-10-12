@@ -3,6 +3,19 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.12.0] — 2026-10-12
+
+- Animaciones suaves en Work: entrada de ventanas, aparición y retirada de carpetas/archivos, recolocación de filas, giro de flechas y transición al rotar los visores.
+- Resaltado localizado del intervalo de código modificado con una barra lateral tenue, adaptable al ajuste de línea y tamaño; punto de actividad animado sólo durante trabajo visible, conservando el texto real y el cierre inmediato.
+- Árbol actualizado por ruta sin recrear delegados durante el sondeo; ampliación de la prueba gráfica para comprobar identidad de filas, entradas, ventanas, cambios de archivo y ubicación real de las líneas resaltadas.
+- Seguimiento automático del trabajo de la IA en Work: árbol al ejecutar shell, carpetas expandidas y dos visores que siguen los archivos creados o modificados, con rotación automática, instantáneas reales y resaltado animado.
+- Observación inotify acotada durante cada comando, con eventos compatibles `work.activity` y `work.changed`, eliminación y renombrado, estados de ejecución y cancelación, aislamiento por turno/proyecto y exclusión del historial privado; sin añadir las vistas al contexto del modelo.
+- Pruebas con procesos reales y HTTP local para escritura intermedia, apertura automática, animación, rotación, cierres, reapertura y cancelación.
+- Colocación de visores por identidad de ventana aunque la IA rote el archivo antes del mapeo en Wayland; comprobación de la apertura automática y la disposición real en Hyprland.
+- Verificación con 167 pruebas del motor, revisión QML y ocho escenarios de interfaz; herramientas y cambios de archivos reales con servicio HTTP local de prueba.
+- Visores de carpetas y texto más compactos, sin títulos grandes ni botones Actualizar/Cerrar; ruta con información completa al pasar el puntero, arrastre desde la cabecera y cierre con Esc o el compositor.
+- Información discreta de actualización automática y entradas visibles en el árbol; solo lectura, número de líneas y aviso de vista parcial en los archivos, conservando el acabado mate y la actualización cada 1,5 segundos.
+
 ## [0.11.1] — 2026-10-11
 
 - Corrección de la reapertura del explorador y los dos visores tras cerrar desde el compositor: sincronización de la intención de visibilidad, limpieza de solicitudes pendientes y regresión gráfica de cierre nativo y nueva lectura.

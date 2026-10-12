@@ -171,4 +171,39 @@ El árbol y los visores manejan la señal
 [`closed()` de QsWindow](https://quickshell.org/docs/v0.3.0/types/Quickshell/QsWindow/#sig.closed)
 asignando `visible = false`. Esto sincroniza la intención interna de apertura
 tras un cierre del compositor, cancela las lecturas pendientes y permite volver
-a mostrar la misma ventana; cerrar con el botón de la aplicación también la oculta.
+a mostrar la misma ventana; Esc también la oculta. La franja de ruta permite
+arrastrar la ventana, con metadatos discretos en el pie y sin botones ni títulos
+grandes. El árbol muestra las entradas visibles y el texto su número de líneas,
+estado de solo lectura y aviso cuando la vista previa es parcial.
+
+`ProjectActivity` observa con inotify sólo durante `_run_tool` en Work. Instala
+observadores acotados antes de lanzar shell, incluye nuevas carpetas y agrupa
+notificaciones de creación, escritura, movimiento y eliminación. Valida las
+rutas con `ProjectExplorer` y publica instantáneas de texto acotadas. Su hilo y
+descriptor se cierran al finalizar; los callbacks comprueban la generación del
+turno y el proyecto. Fallos del observador se publican como avisos locales y no
+interrumpen shell. Se excluye el historial privado del motor.
+
+El explorador consume `work.activity` y `work.changed`: abre las ventanas,
+expande carpetas y rota los dos visores sin exigir intervención del usuario.
+Los visores invalidan lecturas periódicas anteriores antes de aplicar el cambio
+y animan un resaltado monocromático; representan el contenido del disco sin
+simular velocidad de escritura del modelo. Estos eventos no se guardan ni se
+incluyen en el contexto. La prueba `activity-smoke.qml` usa solicitudes reales
+de herramientas sobre HTTP local y procesos que crean y modifican archivos,
+para verificar contenido intermedio, animación, rotación, eliminación y cancelación.
+
+`ViewerMotion` anima la entrada del contenido sin modificar la posición ni el
+ciclo nativo de cierre. `WorkStatusNote` pulsa sólo cuando la ventana está visible
+y el trabajo sigue activo. El árbol usa un `ListModel` actualizado por ruta: añade,
+elimina, mueve y cambia roles conservando los delegados, con transiciones acotadas.
+La expansión de una carpeta rota su flecha; cada cambio real reinicia únicamente
+el resaltado de la fila correspondiente.
+
+`FileChanges.js` delimita el intervalo modificado comparando prefijo y sufijo de
+las instantáneas UTF-16 y lo extiende a líneas completas. El visor calcula la banda
+con [`positionToRectangle`](https://doc.qt.io/qt-6/qml-qtquick-textedit.html#positionToRectangle-method)
+para respetar el ajuste de texto. No es un diff persistente: cambios separados
+pueden compartir una banda. El texto se aplica inmediatamente, sin animar
+caracteres ni alterar su contenido; un número de revisión invalida tareas visuales
+pendientes al cambiar de archivo o cerrar.

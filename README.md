@@ -4,8 +4,8 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.11.1.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.11.0` conservan las versiones anteriores.
+**Versión: 0.12.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.11.1` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -67,7 +67,11 @@ antes de cambiar de espacio.
 
 ## Explorador del proyecto
 
-En **Work**, abre un proyecto y pulsa **Explorador** en su cabecera. Se abre el
+En **Work**, los visores acompañan automáticamente el trabajo de la IA: cuando
+ejecuta una herramienta shell se abre el árbol; las carpetas afectadas se expanden
+y los archivos de texto que crea o modifica aparecen en los dos visores. Si hay
+más archivos, las ventanas rotan para mostrar los más recientes. También puedes
+pulsar **Explorador** en la cabecera del proyecto. Se abre el
 **visor de carpetas**, con un árbol expandible. Al seleccionar un archivo se abre
 un **visor de archivos en otra ventana**, con texto UTF-8 de solo lectura que
 puedes seleccionar y copiar. Puedes abrir **hasta dos visores de texto a la vez**:
@@ -88,17 +92,24 @@ un archivo ya abierto no lo mueve. No se modifica la configuración de Hyprland.
 Se admiten los dispatchers Lua de Hyprland 0.55+ y las órdenes anteriores.
 En otros compositores, la posición inicial la decide el gestor de ventanas.
 
-Puedes mover, redimensionar y cerrar cada ventana por separado. Cerrar el árbol
+Los visores muestran sólo la ruta, el contenido y un pie discreto: entradas
+visibles en el árbol, o estado de solo lectura y líneas del archivo. Las rutas
+completas aparecen al pasar el puntero; los archivos grandes indican vista parcial.
+No hay títulos grandes ni botones de actualizar o cerrar. Arrastra la franja de
+la ruta para mover la ventana y pulsa **Esc** o el atajo del compositor para cerrarla.
+Puedes redimensionar y cerrar cada ventana por separado. Cerrar el árbol
 no cierra los archivos ni detiene su actualización; cerrar un visor no cierra el
-árbol ni los demás visores. Para reabrir un visor, selecciona un archivo en el árbol. Todas las ventanas
+árbol ni los demás visores. Para reabrir un visor, selecciona un archivo en el árbol;
+un nuevo cambio de la IA también puede reabrirlo automáticamente. Todas las ventanas
 siguen disponibles mientras la IA o `/shell` trabaja.
 
-Cada ventana se actualiza automáticamente cada 1,5 segundos mientras está visible;
-**Actualizar** permite consultar de inmediato. El árbol sólo consulta la raíz y
+Cada ventana se actualiza automáticamente cada 1,5 segundos mientras está visible.
+El sondeo periódico del árbol sólo consulta la raíz y
 las carpetas expandidas visibles, sin recorrer todo el proyecto; el visor consulta
 únicamente su archivo abierto. Los archivos nuevos y modificados se marcan respecto
-al último listado de su carpeta durante esa apertura del árbol; las marcas se
-reinician al reabrirlo. Las eliminaciones desaparecen del árbol y los renombrados
+al último listado de su carpeta durante esa apertura del árbol; las marcas
+del sondeo se reinician al reabrirlo; el seguimiento de la IA mantiene sus marcas
+durante el trabajo. Las eliminaciones desaparecen del árbol y los renombrados
 aparecen como eliminación y creación. Los cambios pueden venir de la IA o de otra
 aplicación: no se atribuyen al modelo. Cambiar de área, proyecto o carpeta de
 trabajo limpia los visores y cierra las ventanas de archivos; cambiar de área o
@@ -110,6 +121,27 @@ se limita a 1000 entradas y la vista previa a 128 KiB; los archivos binarios o
 con otra codificación muestran un aviso. No incluye edición, diferencias ni
 seguimiento persistente de cambios. El explorador funciona sin conectar una cuenta
 y sus lecturas no se envían a la IA ni se guardan en el historial.
+
+El seguimiento en vivo usa inotify durante cada comando de la IA, con cambios
+agrupados aproximadamente cada 180 ms, hasta 1024 carpetas y 512 cambios pendientes.
+Las vistas reciben instantáneas reales de hasta 128 KiB y resaltan suavemente los
+cambios; una escritura por partes se ve progresivamente y una escritura de golpe
+aparece completa. Se muestran estados de ejecución, finalización y cancelación;
+un archivo eliminado conserva su última vista con un aviso. No se añade este
+contenido al contexto ni al historial. `/shell` conserva su ejecución directa y
+la actualización periódica de las vistas, sin activar el seguimiento automático.
+El observador excluye el historial privado incluso si está dentro del proyecto.
+Un límite o un fallo del observador se indica en el explorador y no impide ejecutar
+el comando. Cambiar de área descarta los eventos anteriores.
+
+Las ventanas aparecen con una transición breve de opacidad y desplazamiento del
+contenido. Las carpetas y archivos nuevos entran suavemente, las flechas giran al
+expandir carpetas y las filas se recolocan al añadir o eliminar entradas. El árbol
+conserva sus filas durante las consultas para no repetir animaciones sin cambios.
+Al escribir, el visor resalta el intervalo de líneas modificado y lo señala con una
+barra lateral tenue; respeta el ajuste de línea y se adapta al redimensionar.
+Cambiar de archivo tiene una transición independiente. El punto de actividad pulsa
+sólo mientras la IA trabaja con la ventana visible; cerrar no espera a la animación.
 
 ## Imágenes en el chat
 
@@ -354,6 +386,9 @@ historial, cambio de modelo y adjuntos del borrador entre áreas. Usa un PNG
 de prueba y un lector inyectado sólo en `tests/fake_backend.py`; no toca el
 portapapeles del usuario. Las pruebas unitarias comprueban por separado los
 lectores Wayland/X11, límites binarios y formato multimodal.
+`activity-smoke.qml` comprueba herramientas de IA por HTTP con comandos reales:
+apertura automática, carpetas, escritura por partes, animación, rotación de visores,
+renombrado, eliminación, reapertura, cancelación y aislamiento entre áreas.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
 una solicitud real con el backend y la sesión propia de Agent Shell: recibió texto

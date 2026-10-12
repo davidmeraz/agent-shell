@@ -59,6 +59,19 @@ class ViewerPlacementTests(unittest.TestCase):
         self.assertFalse(placement.place(123, "Visor 1", 1))
         self.assertEqual(ctl.call_count, 20)
 
+    @patch.object(placement, "hyprctl")
+    def test_rotation_before_mapping_keeps_viewer_identity_and_process(self, ctl):
+        import json
+        ctl.side_effect = [json.dumps([
+            dict(pid=999, title="Visor 1 · next.py", address="0xdead", monitor=0),
+            dict(pid=123, title="Visor 2 · next.py", address="0xbeef", monitor=0),
+            dict(pid=123, title="Visor 1 · next.py", address="0xcafe", monitor=0),
+        ]), json.dumps([self.monitor()]), '{"version":"0.56.2"}', "ok\n"]
+        self.assertTrue(placement.place(123, "Visor 1 · first.py", 1))
+        self.assertIn("address:0xcafe", ctl.call_args.args[1])
+        self.assertNotIn("dead", ctl.call_args.args[1])
+        self.assertNotIn("beef", ctl.call_args.args[1])
+
     @patch.object(placement.time, "sleep")
     @patch.object(placement, "hyprctl")
     def test_waits_until_mapped(self, ctl, sleep):

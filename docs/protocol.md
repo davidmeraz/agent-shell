@@ -249,5 +249,39 @@ cierra ni detiene la otra. Seleccionar otro archivo invalida la lectura anterior
 las respuestas con un identificador no pendiente o de otro proyecto se descartan.
 Cambiar de espacio limpia ambos estados y cierra las ventanas; cambiar la carpeta
 de trabajo limpia el árbol y cierra todos los visores. Las marcas de cambios son locales al
-árbol y no prueban autoría de la IA. No se observan carpetas plegadas ni se ofrece
-un registro persistente de modificaciones.
+árbol y no prueban autoría de la IA. El sondeo manual no consulta carpetas plegadas
+ni ofrece un registro persistente de modificaciones. El seguimiento de herramientas
+de IA se describe a continuación.
+
+### Seguimiento del trabajo de la IA
+
+Eventos compatibles adicionales de NDJSON v2, sólo en Work durante comandos de
+la IA; no se producen para `/shell`, conversaciones de Chat ni lecturas del historial:
+
+- `work.activity`: `project_id`, `call_id` (identificador local de la tarjeta de
+  herramienta), `turn_id`, `status`: `running`, `completed`, `error`, `timeout`
+  o `interrupted`. Inicia o termina la observación de un comando.
+- `work.changed`: los mismos identificadores y `action`: `created`, `modified`
+  o `deleted`; `path` relativa, `directory` booleano y `sequence` creciente por
+  comando. Un archivo regular UTF-8 puede incluir `preview` con `path`, `text`
+  y `truncated`, bajo los mismos límites y confinamiento de `explorer.file`.
+  Los archivos binarios se señalan en el árbol sin abrir un visor de texto.
+- La variante `work.changed` con `action: "notice"` lleva `message` y los
+  identificadores del comando, sin ruta ni secuencia: el seguimiento alcanzó
+  un límite o no está disponible; el comando y el sondeo siguen funcionando.
+
+Los cambios se observan en disco durante el comando; no prueban la identidad del
+proceso escritor. inotify agrupa cambios de la misma ruta durante aproximadamente
+180 ms y drena los pendientes al terminar. Hasta 1024 carpetas, 1000 entradas por
+listado inicial y 512 rutas pendientes; ráfagas grandes muestran seguimiento parcial.
+El historial privado y las carpetas excluidas no se observan. No se guardan estos
+eventos ni se reenvían al modelo.
+
+Qt abre el árbol automáticamente, expande las carpetas afectadas y muestra los
+dos archivos de texto más recientes, reutilizando los visores cuando están ocupados.
+Invalida lecturas anteriores antes de aplicar una instantánea y anima el resaltado
+del cambio, conservando el texto real. Los eliminados muestran la última vista.
+Se descartan eventos de otra área, proyecto, comando, secuencia anterior o comando
+terminado. `chat.finished` también detiene el seguimiento al cancelar o fallar;
+el servidor invalida callbacks del turno cancelado. El sondeo de las ventanas
+permanece activo al terminar, sin seguimiento persistente en segundo plano.

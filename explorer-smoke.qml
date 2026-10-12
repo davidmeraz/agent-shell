@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import QtTest
 import Quickshell
 import "ui"
@@ -78,9 +79,13 @@ ShellRoot {
                 if (agent.busy || !scenario.row("src/renamed.txt") || scenario.row("src/new.txt") || scenario.row("src/existing.txt")) return;
                 scenario.viewer.visible = false;
                 scenario.explorer.select(scenario.row("src/renamed.txt"));
-                scenario.explorer.visible = false;
+                const tree = inspector.findChild(scenario.explorer, "projectExplorerTree");
+                tree.forceActiveFocus();
+                tree.Window.window.requestActivate();
+                inspector.wait(20);
+                inspector.keyClick(Qt.Key_Escape);
                 if (!scenario.check(Object.keys(scenario.explorer.pending).length === 0
-                    && scenario.viewer.visible, "cerrar árbol afecta al visor")) return;
+                    && !scenario.explorer.visible && scenario.viewer.visible, "Esc no cierra sólo el árbol")) return;
                 scenario.stage = 9;
             } else if (scenario.stage === 9) {
                 if (scenario.viewer.preview !== "<b>nuevo</b>") return;
@@ -98,9 +103,15 @@ ShellRoot {
                 scenario.stage = 12;
             } else if (scenario.stage === 12) {
                 if (!scenario.row("src/renamed.txt")) return;
-                inspector.mouseClick(inspector.findChild(scenario.viewer, "projectFileClose"));
+                const preview = inspector.findChild(scenario.viewer, "projectExplorerPreview");
+                inspector.mouseClick(preview);
+                preview.forceActiveFocus();
+                preview.Window.window.requestActivate();
+                inspector.wait(20);
+                inspector.keyClick(Qt.Key_Escape);
                 if (!scenario.check(!scenario.viewer.visible && scenario.explorer.visible
-                    && !scenario.viewer.pendingId, "cerrar visor afecta al árbol")) return;
+                    && !scenario.viewer.pendingId, "Esc no cierra sólo el visor: visor=" + scenario.viewer.visible
+                    + ", árbol=" + scenario.explorer.visible + ", lectura=" + scenario.viewer.pendingId)) return;
                 scenario.explorer.select(scenario.row("src/renamed.txt"));
                 scenario.stage = 13;
             } else if (scenario.stage === 13) {
@@ -167,7 +178,7 @@ ShellRoot {
                 if (agent.areaBusy || agent.activeArea !== "chat") return;
                 if (!scenario.check(!scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer =>
                     !viewer.visible && !viewer.filePath && !viewer.preview), "cambio de área conserva ventana o texto")) return;
-                console.log("EXPLORER_OK: dos visores, límite, reutilización, ventanas separadas, vidrio mate, carpetas, texto, cambios, cierre nativo, reapertura y limpieza por área");
+                console.log("EXPLORER_OK: dos visores, límite, reutilización, ventanas separadas, vidrio mate, carpetas, texto, cambios, Esc por ventana, cierre nativo, reapertura y limpieza por área");
                 steps.stop(); Qt.callLater(Qt.quit);
             }
         }
