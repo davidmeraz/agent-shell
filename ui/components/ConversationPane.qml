@@ -30,7 +30,7 @@ GlassPanel {
         visible: pane.bridge.messages.count === 0
         Text {
             width: parent.width
-            text: "¿En qué trabajamos?"
+            text: pane.bridge.activeArea === "work" ? "¿Qué vamos a construir?" : "¿De qué hablamos?"
             color: "#f5f5f5"
             font.pixelSize: pane.width < 580 ? 25 : 32
             font.bold: true
@@ -38,7 +38,9 @@ GlassPanel {
         }
         Text {
             width: parent.width
-            text: pane.bridge.authenticated ? "Una idea, una pregunta o tu próximo proyecto." : "Conecta tu cuenta de ChatGPT para comenzar."
+            text: pane.bridge.authenticated
+                ? (pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
+                : "Conecta tu cuenta de ChatGPT para comenzar."
             color: "#bbbbbb"
             font.pixelSize: 13
             wrapMode: Text.Wrap
@@ -49,10 +51,14 @@ GlassPanel {
             spacing: 8
             visible: pane.bridge.authenticated && pane.height >= 260
             Repeater {
-                model: [
+                model: pane.bridge.activeArea === "work" ? [
+                    { label: "Explorar proyecto", prompt: "Inspecciona este proyecto y explícame su estructura y cómo se ejecuta." },
+                    { label: "Crear una función", prompt: "Quiero implementar esta función en el proyecto: " },
+                    { label: "Resolver un error", prompt: "Investiga y corrige este error en el proyecto: " }
+                ] : [
                     { label: "Explorar una idea", prompt: "Ayúdame a desarrollar esta idea: " },
-                    { label: "Revisar código", prompt: "Ayúdame a revisar este código: " },
-                    { label: "Planear un proyecto", prompt: "Ayúdame a planear este proyecto: " }
+                    { label: "Aprender algo", prompt: "Explícame de forma sencilla este tema: " },
+                    { label: "Escribir un texto", prompt: "Ayúdame a escribir este texto: " }
                 ]
                 delegate: ActionButton {
                     required property var modelData

@@ -4,8 +4,8 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.9.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.7.0` conservan las versiones anteriores.
+**Versión: 0.10.0.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.9.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -26,7 +26,7 @@ de tu plan, sin configurar una API key ni una facturación de API independiente.
 La aplicación descubre los modelos disponibles para tu cuenta y permite elegirlos.
 Usa **Enter** para enviar, **Shift+Enter** para un salto de línea, **Detener** para
 interrumpir y **Nuevo chat** para otra conversación. Los mensajes se pueden copiar
-y seleccionar; actualmente se presentan como texto sin formato Markdown.
+y seleccionar; las respuestas presentan Markdown, tablas y bloques de código.
 
 **Cuenta** reúne los controles de sesión. **Administrar uso del plan** abre los
 ajustes de ChatGPT. **Actualizar cuenta** renueva el catálogo y consulta la sesión
@@ -45,6 +45,25 @@ cancela el intento en Agent Shell y usa **Usar otra cuenta**. Los registros
 existentes están asociados a su cuenta y espacio de trabajo; no sirven para
 autorizar una cuenta distinta. La nueva cuenta también debe ser elegible para
 usar su plan con la aplicación.
+
+## Chat y Work
+
+El selector **Chat | Work**, centrado arriba de la ventana, separa las conversaciones
+generales del trabajo sobre proyectos. **Chat** conserva los chats anteriores.
+**Work → Nuevo proyecto** vincula un nombre a una carpeta local existente, vacía o
+con código. Puedes elegirla en el explorador o escribir su ruta.
+
+Cada proyecto tiene sus conversaciones, comandos y contexto propios. La terminal
+y `/shell` usan su carpeta; la IA recibe instrucciones para inspeccionar, implementar
+y comprobar el trabajo solicitado. **Abrir carpeta** abre el proyecto en el explorador
+y **Proyectos** permite elegir otro o registrar uno nuevo.
+
+Cambiar de área o proyecto conserva la conversación abierta y el borrador durante
+la sesión. Después de reiniciar, los proyectos siguen registrados y sus conversaciones
+se recuperan desde su historial. El historial muestra sólo el área o proyecto actual;
+**Rendimiento** sigue reuniendo las mediciones de todos los chats. La terminal permanece
+disponible también en Chat. Las respuestas y comandos en curso deben terminar o detenerse
+antes de cambiar de espacio.
 
 ## Comandos del chat
 
@@ -260,7 +279,10 @@ compactas, activación al completar `/modelos`, filtros, teclado y ratón,
 validación y borradores sin sesión. `conversation-smoke.qml` comprueba Markdown,
 copia, métricas y desplazamiento sin saltos, con las barras ocultas.
 `shell-command-smoke.qml` verifica `/shell` desde el editor sin sesión: completado,
-salida real, argumentos, errores, cancelación e historial. Las comprobaciones
+salida real, argumentos, errores, cancelación e historial. `workspaces-smoke.qml`
+comprueba el selector centrado, registro y validación de proyectos, conversaciones
+y borradores separados, y ejecución de shell en las carpetas de dos proyectos.
+Las comprobaciones
 de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
 confirmó el inicio de sesión real desde el escritorio. También se comprobó aparte
@@ -272,7 +294,7 @@ y el evento `response.completed` de OpenAI.
 ```text
 shell.qml                    Ventana principal
 ui/AgentBridge.qml           Estado y contrato de eventos
-ui/ChatWindow.qml            Chat, cuenta, modelos e historial
+ui/ChatWindow.qml            Áreas Chat / Work, cuenta, modelos e historial
 ui/components/ChatSidebar.qml Navegación y chats recientes
 ui/components/ConversationPane.qml Mensajes y bienvenida
 ui/components/MessageComposer.qml Editor, modelo y envío

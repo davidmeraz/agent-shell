@@ -30,7 +30,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--workspace", type=Path, default=Path(os.environ.get("AGENT_SHELL_WORKSPACE", os.getcwd())),
-        help="Directorio inicial de la herramienta shell (requiere activación y aprobación desde la interfaz)",
+        help="Directorio inicial de la terminal de Chat; cada proyecto de Work usa su propia carpeta",
     )
     parser.add_argument(
         "--model", default=os.environ.get("AGENT_SHELL_MODEL", ""),

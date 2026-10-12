@@ -20,6 +20,8 @@ flowchart LR
 ## Responsabilidades
 
 - `ChatWindow`: chat, cuenta, modelo, control de respuesta e historial.
+- `WorkspaceSwitcher`: selector Chat | Work centrado sobre el contenido.
+- `WorkProjects` y `ProjectDialog`: listado y registro de proyectos con una carpeta local.
 - `AgentBridge`: aplica eventos, reconcilia texto final por identificador y abre
   la autorización sólo al solicitar el usuario iniciar sesión.
 - `ChatCommands.js`: catálogo compartido, análisis y disponibilidad de comandos
@@ -39,6 +41,7 @@ flowchart LR
 - `ShellExecutor`: ejecuta automáticamente comandos validados, acota la salida y termina grupos de procesos.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
+- `ProjectStore`: nombres y carpetas de proyectos de Work en JSON privado y atómico.
 - `TurnPerformance`: reloj monotónico, etapas del turno, contexto de la última llamada,
   conteos acumulados y velocidad en tokens basada en uso reportado y tiempo HTTP por solicitud.
 - `Performance.js`: formato de métricas y estadísticas por modelo en Qt.
@@ -102,6 +105,20 @@ reconstruirse. Las conversaciones demasiado largas pueden superar el contexto;
 todavía no hay compactación.
 
 ## Persistencia y ciclo de vida
+
+Los chats antiguos pertenecen al área Chat. Los nuevos registros añaden `area`
+y `project_id` sin cambiar el esquema 1. `HarnessServer` filtra el historial por
+estos campos y mantiene una conversación abierta por área/proyecto durante la
+sesión. Cambiar restaura esa conversación y el directorio; `MessageComposer`
+conserva un borrador por espacio en memoria. Los proyectos se registran en
+`projects/`, bajo el directorio del historial, y permanecen después de reiniciar.
+Sus conversaciones se recuperan desde el historial correspondiente.
+
+Work usa instrucciones orientadas a inspección, implementación y comprobación
+de proyectos. Chat prioriza conversación general. Ambos utilizan el mismo cliente,
+cuenta y ejecutor shell; la selección no hace solicitudes a OpenAI. Los comandos
+de Work usan su carpeta persistida y no la carpeta de Chat. Una respuesta, ejecución
+u operación de cuenta en curso bloquea el cambio para conservar el contexto activo.
 
 Las mediciones se guardan en el array opcional `performance` del chat. Un `turn_id`
 vincula mensajes y medición; una generación evita actualizaciones de turnos cancelados.

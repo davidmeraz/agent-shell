@@ -12,7 +12,7 @@ import "Performance.js" as Performance
 FloatingWindow {
     id: window
     required property AgentBridge bridge
-    title: "Agent Shell · ChatGPT"
+    title: bridge.activeArea === "work" ? "Agent Shell · Work" + (bridge.projectName ? " · " + bridge.projectName : "") : "Agent Shell · Chat"
     implicitWidth: 600
     implicitHeight: 1000
     minimumSize: Qt.size(560, 560)
@@ -25,6 +25,7 @@ FloatingWindow {
                                            || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || shellSettings.visible
                                            || commandHelp.visible
+                                           || projectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
     property bool sidebarKeyboardOpen: false
@@ -110,6 +111,11 @@ FloatingWindow {
             Layout.minimumWidth: 0
             spacing: 14
 
+            WorkspaceSwitcher {
+                Layout.alignment: Qt.AlignHCenter
+                bridge: window.bridge
+            }
+
             GlassPanel {
                 Layout.fillWidth: true
                 implicitHeight: loginRow.implicitHeight + 20
@@ -136,11 +142,62 @@ FloatingWindow {
                 }
             }
 
+            RowLayout {
+                objectName: "workProjectHeader"
+                Layout.fillWidth: true
+                visible: window.bridge.activeArea === "work" && !!window.bridge.projectId
+                spacing: 10
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    spacing: 3
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Work · " + window.bridge.projectName
+                        textFormat: Text.PlainText
+                        color: "#dddddd"
+                        font.pixelSize: 13
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: window.bridge.workspace
+                        textFormat: Text.PlainText
+                        color: "#888888"
+                        font.pixelSize: 10
+                        elide: Text.ElideMiddle
+                    }
+                }
+                ActionButton {
+                    text: "Abrir carpeta"
+                    font.pixelSize: 11
+                    verticalPadding: 7
+                    onClicked: Qt.openUrlExternally("file://" + encodeURI(window.bridge.workspace).replace(/#/g, "%23").replace(/\?/g, "%3F"))
+                }
+                ActionButton {
+                    objectName: "workProjectsButton"
+                    text: "Proyectos"
+                    font.pixelSize: 11
+                    verticalPadding: 7
+                    enabled: window.bridge.canSelectArea
+                    onClicked: window.bridge.selectArea("work", "")
+                }
+            }
+            WorkProjects {
+                objectName: "workProjects"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: !window.bridge.workspaceSelected
+                bridge: window.bridge
+                onNewProjectRequested: projectDialog.open()
+            }
             ConversationPane {
                 objectName: "chatConversation"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 140
+                visible: window.bridge.workspaceSelected
                 bridge: window.bridge
                 onPerformanceRequested: measurement => window.showPerformance(measurement)
                 onSuggestionRequested: text => composer.prepare(text)
@@ -150,6 +207,7 @@ FloatingWindow {
             MessageComposer {
                 id: composer
                 Layout.fillWidth: true
+                visible: window.bridge.workspaceSelected
                 bridge: window.bridge
                 compact: window.height < 680
                 statusText: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
@@ -217,6 +275,12 @@ FloatingWindow {
         anchors.centerIn: parent
         width: Math.min(440, window.width - 40)
     }
+    ProjectDialog {
+        id: projectDialog
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(480, window.width - 40)
+    }
     Drawer {
         id: narrowSidebar
         objectName: "chatSidebarDrawer"
@@ -255,6 +319,7 @@ FloatingWindow {
                 onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
                 onAccountRequested: { narrowSidebar.close(); accountPanel.open(); }
                 onShellRequested: { narrowSidebar.close(); shellSettings.open(); }
+                onProjectRequested: { narrowSidebar.close(); projectDialog.open(); }
                 onDeleteRequested: (chatId, title) => {
                     narrowSidebar.close();
                     window.requestDeleteChat(chatId, title);
@@ -596,7 +661,7 @@ FloatingWindow {
             spacing: 14
             RowLayout {
                 Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Historial de chats"; color: "#f5f5f5"; font.pixelSize: 21; font.bold: true }
+                Text { Layout.fillWidth: true; text: window.bridge.activeArea === "work" ? "Historial del proyecto" : "Historial de Chat"; color: "#f5f5f5"; font.pixelSize: 21; font.bold: true }
                 ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: historyPanel.close() }
             }
             Text {

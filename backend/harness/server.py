@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from .events import EventEmitter
 from .context import append_result, close_pending_calls, replay_items, visible_chat
 from .history import HistoryStore
+from .projects import ProjectStore
 from .http import Cancelled, ServiceError, StreamControl, service_error
 from .performance import TurnPerformance
 from .shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
@@ -46,6 +47,11 @@ class HarnessServer:
                  model: str = "", workspace: Path | None = None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
+        self.projects = ProjectStore(self.history.root / "projects")
+        self.active_area = "chat"
+        self.project: dict | None = None
+        self._area_chats: dict[str, dict | None] = {}
+        self._last_project_id = ""
         self.session = session
         self.client = client
         self.conversation: dict | None = None
@@ -65,6 +71,7 @@ class HarnessServer:
         self._performance: TurnPerformance | None = None
         self._last_metrics_emitted = 0.0
         self.workspace = resolve_workspace(workspace or Path.cwd())
+        self._chat_workspace = self.workspace
         self.shell_enabled = True
         self._shell_control = ShellControl(self._stream.cancelled)
         self._local_call: dict | None = None
@@ -85,9 +92,67 @@ class HarnessServer:
         worker.start()
 
     def _publish_history(self) -> None:
-        self._emit("history.list", chats=self.history.list())
+        chats = self.history.list()
+        self._emit("history.list", chats=[row for row in chats if self._matches_area(row)])
         if self.history.invalid_files:
             self._emit("history.notice", message="Hay archivos de historial dañados o incompatibles; se conservaron.")
+
+    def _matches_area(self, record: dict) -> bool:
+        return (record.get("area", "chat") == self.active_area
+                and record.get("project_id", "") == (self.project["project_id"] if self.project else ""))
+
+    def _area_key(self) -> str:
+        return "chat" if self.active_area == "chat" else "work:" + (self.project["project_id"] if self.project else "")
+
+    def _publish_area(self) -> None:
+        self._emit("area.state", area=self.active_area, project=self.project)
+        self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT)
+
+    def _publish_projects(self) -> None:
+        self._emit("projects.list", projects=self.projects.list())
+
+    def _select_area(self, area: str, project_id: str | None = None) -> None:
+        if area not in ("chat", "work"):
+            raise ValueError("Selecciona Chat o Work")
+        project = None
+        workspace = self._chat_workspace
+        if area == "work":
+            selected = self._last_project_id if project_id is None else project_id
+            if not isinstance(selected, str):
+                raise ValueError("Selecciona un proyecto válido")
+            if selected:
+                try:
+                    project = self.projects.load(selected)
+                    workspace = resolve_workspace(project["workdir"])
+                except (OSError, ValueError, KeyError, TypeError):
+                    if project_id is not None:
+                        raise
+                    project = None
+        key = "chat" if area == "chat" else "work:" + (project["project_id"] if project else "")
+        if key == self._area_key():
+            self._publish_area()
+            self._publish_projects()
+            return
+        self._area_chats[self._area_key()] = self.conversation
+        self.active_area, self.project, self.workspace = area, project, workspace
+        if project:
+            self._last_project_id = project["project_id"]
+        self.conversation = self._area_chats.get(key)
+        self._performance = None
+        self._generation += 1
+        self._publish_area()
+        self._publish_projects()
+        if self.conversation is None:
+            self._emit("chat.reset")
+        else:
+            if self.conversation.get("model") in {row["slug"] for row in self.models}:
+                self.model = self.conversation["model"]
+            self._emit("chat.loaded", chat=visible_chat(self.conversation))
+        self._emit("model.selected", model=self.model)
+        self._publish_history()
+
+    def _create_conversation(self, prompt: str) -> dict:
+        return self.history.create(prompt, self.active_area, self.project["project_id"] if self.project else "")
 
     def _publish_account(self) -> None:
         account = self.session.account()
@@ -184,6 +249,8 @@ class HarnessServer:
 
     def _open_chat(self, chat_id: str) -> None:
         record = self.history.load(chat_id)
+        if not self._matches_area(record):
+            raise ValueError("La conversación pertenece a otro espacio de trabajo")
         close_pending_calls(record)
         for message in record["messages"]:
             if message["status"] == "streaming":
@@ -200,7 +267,12 @@ class HarnessServer:
         self._emit("model.selected", model=self.model)
 
     def _delete_chat(self, chat_id: str) -> None:
+        if not self._matches_area(self.history.load(chat_id)):
+            raise ValueError("La conversación pertenece a otro espacio de trabajo")
         self.history.delete(chat_id)
+        for key, record in list(self._area_chats.items()):
+            if record and record["chat_id"] == chat_id:
+                self._area_chats[key] = None
         if self.conversation is not None and self.conversation["chat_id"] == chat_id:
             self.conversation = None
             self._performance = None
@@ -367,6 +439,9 @@ class HarnessServer:
         if self.busy or self.login_pending or self.account_pending:
             self._emit("shell.rejected", message="Espera a que termine la operación actual.")
             return
+        if self.active_area == "work" and self.project is None:
+            self._emit("shell.rejected", message="Selecciona o crea un proyecto en Work antes de ejecutar comandos.")
+            return
         try:
             command = parse_command(json.dumps({"command": request.get("command")}, ensure_ascii=False))
         except (ValueError, TypeError):
@@ -375,7 +450,7 @@ class HarnessServer:
         previous = copy.deepcopy(self.conversation)
         try:
             if self.conversation is None:
-                self.conversation = self.history.create("/shell " + command)
+                self.conversation = self._create_conversation("/shell " + command)
             call_id = uuid.uuid4().hex
             call = {"id": call_id, "call_id": "local-" + call_id, "turn_id": call_id,
                     "source": "local", "command": command, "workdir": str(self.workspace),
@@ -453,7 +528,19 @@ class HarnessServer:
                     generation: int) -> None:
         try:
             with self._lock:
-                instructions = AGENT_INSTRUCTIONS + "Working directory: " + str(self.workspace)
+                instructions = AGENT_INSTRUCTIONS
+                if self.active_area == "work":
+                    instructions += (
+                        "You are in Work, the project workspace. Complete the requested implementation end to end. "
+                        "Inspect the existing project and its local instructions before making changes. "
+                        "Plan substantial work, implement coherent changes, run relevant checks, "
+                        "and report the result and any unresolved limitations. "
+                        "Each project has separate conversations and a local working directory. "
+                        "Project name (user-provided metadata): " + json.dumps(self.project["name"]) + ". "
+                    )
+                else:
+                    instructions += "You are in Chat, the conversation space. Prioritize clear, helpful conversation. "
+                instructions += "Working directory: " + str(self.workspace)
             for step in range(MAX_AGENT_STEPS):
                 completed = None
                 control.check()
@@ -514,6 +601,23 @@ class HarnessServer:
             return
         with self._lock:
             action = request.get("type")
+            if action == "projects.list":
+                self._publish_projects()
+                return
+            if action in ("area.select", "project.create"):
+                if self.busy or self.login_pending or self.account_pending:
+                    self._emit("area.rejected", message="Espera a que termine la operación actual antes de cambiar de espacio.")
+                    return
+                try:
+                    if action == "project.create":
+                        project = self.projects.create(request.get("name"), request.get("workdir"))
+                        self._select_area("work", project["project_id"])
+                    else:
+                        self._select_area(request.get("area"), request.get("project_id"))
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else
+                               "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
+                return
             if action == "shell.execute":
                 self._start_local_shell(request)
                 return
@@ -526,8 +630,20 @@ class HarnessServer:
                         self._emit("error", message="La terminal permanece activa; sólo puedes cambiar su directorio.")
                         return
                     workspace = resolve_workspace(request.get("workdir"))
+                    if self.active_area == "work":
+                        if self.project is None:
+                            raise ValueError("Selecciona un proyecto")
+                        if any(row["project_id"] != self.project["project_id"] and row["workdir"] == str(workspace)
+                               for row in self.projects.list()):
+                            raise ValueError("Esta carpeta ya pertenece a otro proyecto")
+                        updated = {**self.project, "workdir": str(workspace)}
+                        self.projects.save(updated)
+                        self.project = updated
+                        self._publish_projects()
+                    else:
+                        self._chat_workspace = workspace
                     self.workspace = workspace
-                    self._emit("shell.state", enabled=self.shell_enabled, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT)
+                    self._publish_area()
                 except (ValueError, OSError, TypeError):
                     self._emit("error", message="Selecciona un directorio de trabajo existente")
                 return
@@ -614,10 +730,12 @@ class HarnessServer:
                 self._emit("error", message="Espera a que termine la operación actual")
             elif not self.authenticated or not self.models:
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
+            elif self.active_area == "work" and self.project is None:
+                self._emit("chat.finished", status="failed", message="Selecciona o crea un proyecto en Work para comenzar")
             else:
                 try:
                     if self.conversation is None:
-                        self.conversation = self.history.create(prompt.strip())
+                        self.conversation = self._create_conversation(prompt.strip())
                     snapshot = copy.deepcopy(self.conversation)
                     turn_id = uuid.uuid4().hex
                     self.conversation["messages"].append({"id": turn_id, "role": "user",
@@ -662,7 +780,8 @@ class HarnessServer:
     def serve(self, source: TextIO) -> None:
         try:
             self._emit("history.ready", directory=str(self.history.root))
-            self._emit("shell.state", enabled=self.shell_enabled, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT)
+            self._publish_area()
+            self._publish_projects()
             self._publish_history()
             self._emit("backend.ready", provider="chatgpt", app_version=get_version())
             with self._lock:

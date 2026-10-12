@@ -11,6 +11,7 @@ MattePanel {
     signal performanceRequested()
     signal accountRequested()
     signal shellRequested()
+    signal projectRequested()
     signal deleteRequested(string chatId, string title)
 
     ColumnLayout {
@@ -31,12 +32,35 @@ MattePanel {
                 Text { text: "Tu espacio de IA"; color: "#aaaaaa"; font.pixelSize: 11 }
             }
         }
+        RowLayout {
+            Layout.fillWidth: true
+            visible: sidebar.bridge.activeArea === "work"
+            Text {
+                Layout.fillWidth: true
+                text: sidebar.bridge.projectName || "Tus proyectos"
+                color: "#dddddd"
+                font.pixelSize: 12
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+            ActionButton {
+                text: "Proyectos"
+                font.pixelSize: 11
+                horizontalPadding: 8
+                verticalPadding: 6
+                enabled: sidebar.bridge.canSelectArea
+                onClicked: sidebar.bridge.selectArea("work", "")
+            }
+        }
         ActionButton {
             Layout.fillWidth: true
-            text: "+  Nuevo chat"
+            text: sidebar.bridge.activeArea === "work" ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nuevo proyecto") : "+  Nuevo chat"
             accent: true
             enabled: sidebar.bridge.canBrowseHistory
-            onClicked: sidebar.bridge.newChat()
+            onClicked: {
+                if (sidebar.bridge.activeArea === "work" && !sidebar.bridge.projectId) sidebar.projectRequested();
+                else sidebar.bridge.newChat();
+            }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
         RowLayout {
@@ -60,7 +84,7 @@ MattePanel {
         Text {
             Layout.fillWidth: true
             visible: sidebar.bridge.conversations.count === 0
-            text: "Tus chats se guardarán aquí."
+            text: sidebar.bridge.activeArea === "work" ? "Las conversaciones de este proyecto aparecerán aquí." : "Tus chats se guardarán aquí."
             color: "#aaaaaa"
             font.pixelSize: 12
             wrapMode: Text.Wrap
@@ -90,7 +114,7 @@ MattePanel {
         ActionButton {
             Layout.fillWidth: true
             text: "Terminal"
-            enabled: sidebar.bridge.ready && !sidebar.bridge.busy && !sidebar.bridge.loginBusy
+            enabled: sidebar.bridge.canSelectArea && sidebar.bridge.workspaceSelected
             onClicked: sidebar.shellRequested()
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }

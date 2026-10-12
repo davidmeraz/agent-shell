@@ -37,7 +37,7 @@ class HistoryStore:
             raise ValueError("No se permiten enlaces simbólicos en el historial")
         return path
 
-    def create(self, prompt: str) -> dict:
+    def create(self, prompt: str, area: str = "chat", project_id: str = "") -> dict:
         """Crea una conversación cuando llega su primer mensaje; evita chats vacíos."""
         timestamp = now()
         record = {
@@ -45,6 +45,7 @@ class HistoryStore:
             "title": " ".join(prompt.split())[:72],
             "created_at": timestamp, "updated_at": timestamp,
             "thread_id": None, "model": "", "messages": [],
+            "area": area, "project_id": project_id,
         }
         self.save(record)
         return record
@@ -79,6 +80,12 @@ class HistoryStore:
             raise ValueError("Metadatos del historial inválidos")
         if record.get("thread_id") is not None and not isinstance(record["thread_id"], str):
             raise ValueError("Thread del historial inválido")
+        area, project_id = record.get("area", "chat"), record.get("project_id", "")
+        if (area not in ("chat", "work") or not isinstance(project_id, str)
+                or (area == "chat" and project_id != "")
+                or (area == "work" and not re.fullmatch(r"[0-9a-f]{32}", project_id))):
+            raise ValueError("Área de conversación inválida")
+        record["area"], record["project_id"] = area, project_id
         messages = record.get("messages")
         if not isinstance(messages, list):
             raise ValueError("Mensajes del historial inválidos")
@@ -129,7 +136,7 @@ class HistoryStore:
         for path in self.root.glob("*.json"):
             try:
                 record = self.load(path.stem)
-                result.append({key: record[key] for key in ("chat_id", "title", "updated_at")})
+                result.append({key: record[key] for key in ("chat_id", "title", "updated_at", "area", "project_id")})
             except (OSError, ValueError, KeyError, TypeError):
                 self.invalid_files.append(path.name)
         return sorted(result, key=lambda entry: entry["updated_at"], reverse=True)

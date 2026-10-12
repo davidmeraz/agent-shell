@@ -18,6 +18,13 @@ QtObject {
     property string deletingChatId: ""
     readonly property bool shellEnabled: true
     property string workspace: ""
+    property string activeArea: "chat"
+    property string projectId: ""
+    property string projectName: ""
+    property bool areaBusy: false
+    property string areaError: ""
+    readonly property string areaKey: activeArea === "chat" ? "chat" : "work:" + projectId
+    readonly property bool workspaceSelected: activeArea === "chat" || !!projectId
     property int shellTimeout: 120
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
@@ -40,18 +47,21 @@ QtObject {
     readonly property var modelPerformance: Performance.models(performanceHistory)
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
+    readonly property ListModel projects: ListModel {}
     readonly property ListModel availableModels: ListModel {}
     readonly property ListModel registeredAccounts: ListModel {}
     property int activeAccountIndex: -1
-    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId
+    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId && !areaBusy
+    readonly property bool canSelectArea: ready && canBrowseHistory && !accountBusy
     readonly property bool canSend: ready && authenticated && availableModels.count > 0
-                                   && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId
+                                   && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy
-                                      && !openingChat && !deletingChatId
+                                      && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
     signal localCommandRequested(string command)
+    signal areaChanged(string previousKey, string currentKey)
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
@@ -115,6 +125,22 @@ QtObject {
 
     function newChat() {
         if (canBrowseHistory) sendCommand({ type: "chat.new" });
+    }
+
+    function selectArea(area, projectId) {
+        if (!canSelectArea) return;
+        areaBusy = true;
+        areaError = "";
+        const request = { type: "area.select", area: area };
+        if (projectId !== undefined) request.project_id = projectId;
+        sendCommand(request);
+    }
+
+    function createProject(name, workdir) {
+        if (!canSelectArea) return;
+        areaBusy = true;
+        areaError = "";
+        sendCommand({ type: "project.create", name: name, workdir: workdir });
     }
 
     function openChat(chatId) {
@@ -236,7 +262,23 @@ QtObject {
             return;
         }
         const data = event.data;
-        if (event.type === "shell.state") {
+        if (event.type === "area.state") {
+            const previousKey = areaKey;
+            activeArea = data.area;
+            projectId = data.project ? data.project.project_id : "";
+            projectName = data.project ? data.project.name : "";
+            areaBusy = false;
+            areaError = "";
+            if (previousKey !== areaKey) areaChanged(previousKey, areaKey);
+        } else if (event.type === "area.rejected") {
+            areaBusy = false;
+            areaError = data.message;
+            status = data.message;
+        } else if (event.type === "projects.list") {
+            projects.clear();
+            for (const project of data.projects)
+                projects.append({ projectId: project.project_id, name: project.name, workdir: project.workdir });
+        } else if (event.type === "shell.state") {
             workspace = data.workdir;
             shellTimeout = data.timeout_seconds;
             status = "Terminal disponible · ejecución automática.";
@@ -393,6 +435,7 @@ QtObject {
             messages.append({ author: "SISTEMA", body: data.message, turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
+            areaBusy = false;
             shellRunning = false;
             ready = false;
             authenticated = false;
@@ -416,6 +459,7 @@ QtObject {
         stdout: SplitParser { onRead: data => bridge.receive(data) }
         stderr: SplitParser { onRead: data => console.warn("Error del backend: " + data) }
         onExited: (exitCode, exitStatus) => {
+            bridge.areaBusy = false;
             bridge.ready = false;
             bridge.authenticated = false;
             bridge.busy = false;

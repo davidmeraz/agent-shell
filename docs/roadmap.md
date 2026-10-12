@@ -2,7 +2,8 @@
 
 La base actual conecta directamente con ChatGPT, con sesión propia, catálogo de
 modelos, historial local y shell siempre disponible con ejecución automática. Incluye comandos
-del chat y cambio entre cuentas guardadas; el usuario confirmó un inicio de
+del chat, cambio entre cuentas guardadas y áreas Chat / Work con proyectos locales,
+carpetas e historiales separados; el usuario confirmó un inicio de
 sesión real con una cuenta nueva.
 
 1. Ampliar la validación en el escritorio de renovación y conversación al cambiar

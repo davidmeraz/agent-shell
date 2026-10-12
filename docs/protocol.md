@@ -22,13 +22,16 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | Tipo | Campos | Acción |
 | --- | --- | --- |
 | `chat.send` | `prompt` | Solicitar respuesta con los mensajes locales |
+| `area.select` | `area: chat/work`, `project_id` opcional | Cambiar de área o proyecto y restaurar la conversación de la sesión |
+| `project.create` | `name`: 1–80 caracteres, `workdir` | Registrar una carpeta existente y abrir su proyecto en Work |
+| `projects.list` | Ninguno | Consultar los proyectos registrados sin contactar a OpenAI |
 | `chat.cancel` | Ninguno | Cerrar streaming o detener shell local; conservar el texto y la salida parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
 | `chat.open` | `chat_id` | Cargar conversación local |
 | `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
 | `shell.configure` | `workdir` | Validar y cambiar el directorio local, sólo fuera de un turno; la terminal permanece disponible |
 | `shell.execute` | `command`: entre 1 y 8000 caracteres, sin NUL | Ejecutar directamente en el directorio configurado, sin autenticación ni modelo |
-| `history.list` | Ninguno | Consultar conversaciones recientes |
+| `history.list` | Ninguno | Consultar conversaciones recientes del área o proyecto seleccionado |
 | `auth.login` | `new_account` booleano opcional, por defecto `false` | Reautorizar la cuenta seleccionada o registrar otra |
 | `auth.select` | `account_id` del registro guardado | Activar otra cuenta y actualizar modelos |
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
@@ -59,8 +62,11 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | --- | --- |
 | `backend.ready` | `provider: chatgpt`, `app_version` |
 | `backend.disconnected` | `message` |
+| `area.state` | `area: chat/work`, `project`: registro del proyecto seleccionado o `null` |
+| `area.rejected` | `message`: selección o registro rechazado; el área activa se conserva |
+| `projects.list` | `projects`: project_id, name, workdir, fechas y schema_version |
 | `history.ready` | `directory` absoluto |
-| `history.list` | `chats`: chat_id, title y updated_at |
+| `history.list` | `chats`: chat_id, title, updated_at, area y project_id |
 | `history.notice` | `message` de persistencia |
 | `auth.state` | `authenticated`, `method`, `email`, `plan`, `plan_enabled`, `accounts` |
 | `auth.login.started` | `url` OAuth, para abrir el navegador; nunca registrarla |
@@ -149,6 +155,31 @@ El protocolo v2 elimina `tool.decide`, `tool.approval` y `tool.approval.resolved
 `shell.configure` deja de permitir desactivar la herramienta y sólo configura
 el directorio. Backend e interfaz deben actualizarse juntos. El historial mantiene
 `schema_version: 1`, incluidos los resultados y estados de versiones anteriores.
+
+## Áreas y proyectos
+
+`area.select` con `area: work` y sin `project_id` restaura el último proyecto usado
+durante la sesión; si todavía no hay uno, abre la pantalla de proyectos. Un
+`project_id: ""` explícito abre esa pantalla. `area: chat` restaura la conversación
+general y su directorio inicial o configurado. Cada proyecto guarda en memoria su
+conversación abierta al salir; sus JSON permiten abrir las conversaciones después
+de reiniciar. Se rechaza el cambio o registro durante respuesta, ejecución, login
+o actualización de cuenta. Seleccionar una carpeta inexistente no modifica el estado.
+
+`project.create` valida el nombre y resuelve la carpeta existente; rechaza otra
+identidad para la misma carpeta. El registro se escribe privadamente y de forma
+atómica en `projects/`, dentro del directorio del historial, separado de los JSON
+de conversaciones y de las credenciales. No modifica los archivos del proyecto.
+`shell.configure` en Work actualiza también la carpeta persistida del proyecto;
+en Chat cambia sólo su directorio. Work sin proyecto no admite respuestas ni shell.
+
+Los registros de conversaciones añaden `area` y `project_id` al esquema 1. Los
+anteriores se interpretan como `area: chat, project_id: ""`. El historial se filtra
+por ambos campos; abrir o borrar un identificador de otra área se rechaza. El
+contexto enviado a OpenAI sigue procediendo exclusivamente de la conversación
+actual. Las métricas globales conservan su alcance de todos los chats. Estas son
+ampliaciones compatibles del protocolo v2: no se eliminan instrucciones ni eventos.
+
 En 0.3.0 cambian el proveedor de backend.ready y el significado de thread_id:
 identifica una conversación local y ya no un thread de Codex. Los cambios de
 opciones CLI se documentan en el README y en el historial de cambios.

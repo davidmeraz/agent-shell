@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.10.0] — 2026-10-11
+
+- Selector Chat | Work centrado arriba de la ventana; conversación general y trabajo sobre proyectos con el mismo diseño mate.
+- Proyectos de Work vinculados a carpetas locales, con nombre, selector de carpeta, acceso al explorador y registro privado y atómico; cada proyecto conserva sus conversaciones y comandos.
+- Historial y contexto separados por área y proyecto, restauración de la conversación y el borrador al cambiar durante la sesión, y conservación de los chats anteriores en Chat.
+- Directorio de terminal propio para Chat y cada proyecto; instrucciones de Work para inspeccionar, implementar y verificar cambios, con terminal disponible en ambas áreas y cambios bloqueados mientras hay operaciones en curso.
+- Ampliación compatible del protocolo v2 y del historial con esquema 1 para proyectos y áreas; pruebas de persistencia, aislamiento, cancelación y carpetas reales.
+- Validación con 132 pruebas del motor, revisión QML y cinco escenarios gráficos; creación de dos proyectos, borradores, historial separado y shell en cada carpeta con servicio HTTP local de prueba.
+
 ## [0.9.0] — 2026-10-11
 
 - Contexto junto a Enviar, con conteo exacto al pasar el cursor y acceso a los detalles; duración y velocidad permanecen bajo la respuesta, y la última medición se recupera al abrir el historial.

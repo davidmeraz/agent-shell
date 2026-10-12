@@ -13,6 +13,7 @@ GlassPanel {
     property bool compact: false
     property string statusText: bridge.status
     property bool commandsDismissed: false
+    property var drafts: ({})
     signal performanceRequested(var measurement)
     readonly property var contextMeasurement: bridge.latestPerformance
     readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
@@ -80,6 +81,16 @@ GlassPanel {
         prepare("/modelos ");
     }
 
+    Connections {
+        target: composer.bridge
+        function onAreaChanged(previousKey, currentKey) {
+            composer.drafts[previousKey] = prompt.text;
+            prompt.text = composer.drafts[currentKey] || "";
+            prompt.cursorPosition = prompt.length;
+            composer.commandsDismissed = false;
+        }
+    }
+
     ColumnLayout {
         id: editorLayout
         anchors.fill: parent
@@ -96,7 +107,9 @@ GlassPanel {
                 selectedTextColor: "#000000"
                 id: prompt
                 objectName: "chatPrompt"
-                placeholderText: composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
+                placeholderText: composer.bridge.activeArea === "work"
+                    ? "Describe lo que quieres construir o /shell comando…"
+                    : composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
                 placeholderTextColor: "#aaaaaa"
                 color: "#f5f5f5"
                 font.pixelSize: 14

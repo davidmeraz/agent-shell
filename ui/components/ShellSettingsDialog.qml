@@ -19,7 +19,7 @@ GlassDialog {
             color: "#cccccc"
             font.pixelSize: 12
         }
-        Text { text: "Directorio de trabajo"; color: "#ffffff"; font.pixelSize: 12 }
+        Text { text: dialog.bridge.activeArea === "work" ? "Carpeta del proyecto" : "Directorio de Chat"; color: "#ffffff"; font.pixelSize: 12 }
         GlassPanel {
             Layout.fillWidth: true
             implicitHeight: 76

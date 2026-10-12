@@ -3,8 +3,14 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.9.0`, con chat más compacto, Markdown y copia,
-barra lateral al acercar el puntero y contexto junto a Enviar. La terminal está
+La última versión etiquetada es `0.10.0`, con áreas Chat y Work seleccionadas
+desde el centro superior de la ventana. Work registra proyectos con carpetas
+locales, conversaciones y contextos separados; el cambio de espacio conserva
+la conversación abierta y el borrador durante la sesión. Los chats anteriores
+siguen disponibles en Chat. Son ampliaciones compatibles de NDJSON v2 y del
+historial con esquema 1, sin cambiar las etiquetas de versiones anteriores.
+Conserva el chat compacto, Markdown y copia, la barra lateral al acercar el
+puntero y el contexto junto a Enviar de `0.9.0`. La terminal está
 siempre disponible para la IA y ejecuta automáticamente; `/shell comando`
 ejecuta directamente sin IA ni sesión, con tarjetas de salida ampliables.
 Las métricas separan contexto de la última llamada, consumo acumulado y velocidad
