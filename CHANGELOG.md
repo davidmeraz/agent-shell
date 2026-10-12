@@ -3,6 +3,13 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.11.1] — 2026-10-11
+
+- Corrección de la reapertura del explorador y los dos visores tras cerrar desde el compositor: sincronización de la intención de visibilidad, limpieza de solicitudes pendientes y regresión gráfica de cierre nativo y nueva lectura.
+- Disposición inicial del explorador según la captura de referencia: carpetas arriba a la izquierda, visor 1 alto a la derecha y visor 2 abajo a la izquierda, con tamaños y posiciones adaptados al área útil del monitor y restaurados al reabrir.
+- Compatibilidad de la colocación automática con los dispatchers Lua de Hyprland 0.55+; conservación de las órdenes anteriores y selección aislada por proceso y dirección de ventana.
+- Verificación con 159 pruebas, revisión QML, siete escenarios de interfaz y apertura, cierre nativo y reapertura de las tres ventanas en Hyprland, comprobando también sus tamaños y coordenadas reales.
+
 ## [0.11.0] — 2026-10-11
 
 - Imágenes mediante Ctrl+V en Chat y Work, con miniatura discreta, botón para quitar, envío con o sin texto y recuperación desde el historial; adjuntos del borrador por área y descarte de respuestas tardías del portapapeles.

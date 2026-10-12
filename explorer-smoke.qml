@@ -134,13 +134,40 @@ ShellRoot {
                 if (scenario.explorer.firstFileWindow.preview !== "cuarto") return;
                 if (!scenario.check(scenario.explorer.secondFileWindow.preview === "independiente",
                     "las respuestas de texto se mezclan")) return;
-                agent.selectArea("chat");
+                // closed() llega desde el compositor; es distinto de asignar visible=false.
+                scenario.explorer.refresh();
+                for (const viewer of scenario.explorer.fileWindows) viewer.refresh();
+                scenario.explorer.closed();
+                for (const viewer of scenario.explorer.fileWindows) viewer.closed();
+                if (!scenario.check(!scenario.explorer.visible && !Object.keys(scenario.explorer.pending).length
+                    && scenario.explorer.fileWindows.every(viewer => !viewer.visible && !viewer.pendingId),
+                    "cierre nativo conserva visibilidad o lecturas pendientes")) return;
                 scenario.stage = 16;
             } else if (scenario.stage === 16) {
+                inspector.mouseClick(inspector.findChild(chat, "workExplorerButton"));
+                if (!scenario.check(scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer => !viewer.visible),
+                    "el explorador no reabre independientemente tras cierre nativo")) return;
+                scenario.stage = 17;
+            } else if (scenario.stage === 17) {
+                if (!scenario.row("src")) return;
+                scenario.explorer.select(scenario.row("src"));
+                scenario.stage = 18;
+            } else if (scenario.stage === 18) {
+                if (!scenario.row("src/fourth.txt") || !scenario.row("src/renamed.txt")) return;
+                scenario.explorer.select(scenario.row("src/fourth.txt"));
+                scenario.explorer.select(scenario.row("src/renamed.txt"));
+                scenario.stage = 19;
+            } else if (scenario.stage === 19) {
+                const windows = scenario.explorer.fileWindows;
+                if (windows[0].preview !== "cuarto" || windows[1].preview !== "independiente") return;
+                if (!scenario.check(windows.every(viewer => viewer.visible), "los visores no reabren tras cierre nativo")) return;
+                agent.selectArea("chat");
+                scenario.stage = 20;
+            } else if (scenario.stage === 20) {
                 if (agent.areaBusy || agent.activeArea !== "chat") return;
                 if (!scenario.check(!scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer =>
                     !viewer.visible && !viewer.filePath && !viewer.preview), "cambio de área conserva ventana o texto")) return;
-                console.log("EXPLORER_OK: dos visores, límite, reutilización, ventanas separadas, vidrio mate, carpetas, texto, cambios, cierres independientes y limpieza por área");
+                console.log("EXPLORER_OK: dos visores, límite, reutilización, ventanas separadas, vidrio mate, carpetas, texto, cambios, cierre nativo, reapertura y limpieza por área");
                 steps.stop(); Qt.callLater(Qt.quit);
             }
         }

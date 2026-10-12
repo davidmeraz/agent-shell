@@ -4,8 +4,8 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.11.0.** No requiere Codex CLI ni App Server.
-Las etiquetas locales `v0.1.0` a `v0.10.0` conservan las versiones anteriores.
+**Versión: 0.11.1.** No requiere Codex CLI ni App Server.
+Las etiquetas locales `v0.1.0` a `v0.11.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -78,11 +78,14 @@ los que estás leyendo. Todas las ventanas tienen fondo de vidrio mate translúc
 desenfoque nativo en compositores compatibles.
 
 En Hyprland, al abrirlos se colocan como en la distribución de referencia:
-**visor 1 abajo a la izquierda** (30 % del ancho y 48 % del alto útil) y
-**visor 2 a la derecha** (30 % del ancho y 95 % del alto útil). La posición y
+**carpetas arriba a la izquierda**, **visor 1 alto a la derecha** y
+**visor 2 abajo a la izquierda**. En un monitor de 2560 × 1440 con área útil
+de 2540 × 1370, las medidas son 553 × 640, 781 × 1334 y 857 × 662,
+respectivamente. La posición y
 el tamaño se adaptan al monitor de la ventana y respetan las zonas reservadas
-por barras. Al cerrar y reabrir un visor se recupera esa disposición; seleccionar
+por barras. Al cerrar y reabrir una ventana se recupera esa disposición; seleccionar
 un archivo ya abierto no lo mueve. No se modifica la configuración de Hyprland.
+Se admiten los dispatchers Lua de Hyprland 0.55+ y las órdenes anteriores.
 En otros compositores, la posición inicial la decide el gestor de ventanas.
 
 Puedes mover, redimensionar y cerrar cada ventana por separado. Cerrar el árbol

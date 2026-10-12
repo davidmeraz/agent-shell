@@ -13,11 +13,13 @@ FloatingWindow {
     required property int viewerId
     objectName: "projectFileWindow"
     title: "Visor " + viewerId + " · " + (filePath || bridge.projectName)
-    implicitWidth: 760
-    implicitHeight: 650
+    implicitWidth: viewerId === 1 ? 781 : 857
+    implicitHeight: viewerId === 1 ? 1334 : 662
     minimumSize: Qt.size(420, 320)
     color: "transparent"
     visible: false
+    // Permite reabrir tras cerrar con el atajo del compositor o la decoración.
+    onClosed: viewer.visible = false
     BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     property string filePath: ""
     property string preview: ""

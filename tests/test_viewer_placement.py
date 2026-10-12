@@ -13,17 +13,18 @@ spec.loader.exec_module(placement)
 class ViewerPlacementTests(unittest.TestCase):
     def monitor(self, **values):
         return dict(id=0, x=0, y=0, width=2560, height=1440, scale=1,
-                    reserved=[0, 60, 0, 0], **values)
+                    reserved=[10, 60, 10, 10], **values)
 
     def test_reference_layout(self):
         monitor = self.monitor()
-        self.assertEqual(placement.geometry(monitor, 1), (64, 757, 768, 662))
-        self.assertEqual(placement.geometry(monitor, 2), (1728, 94, 768, 1311))
+        self.assertEqual(placement.geometry(monitor, 0), (164, 85, 553, 640))
+        self.assertEqual(placement.geometry(monitor, 1), (1750, 78, 781, 1334))
+        self.assertEqual(placement.geometry(monitor, 2), (29, 747, 857, 662))
 
     def test_scale_offset_and_reserved_edges(self):
         monitor = dict(id=1, x=-1280, y=100, width=2560, height=1440, scale=2,
                        reserved=[10, 30, 20, 10])
-        for viewer in (1, 2):
+        for viewer in (0, 1, 2):
             x, y, w, h = placement.geometry(monitor, viewer)
             self.assertGreaterEqual(x, -1270)
             self.assertGreaterEqual(y, 130)
@@ -34,7 +35,7 @@ class ViewerPlacementTests(unittest.TestCase):
         small = dict(x=0, y=0, width=400, height=300, scale=1, reserved=[0, 0, 0, 0])
         self.assertEqual(placement.geometry(small, 1), (0, 0, 400, 300))
         rotated = dict(small, width=1440, height=2560, transform=1)
-        self.assertEqual(placement.geometry(rotated, 2), (1728, 36, 768, 1368))
+        self.assertEqual(placement.geometry(rotated, 1), (1754, 19, 787, 1402))
 
     @patch.object(placement, "hyprctl")
     def test_targets_only_own_process_and_title(self, ctl):
@@ -43,12 +44,12 @@ class ViewerPlacementTests(unittest.TestCase):
             dict(pid=999, title="Visor 1", address="0xdead", monitor=0),
             dict(pid=123, title="Visor 2", address="0xbeef", monitor=0),
             dict(pid=123, title="Visor 1", address="0xcafe", monitor=0),
-        ]), json.dumps([self.monitor()]), "ok\nok\nok\n"]
+        ]), json.dumps([self.monitor()]), '{"version":"0.54.3"}', "ok\nok\nok\n"]
         self.assertTrue(placement.place(123, "Visor 1", 1))
         batch = ctl.call_args.args[1]
         self.assertIn("setfloating address:0xcafe", batch)
-        self.assertIn("resizewindowpixel exact 768 662,address:0xcafe", batch)
-        self.assertIn("movewindowpixel exact 64 757,address:0xcafe", batch)
+        self.assertIn("resizewindowpixel exact 781 1334,address:0xcafe", batch)
+        self.assertIn("movewindowpixel exact 1750 78,address:0xcafe", batch)
         self.assertNotIn("dead", batch)
         self.assertNotIn("beef", batch)
 
@@ -64,6 +65,29 @@ class ViewerPlacementTests(unittest.TestCase):
         import json
         ctl.side_effect = ["[]", json.dumps([
             dict(pid=123, title="Visor 1", address="0xcafe", monitor=0)
-        ]), json.dumps([self.monitor()]), "ok\nok\nok\n"]
+        ]), json.dumps([self.monitor()]), '{"version":"0.54.3"}', "ok\nok\nok\n"]
         self.assertTrue(placement.place(123, "Visor 1", 1))
         sleep.assert_called_once_with(.1)
+
+    @patch.object(placement, "hyprctl")
+    def test_lua_dispatchers_for_current_hyprland_and_folder_window(self, ctl):
+        import json
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Explorador", address="0xcafe", monitor=0)
+        ]), json.dumps([self.monitor()]), '{"version":"0.56.2"}', "ok\n"]
+        self.assertTrue(placement.place(123, "Explorador", 0))
+        command, code = ctl.call_args.args
+        self.assertEqual(command, "eval")
+        self.assertIn('float({action="enable", window="address:0xcafe"})', code)
+        self.assertIn('resize({x=553, y=640, relative=false, window="address:0xcafe"})', code)
+        self.assertIn('move({x=164, y=85, relative=false, window="address:0xcafe"})', code)
+
+    @patch.object(placement, "hyprctl")
+    def test_invalid_address_cannot_enter_lua_or_dispatcher(self, ctl):
+        import json
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Explorador", address='0xcafe;exit', monitor=0)
+        ]), json.dumps([self.monitor()])]
+        with self.assertRaises(ValueError):
+            placement.place(123, "Explorador", 0)
+        self.assertEqual(ctl.call_count, 2)

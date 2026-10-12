@@ -156,9 +156,19 @@ En `0.7.0`, la integración de shell también se comprobó con la sesión real: 
 `pwd`, ejecución aprobada en una carpeta temporal y respuesta basada en su salida,
 seguida de continuación desde ese contexto con la terminal desactivada.
 
-La posición inicial de los dos visores en Hyprland se aplica con
+La posición inicial del árbol y los dos visores en Hyprland se aplica con
 `scripts/place-text-viewer.py`: espera acotada al mapeo, selección por PID y título
-y operaciones por dirección de ventana. El visor 1 queda abajo a la izquierda
-y el 2 alto a la derecha, en coordenadas lógicas del monitor y descontando las
+y operaciones por dirección de ventana. Las carpetas quedan arriba a la izquierda,
+el visor 1 alto a la derecha y el 2 abajo a la izquierda, en coordenadas lógicas
+del monitor y descontando las
 zonas reservadas. Sólo actúa en la apertura; no instala reglas globales ni impide
-mover o redimensionar las ventanas. Otros compositores deciden la posición.
+mover o redimensionar las ventanas. Detecta la versión para usar dispatchers Lua
+desde Hyprland 0.55 o las órdenes anteriores, siguiendo los
+[dispatchers documentados](https://wiki.hypr.land/0.56.0/Configuring/Basics/Dispatchers/).
+Otros compositores deciden la posición.
+
+El árbol y los visores manejan la señal
+[`closed()` de QsWindow](https://quickshell.org/docs/v0.3.0/types/Quickshell/QsWindow/#sig.closed)
+asignando `visible = false`. Esto sincroniza la intención interna de apertura
+tras un cierre del compositor, cancela las lecturas pendientes y permite volver
+a mostrar la misma ventana; cerrar con el botón de la aplicación también la oculta.

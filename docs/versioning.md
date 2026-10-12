@@ -3,7 +3,13 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.11.0`, con imágenes mediante Ctrl+V en Chat y
+La última versión etiquetada es `0.11.1`: corrige la reapertura del explorador y
+los dos visores tras cerrar desde el compositor, y la colocación automática en
+Hyprland con dispatchers Lua. Restaura los tamaños y posiciones de referencia al
+abrir: carpetas arriba a la izquierda, visor 1 a la derecha y visor 2 abajo a la
+izquierda. Incrementa PARCHE al corregir errores compatibles, sin cambiar el
+protocolo ni el historial.
+Conserva las funciones de `0.11.0`, con imágenes mediante Ctrl+V en Chat y
 Work, miniatura, envío con o sin texto y conservación en el historial. Admite una
 imagen PNG/JPEG/WebP de hasta 4 MiB y 16 megapíxeles por mensaje. Work incorpora
 un explorador de carpetas y hasta dos visores de texto independientes, con lectura

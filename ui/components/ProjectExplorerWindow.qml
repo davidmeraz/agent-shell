@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import ".."
 
@@ -11,12 +12,14 @@ FloatingWindow {
     required property AgentBridge bridge
     objectName: "projectExplorerWindow"
     title: "Explorador · " + bridge.projectName
-    implicitWidth: 420
-    implicitHeight: 650
+    implicitWidth: 553
+    implicitHeight: 640
     minimumSize: Qt.size(320, 400)
     color: "transparent"
     BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     visible: false
+    // El cierre nativo debe actualizar también la intención de visibilidad de Qt.
+    onClosed: explorer.visible = false
     property var folders: ({})
     property var expanded: ({ "": true })
     property var rows: []
@@ -86,7 +89,24 @@ FloatingWindow {
             openFile(row.path);
         }
     }
-    onVisibleChanged: { if (visible) reset(); else pending = ({}); }
+    onVisibleChanged: {
+        if (visible) {
+            reset();
+            if (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
+                placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
+                    Quickshell.shellDir + "/scripts/place-text-viewer.py",
+                    String(Quickshell.processId), title, "0"];
+                placement.running = true;
+            }
+        } else {
+            pending = ({});
+            placement.running = false;
+        }
+    }
+    Process {
+        id: placement
+        stderr: SplitParser { onRead: data => console.warn("Posición del explorador: " + data) }
+    }
     Connections {
         target: explorer.bridge
         function onAreaChanged() { explorer.visible = false; explorer.reset(); }
