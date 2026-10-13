@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.14.1] — 2026-10-13
+
+- Pruebas QML agrupadas en `tests/ui/` y guía de integración de terminal en `docs/`, con imports, scripts de comprobación y documentación actualizados.
+- Interfaz agrupada por áreas en `ui/components/` y módulos JavaScript reunidos en `ui/js/`, con imports y documentación actualizados.
+- Backend organizado en paquetes de cuenta, chat, núcleo, herramientas y Work, con imports, dobles de prueba y lectura de versión adaptados.
+- Documentación agrupada por proyecto, diseño técnico y guías, con índice central y enlaces relativos actualizados.
+- Pruebas Python agrupadas por área en `tests/backend/`, escenarios de interfaz en `tests/ui/` y dobles y ayudantes compartidos en `tests/support/`; descubrimiento por paquetes y rutas de prueba centralizadas.
+- Verificación con 230 pruebas Python, revisión QML, 12 escenarios de interfaz y 33 enlaces internos; conserva NDJSON v2 y el esquema 1 del historial.
+
 ## [0.14.0] — 2026-10-12
 
 - Uso del plan abierto al iniciar, con consulta automática al estar disponible la cuenta; explorador y visores conservados y actualizados entre Work y Chat, contexto de proyecto independiente, retorno sin perder carpetas/archivos e invalidación al cambiar o eliminar el proyecto.
@@ -186,4 +195,4 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 - Presentación de texto sin editor, terminal ni herramientas de trabajo sobre proyectos.
 - Las ventanas para observar el trabajo del agente pertenecen a una etapa posterior.
 
-[0.1.0]: docs/versioning.md
+[0.1.0]: docs/project/versioning.md

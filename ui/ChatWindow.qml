@@ -5,8 +5,12 @@ import QtQuick.Layouts
 import QtQuick.Window
 import Quickshell
 import Quickshell.Wayland
-import "components"
-import "Performance.js" as Performance
+import "js/Performance.js" as Performance
+import "components/chat"
+import "components/dialogs"
+import "components/shared"
+import "components/windows"
+import "components/work"
 
 // Cliente de conversación: cuenta, texto progresivo y controles de turno.
 FloatingWindow {

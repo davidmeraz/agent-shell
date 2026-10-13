@@ -1,8 +1,8 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "Performance.js" as Performance
-import "ChatCommands.js" as ChatCommands
+import "js/Performance.js" as Performance
+import "js/ChatCommands.js" as ChatCommands
 
 // Estado del chat. Python administra la sesión y el streaming directo con ChatGPT.
 QtObject {

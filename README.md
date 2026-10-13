@@ -4,9 +4,9 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.14.0.** El chat y la terminal no requieren Codex. Consultar cuotas
+**Versión: 0.14.1.** El chat y la terminal no requieren Codex. Consultar cuotas
 desde la aplicación requiere Codex CLI, como dependencia opcional.
-Las etiquetas locales `v0.1.0` a `v0.12.0` conservan las versiones anteriores.
+Las etiquetas locales `v0.1.0` a `v0.14.0` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -355,7 +355,7 @@ consumo acumulado de entrada, salida, razonamiento y caché.
 filtrar por modelo y comparar medianas y p95, con fallos y cancelaciones aparte.
 Las mediciones quedan guardadas junto al historial y se recuperan al reiniciar.
 Los tiempos de red incluyen el servicio y los de presentación son aproximados.
-Consulta [definiciones y límites de las métricas](docs/performance.md).
+Consulta [definiciones y límites de las métricas](docs/guides/performance.md).
 
 ## Sesión independiente
 
@@ -415,7 +415,7 @@ Cada envío usa un proceso independiente: `cd` no cambia el directorio de envío
 posteriores. Usa `/terminal` para cambiarlo o combina, por ejemplo,
 `/shell cd carpeta && pwd`.
 
-Consulta [diseño, permisos y límites de la integración](docs/terminal.md).
+Consulta [diseño, permisos y límites de la integración](docs/guides/terminal.md).
 
 ## Historial y contexto
 
@@ -465,47 +465,58 @@ explícita; el lanzamiento normal usa `backend/main.py` y el servicio real.
 .venv/bin/python backend/main.py --version
 ```
 
+Las pruebas Python del backend están en `tests/backend/`, agrupadas por cuenta,
+chat, núcleo, herramientas y Work. `tests/ui/` reúne los escenarios QML y la
+disposición de ventanas; `tests/support/` contiene los servicios locales y
+ayudantes compartidos. El descubrimiento usa paquetes para conservar nombres
+de módulo únicos y las rutas del proyecto se resuelven desde un solo lugar.
+Para ejecutar una parte, por ejemplo autenticación:
+
+```bash
+.venv/bin/python -m unittest tests.backend.account.test_auth -v
+```
+
 Las pruebas de OAuth usan JWT firmados con claves de prueba. La integración HTTP
 usa un servidor loopback de prueba y el cliente de streaming real. La integración
 Qt offscreen comprueba cuenta, modelos, streaming, cancelación, historial,
 presentación del primer texto, rendimiento, borrado y el ciclo de shell con
 ejecución automática real de `pwd` en una carpeta temporal y recuperación.
-El escenario `commands-smoke.qml` comprueba los siete comandos, sugerencias
+El escenario `tests/ui/commands-smoke.qml` comprueba los siete comandos, sugerencias
 compactas, activación al completar `/modelos`, filtros, teclado y ratón,
-validación y borradores sin sesión. `conversation-smoke.qml` comprueba Markdown,
+validación y borradores sin sesión. `tests/ui/conversation-smoke.qml` comprueba Markdown,
 copia, métricas y desplazamiento sin saltos, con las barras ocultas.
-`shell-command-smoke.qml` verifica `/shell` desde el editor sin sesión: completado,
-salida real, argumentos, errores, cancelación e historial. `workspaces-smoke.qml`
+`tests/ui/shell-command-smoke.qml` verifica `/shell` desde el editor sin sesión: completado,
+salida real, argumentos, errores, cancelación e historial. `tests/ui/workspaces-smoke.qml`
 comprueba el selector centrado, registro y validación de proyectos, conversaciones
 y borradores separados, ejecución de shell en las carpetas de dos proyectos,
 cancelación y confirmación del borrado, y limpieza sin afectar otros espacios.
 Las comprobaciones
 de comandos requieren el módulo QML QtTest, usado sólo en las pruebas.
-`images-smoke.qml` comprueba Ctrl+V, miniaturas, envío con o sin texto,
+`tests/ui/images-smoke.qml` comprueba Ctrl+V, miniaturas, envío con o sin texto,
 historial, cambio de modelo y adjuntos del borrador entre áreas. Usa un PNG
-de prueba y un lector inyectado sólo en `tests/fake_backend.py`; no toca el
+de prueba y un lector inyectado sólo en `tests/support/fake_backend.py`; no toca el
 portapapeles del usuario. Las pruebas unitarias comprueban por separado los
 lectores Wayland/X11, límites binarios y formato multimodal.
-`usage-smoke.qml` comprueba apertura y consulta automática al iniciar, tarjeta flotante compacta de cuotas, ausencia de
+`tests/ui/usage-smoke.qml` comprueba apertura y consulta automática al iniciar, tarjeta flotante compacta de cuotas, ausencia de
 controles/datos secundarios, barras finas, F5, chat simultáneo, cambio
 Chat/Work, cierre por Esc/compositor, sondeo visible, consulta y actualización RPC,
 datos desconocidos, reapertura, cambio de cuenta y recuperación. Usa el adaptador
-real con `tests/fake_codex.py` como proceso aislado; no ejecuta Codex instalado,
+real con `tests/support/fake_codex.py` como proceso aislado; no ejecuta Codex instalado,
 no lee sus credenciales y no contacta a servicios externos. Las pruebas unitarias
 comprueban límites de lectura, plazos, errores, aislamiento y limpieza del proceso.
-`models-smoke.qml` comprueba familias, esfuerzos compatibles, Auto, navegación
+`tests/ui/models-smoke.qml` comprueba familias, esfuerzos compatibles, Auto, navegación
 con teclado/clic, editor estable, borradores y restauración por conversación,
 con catálogo y HTTP locales. Las pruebas de backend verifican el parámetro
 real enviado, continuidad de herramientas, persistencia e inicio de Work.
 
-`project-run-smoke.qml` comprueba Ejecutar/Detener con detección por HTTP local, reutilización del inicio sin IA y
+`tests/ui/project-run-smoke.qml` comprueba Ejecutar/Detener con detección por HTTP local, reutilización del inicio sin IA y
 un proceso real: tarea sin mensajes ni historial, borrador conservado, chat
 simultáneo, repetición y cambios Chat/Work. Las pruebas unitarias también ejercitan
 fallos, cancelación de preparación, aislamiento y terminación de descendientes.
-`activity-smoke.qml` comprueba herramientas de IA por HTTP con comandos reales:
+`tests/ui/activity-smoke.qml` comprueba herramientas de IA por HTTP con comandos reales:
 apertura automática, carpetas, escritura por partes, animación, rotación de visores,
 renombrado, eliminación, reapertura, cancelación y aislamiento entre áreas.
-`writing-smoke.qml` comprueba un guardado atómico real por shell y su presentación
+`tests/ui/writing-smoke.qml` comprueba un guardado atómico real por shell y su presentación
 progresiva, además de Unicode, actualizaciones sucesivas, partes intactas,
 cancelación, vistas de 128 KiB, seguimiento y reapertura.
 Las pruebas automáticas no abren OAuth real ni consumen una cuenta. El usuario
@@ -516,32 +527,34 @@ y el evento `response.completed` de OpenAI.
 ## Estructura
 
 ```text
-shell.qml                    Ventana principal
-ui/AgentBridge.qml           Estado y contrato de eventos
-ui/ChatWindow.qml            Áreas Chat / Work, cuenta, modelos e historial
-ui/components/ChatSidebar.qml Navegación y chats recientes
-ui/components/ConversationPane.qml Mensajes y bienvenida
-ui/components/MessageComposer.qml Editor, modelo y envío
-ui/ChatCommands.js           Catálogo y validación de comandos locales
-ui/components/CommandHelpDialog.qml Ayuda de comandos del chat
-backend/main.py              Entrada del backend
-backend/harness/auth.py      OAuth, identidad y sesión propia
-backend/harness/http.py      HTTP y streaming SSE cancelable
-backend/harness/chatgpt.py   Modelos e inferencia con tu plan
-backend/harness/server.py    Traducción a eventos Qt y contexto local
-backend/harness/history.py   Historial atómico compatible con 0.2.0
-backend/harness/performance.py Tiempos y conteos por turno
-backend/harness/shell.py      Validación, ejecución local y cancelación de procesos
-backend/harness/context.py    Contexto de Responses y recuperación de llamadas
-ui/Performance.js            Formato y comparación de mediciones
-tests/                       OAuth, HTTP y procesos de prueba
-scripts/                     Instalación, ejecución y comprobaciones
+shell.qml                       Ventana principal
+ui/AgentBridge.qml              Estado y contrato de eventos
+ui/ChatWindow.qml               Áreas Chat / Work, cuenta, modelos e historial
+ui/components/chat/             Conversación, mensajes y respuestas
+ui/components/work/             Proyectos y navegación Work
+ui/components/windows/          Ventanas auxiliares de Work
+ui/components/dialogs/          Diálogos de comandos y configuración
+ui/components/shared/           Paneles, botones y elementos visuales comunes
+ui/js/                          Lógica JavaScript de la interfaz
+backend/main.py                 Entrada del backend
+backend/harness/account/        Autenticación y cuotas del plan
+backend/harness/chat/           Cliente, modelos, contexto e historial del chat
+backend/harness/core/           Servidor, HTTP, eventos y versión
+backend/harness/tools/          Terminal y portapapeles
+backend/harness/work/           Proyectos, archivos y ejecución de programas
+tests/backend/                  Pruebas Python por área del backend
+tests/ui/                       Escenarios QML y disposición de ventanas
+tests/support/                  Servicios, procesos y ayudantes de prueba
+docs/README.md                  Índice de documentación
+docs/project/                   Visión, próximos pasos y versiones
+docs/technical/                 Arquitectura y protocolo
+docs/guides/                    Terminal, rendimiento y referencia LLM
+scripts/                        Instalación, ejecución y comprobaciones
 ```
 
-Consulta [arquitectura](docs/architecture.md), [protocolo](docs/protocol.md),
-[visión](docs/vision.md), [próximos pasos](docs/roadmap.md),
-[versiones](docs/versioning.md), [historial de cambios](CHANGELOG.md) y
-[contribución](CONTRIBUTING.md).
+Consulta el [índice de documentación](docs/README.md), [arquitectura](docs/technical/architecture.md), [protocolo](docs/technical/protocol.md),
+[visión](docs/project/vision.md), [próximos pasos](docs/project/roadmap.md),
+[versiones](docs/project/versioning.md) e [historial de cambios](CHANGELOG.md).
 
 Referencias oficiales: [registro e inicio de sesión](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
 [cuentas y renovación](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)

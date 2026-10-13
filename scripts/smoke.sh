@@ -4,6 +4,12 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 smoke_runtime="$(mktemp -d /tmp/agent-shell-smoke.XXXXXX)"
 trap 'rm -rf -- "$smoke_runtime"' EXIT
+# Quickshell sólo registra componentes dentro de la raíz de su configuración.
+# La copia temporal permite probar tests/ui/ junto a ui/ sin archivos en la raíz
+# del repositorio ni cambios en los componentes durante la ejecución.
+smoke_config_root="$smoke_runtime/config"
+mkdir -p "$smoke_config_root"
+cp -R "$project_root/ui" "$smoke_config_root/ui"
 for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-smoke.qml shell-command-smoke.qml workspaces-smoke.qml explorer-smoke.qml images-smoke.qml activity-smoke.qml writing-smoke.qml usage-smoke.qml project-run-smoke.qml; do
     smoke_marker=SMOKE_OK
     if [[ "$smoke_config" == commands-smoke.qml ]]; then smoke_marker=COMMANDS_OK; fi
@@ -26,16 +32,18 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
     if [[ "$smoke_config" == project-run-smoke.qml ]]; then smoke_project_run=1; fi
     smoke_run="$smoke_runtime/${smoke_config%.qml}"
     mkdir -p "$smoke_run"
+    sed 's|^import "../../ui|import "ui|' "$project_root/tests/ui/$smoke_config" \
+        > "$smoke_config_root/$smoke_config"
     env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen \
         AGENT_SHELL_PYTHON="${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}" \
-        AGENT_SHELL_BACKEND_ENTRY="$project_root/tests/fake_backend.py" \
+        AGENT_SHELL_BACKEND_ENTRY="$project_root/tests/support/fake_backend.py" \
         AGENT_SHELL_HISTORY_DIR="$smoke_run/chats" \
         AGENT_SHELL_TEST_CLIPBOARD="$smoke_clipboard" \
         AGENT_SHELL_TEST_ACTIVITY="$smoke_activity" \
         AGENT_SHELL_TEST_WRITING="$smoke_writing" \
         AGENT_SHELL_TEST_PROJECT_RUN="$smoke_project_run" \
         AGENT_SHELL_TEST_MODELS="$smoke_models" \
-        timeout --kill-after=2s 12s qs --path "$project_root/$smoke_config" > "$smoke_run/output.log" 2>&1 || {
+        timeout --kill-after=2s 12s qs --path "$smoke_config_root/$smoke_config" > "$smoke_run/output.log" 2>&1 || {
         cat "$smoke_run/output.log"
         exit 1
     }
