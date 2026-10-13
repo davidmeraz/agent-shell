@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import ".."
 
@@ -11,12 +12,13 @@ FloatingWindow {
     id: usage
     objectName: "accountUsageWindow"
     required property AgentBridge bridge
+    property string mainWindowTitle: ""
     title: "Agent Shell · Uso del plan"
     implicitWidth: 320
     implicitHeight: Math.max(140, Math.min(420, stats.implicitHeight + 32))
     // La altura sigue las cuotas incluso si llegan después de abrir en Wayland.
     minimumSize: Qt.size(260, implicitHeight)
-    maximumSize: Qt.size(1000, implicitHeight)
+    maximumSize: Qt.size(16777215, implicitHeight)
     color: "transparent"
     visible: false
     onClosed: usage.visible = false
@@ -29,7 +31,7 @@ FloatingWindow {
         visible = true;
         if (alreadyVisible) bridge.refreshUsage();
         Qt.callLater(function() {
-            if (!usage.visible) return;
+            if (!usage.visible || usage.bridge.activeArea === "work") return;
             content.forceActiveFocus();
             content.Window.window.requestActivate();
         });
@@ -37,6 +39,45 @@ FloatingWindow {
     function close() { visible = false; }
     onVisibleChanged: {
         if (visible) { nowMs = Date.now(); bridge.refreshUsage(); }
+        schedulePlacement();
+        if (!visible) { placementDelay.stop(); placement.running = false; }
+    }
+    // En Work comparte columna con el chat; en Chat conserva la tarjeta libre.
+    function schedulePlacement() {
+        if (visible && bridge.activeArea === "work" && mainWindowTitle
+            && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen")
+            placementDelay.restart();
+    }
+    onImplicitHeightChanged: schedulePlacement()
+    function refreshWhenAvailable() {
+        if (visible && bridge.ready && bridge.authenticated && !hasData
+            && !bridge.accountBusy && !bridge.loginBusy && !bridge.usageBusy)
+            bridge.refreshUsage();
+    }
+    Connections {
+        target: usage.bridge
+        function onAreaChanged() { usage.schedulePlacement(); }
+        function onReadyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
+        function onLoginBusyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
+        function onEventReceived(event) {
+            if (event.type === "auth.refresh.finished") usage.refreshWhenAvailable();
+        }
+    }
+    Timer {
+        id: placementDelay
+        interval: 120
+        onTriggered: {
+            if (!usage.visible || usage.bridge.activeArea !== "work") return;
+            placement.running = false;
+            placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
+                Quickshell.shellDir + "/scripts/place-text-viewer.py",
+                String(Quickshell.processId), usage.title, "4", usage.mainWindowTitle];
+            placement.running = true;
+        }
+    }
+    Process {
+        id: placement
+        stderr: SplitParser { onRead: data => console.warn("Posición del uso: " + data) }
     }
 
     Timer {

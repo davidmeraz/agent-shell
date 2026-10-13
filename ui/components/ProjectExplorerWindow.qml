@@ -10,10 +10,15 @@ import ".."
 FloatingWindow {
     id: explorer
     required property AgentBridge bridge
+    property string mainWindowTitle: ""
+    property var project: ({})
+    readonly property string projectId: project.project_id || ""
+    readonly property string projectName: project.name || ""
+    readonly property string projectWorkdir: project.workdir || ""
     objectName: "projectExplorerWindow"
-    title: "Explorador · " + bridge.projectName
-    implicitWidth: 553
-    implicitHeight: 640
+    title: "Explorador · " + projectName
+    implicitWidth: 820
+    implicitHeight: 655
     minimumSize: Qt.size(320, 400)
     color: "transparent"
     BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
@@ -26,8 +31,14 @@ FloatingWindow {
     readonly property ListModel treeEntries: ListModel {}
     property var pending: ({})
     property int serial: 0
-    readonly property ProjectFileWindow firstFileWindow: ProjectFileWindow { bridge: explorer.bridge; viewerId: 1 }
-    readonly property ProjectFileWindow secondFileWindow: ProjectFileWindow { bridge: explorer.bridge; viewerId: 2 }
+    readonly property ProjectFileWindow firstFileWindow: ProjectFileWindow {
+        bridge: explorer.bridge; viewerId: 1; mainWindowTitle: explorer.mainWindowTitle
+        projectId: explorer.projectId; projectName: explorer.projectName
+    }
+    readonly property ProjectFileWindow secondFileWindow: ProjectFileWindow {
+        bridge: explorer.bridge; viewerId: 2; mainWindowTitle: explorer.mainWindowTitle
+        projectId: explorer.projectId; projectName: explorer.projectName
+    }
     readonly property var fileWindows: [firstFileWindow, secondFileWindow]
     property var activeFileWindow: firstFileWindow
     readonly property var openPaths: [firstFileWindow, secondFileWindow]
@@ -44,6 +55,18 @@ FloatingWindow {
     property var activityRevisions: ({})
     property int changeRevision: 0
     property var refreshAfter: ({})
+
+    function setProject(next) {
+        const changed = projectId !== (next.project_id || "") || projectWorkdir !== (next.workdir || "");
+        if (changed) {
+            clearActivity();
+            for (const viewer of fileWindows) viewer.clear();
+        }
+        project = next;
+        if (!projectId) visible = false;
+        if (changed) reset();
+        else if (visible) refresh();
+    }
 
     function reset() {
         folders = ({}); expanded = ({ "": true }); rows = []; pending = ({}); refreshAfter = ({});
@@ -103,12 +126,12 @@ FloatingWindow {
         else request("list", path);
     }
     function request(kind, path) {
-        if (!visible || !bridge.ready || bridge.activeArea !== "work" || !bridge.projectId) return;
+        if (!visible || !bridge.ready || !projectId) return;
         const key = kind + ":" + path;
         if (pending[key]) return;
         const id = "explorer-" + (++serial);
         pending[key] = id;
-        bridge.sendCommand({ type: "explorer." + kind, project_id: bridge.projectId,
+        bridge.sendCommand({ type: "explorer." + kind, project_id: projectId,
                                request_id: id, path: path });
     }
     function rebuild() {
@@ -174,7 +197,7 @@ FloatingWindow {
             if (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
                 placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
                     Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                    String(Quickshell.processId), title, "0"];
+                    String(Quickshell.processId), title, "0", mainWindowTitle];
                 placement.running = true;
             }
         } else {
@@ -189,17 +212,25 @@ FloatingWindow {
     }
     Connections {
         target: explorer.bridge
-        function onAreaChanged() { explorer.visible = false; explorer.clearActivity(); explorer.reset(); }
-        function onWorkspaceChanged() { explorer.clearActivity(); explorer.reset(); }
-        function onReadyChanged() { explorer.clearActivity(); explorer.reset(); }
+        function onReadyChanged() {
+            if (!explorer.bridge.ready) explorer.setProject({});
+        }
         function onEventReceived(event) {
             const data = event.data;
+            if (event.type === "area.state" && data.area === "work") {
+                explorer.setProject(data.project || {});
+                return;
+            }
+            if (event.type === "project.deleted" && data.project_id === explorer.projectId) {
+                explorer.setProject({});
+                return;
+            }
             if (event.type === "chat.finished" && explorer.activityCall) {
                 explorer.stopActivity(data.status);
                 explorer.activityCall = "";
             }
             if (event.type === "work.activity" && explorer.bridge.activeArea === "work"
-                && data.project_id === explorer.bridge.projectId) {
+                && data.project_id === explorer.projectId) {
                 if (data.status === "running") {
                     explorer.activityCall = data.call_id;
                     explorer.activitySequence = 0;
@@ -212,14 +243,14 @@ FloatingWindow {
                 return;
             }
             if (event.type === "work.changed" && explorer.bridge.activeArea === "work"
-                && data.project_id === explorer.bridge.projectId && data.call_id === explorer.activityCall
+                && data.project_id === explorer.projectId && data.call_id === explorer.activityCall
                 && explorer.activityState === "running") {
                 // Si el usuario cerró una ventana, un nuevo cambio relevante puede reabrirla.
                 explorer.visible = true;
                 explorer.followChange(data);
                 return;
             }
-            if (!explorer.visible || !event.type.startsWith("explorer.") || data.project_id !== explorer.bridge.projectId) return;
+            if (!explorer.visible || !event.type.startsWith("explorer.") || data.project_id !== explorer.projectId) return;
             const key = Object.keys(explorer.pending).find(k => explorer.pending[k] === data.request_id);
             if (key === undefined) return;
             delete explorer.pending[key];
@@ -284,7 +315,7 @@ FloatingWindow {
                 Text {
                     anchors.fill: parent
                     verticalAlignment: Text.AlignVCenter
-                    text: explorer.bridge.workspace
+                    text: explorer.projectWorkdir
                     textFormat: Text.PlainText
                     color: "#aaaaaa"
                     font.pixelSize: 12
@@ -293,7 +324,7 @@ FloatingWindow {
                     ToolTip {
                         id: pathTip
                         visible: pathHover.hovered
-                        text: explorer.bridge.workspace
+                        text: explorer.projectWorkdir
                         contentItem: Text { text: pathTip.text; textFormat: Text.PlainText; color: pathTip.palette.toolTipText; font: pathTip.font }
                         delay: 500
                     }

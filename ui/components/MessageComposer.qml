@@ -33,13 +33,13 @@ GlassPanel {
         if (!modelMode) return commandMatches.map(command => ({
             label: command.label || command.name, value: command.name, description: command.description
         }));
-        const rows = [];
+        const models = [];
         for (let i = 0; i < bridge.availableModels.count; ++i) {
             const model = bridge.availableModels.get(i);
-            if (!modelQuery || (model.slug + " " + model.displayName).toLowerCase().includes(modelQuery))
-                rows.push({ label: model.displayName, value: model.slug, description: model.slug });
+            models.push({ slug: model.slug, displayName: model.displayName, family: model.family,
+                efforts: JSON.parse(model.reasoningEfforts), defaultEffort: model.defaultReasoningEffort });
         }
-        return rows;
+        return ChatCommands.modelChoices(prompt.text, models, bridge.modelName, bridge.reasoningEffort);
     }
     readonly property bool showCommands: prompt.activeFocus && !commandsDismissed && (completions.length > 0 || modelMode)
     readonly property bool canSubmit: !pendingPasteId && (prompt.text.trim().startsWith("/") || bridge.canSend)
@@ -47,7 +47,8 @@ GlassPanel {
         if (bridge.shellRunning || !bridge.authenticated || !bridge.modelName) return "";
         for (let i = 0; i < bridge.availableModels.count; ++i) {
             const model = bridge.availableModels.get(i);
-            if (model.slug === bridge.modelName) return model.displayName || model.slug;
+            if (model.slug === bridge.modelName) return (model.displayName || model.slug)
+                + (bridge.reasoningEffort ? " · " + ChatCommands.effortLabel(bridge.reasoningEffort) : "");
         }
         return "";
     }
@@ -84,6 +85,10 @@ GlassPanel {
     function executeSelected() {
         const option = completions[completionList.currentIndex];
         if (!option) return;
+        if (modelMode && ChatCommands.blockedReason("/modelos", bridge)) {
+            bridge.submit(prompt.text);
+            return;
+        }
         if (!modelMode && option.value === "/modelos") {
             if (ChatCommands.blockedReason("/modelos", bridge)) bridge.submit("/modelos");
             else openModels();
@@ -94,10 +99,17 @@ GlassPanel {
             commandsDismissed = true;
             return;
         }
-        if (bridge.submit(modelMode ? "/modelos " + option.value : option.value)) prompt.clear();
+        if (modelMode && !option.final) {
+            prepare(option.command);
+            commandsDismissed = false;
+            completionList.currentIndex = 0;
+            return;
+        }
+        if (bridge.submit(modelMode ? option.command : option.value)) prompt.clear();
     }
-    function openModels() {
-        prepare("/modelos ");
+    function openModels(command) {
+        prepare(command ? command.trim() + " " : "/modelos ");
+        commandsDismissed = false;
     }
 
     Connections {
@@ -239,9 +251,10 @@ GlassPanel {
                         }
                         if (event.key === Qt.Key_Tab && composer.completions.length) {
                             const option = composer.completions[completionList.currentIndex];
-                            prompt.text = composer.modelMode ? "/modelos " + option.value : option.value + (option.value === "/shell" ? " " : "");
+                            prompt.text = composer.modelMode ? option.command : option.value + (option.value === "/shell" ? " " : "");
                             prompt.cursorPosition = prompt.length;
-                            composer.commandsDismissed = true;
+                            composer.commandsDismissed = !(option.final === false || option.value === "/modelos");
+                            completionList.currentIndex = 0;
                             event.accepted = true;
                             return;
                         }
@@ -292,7 +305,8 @@ GlassPanel {
                         HoverHandler { id: modelHover }
                         ToolTip.visible: visible && modelHover.hovered
                         ToolTip.delay: 400
-                        ToolTip.text: composer.bridge.modelName + " · Cambia con /modelos"
+                        ToolTip.text: composer.bridge.modelName + " · Esfuerzo: "
+                            + ChatCommands.effortLabel(composer.bridge.reasoningEffort || "auto") + " · Cambia con /modelos"
                     }
                     Text {
                         visible: composer.activeModelLabel !== "" && composer.statusText !== ""
@@ -350,7 +364,7 @@ GlassPanel {
                             onClicked: { completionList.currentIndex = index; composer.executeSelected(); }
                             contentItem: Text {
                                 id: label
-                                text: (composer.modelMode && modelData.value === composer.bridge.modelName ? "• " : "") + modelData.label
+                                text: (composer.modelMode && modelData.selected ? "• " : "") + modelData.label
                                 font.pixelSize: 11
                                 color: optionButton.enabled ? "#dddddd" : "#777777"
                                 elide: Text.ElideRight

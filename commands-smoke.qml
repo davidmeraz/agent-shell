@@ -170,8 +170,9 @@ ShellRoot {
                     inspector.keyClick(Qt.Key_S);
                     inspector.wait(20);
                     if (!scenario.check(scenario.prompt.text === "/modelos" && scenario.composer.modelMode
-                        && scenario.menu.visible && scenario.list.count === 2,
-                        "modelos no aparecen dentro del editor")) return;
+                        && scenario.menu.visible && scenario.list.count === 1
+                        && scenario.list.itemAtIndex(0).modelData.value === "otros",
+                        "familias no aparecen dentro del editor")) return;
                     if (!scenario.checkLayout()) return;
                     scenario.prompt.text = "/modelos other";
                     inspector.wait(20);
@@ -192,13 +193,17 @@ ShellRoot {
                             "un nombre incompleto cambia el modelo")) return;
                     if (!scenario.check(agent.submit("/modelos"), "comando modelos rechazado")) return;
                     inspector.wait(20);
-                    if (!scenario.check(scenario.prompt.text === "/modelos " && scenario.list.count === 2, "comando no abre opciones en el editor")) return;
+                    if (!scenario.check(scenario.prompt.text === "/modelos " && scenario.list.count === 1, "comando no abre familias en el editor")) return;
+                    inspector.keyClick(Qt.Key_Return); inspector.wait(20);
+                    if (!scenario.check(scenario.prompt.text === "/modelos otros " && scenario.list.count === 2, "familia no abre modelos")) return;
                     inspector.keyClick(Qt.Key_Right);
-                    if (!scenario.check(scenario.list.currentIndex === 1 && scenario.prompt.text === "/modelos ",
+                    if (!scenario.check(scenario.list.currentIndex === 1 && scenario.prompt.text === "/modelos otros ",
                         "flecha derecha no selecciona modelo o modifica borrador")) return;
                     inspector.keyClick(Qt.Key_Return);
                     if (!scenario.check(!scenario.prompt.text, "Enter no confirma opción de modelo")) return;
                     if (!scenario.check(agent.submit("/modelos"), "comando modelos rechazado")) return;
+                    inspector.wait(20);
+                    inspector.mouseClick(scenario.list.itemAtIndex(0));
                     inspector.wait(20);
                     inspector.mouseClick(scenario.list.itemAtIndex(0));
                     if (!scenario.check(!scenario.prompt.text && !scenario.menu.visible, "clic no confirma modelo en el editor")) return;

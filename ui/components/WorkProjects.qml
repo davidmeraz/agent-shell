@@ -80,6 +80,7 @@ GlassPanel {
                     ActionButton {
                         id: deleteProjectButton
                         objectName: "workDeleteProject"
+                        enabled: !(panel.bridge.projectRunActive && panel.bridge.projectRun.project_id === projectRow.projectId)
                         implicitWidth: 30
                         implicitHeight: 30
                         horizontalPadding: 7

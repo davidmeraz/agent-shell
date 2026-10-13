@@ -7,6 +7,7 @@ import "ui"
 ShellRoot {
     id: scenario
     property int stage: 0
+    property var savedWindows: []
     property bool sawPartial: false
     property bool sawAnimation: false
     property bool sawRotation: false
@@ -119,12 +120,15 @@ ShellRoot {
                 if (agent.busy) return;
                 if (!scenario.check(!scenario.explorer.activityCall && scenario.explorer.activityState === "interrupted",
                     "cancelar no detiene el seguimiento")) return;
+                scenario.savedWindows = windows.map(viewer => ({ visible: viewer.visible, path: viewer.filePath, preview: viewer.preview }));
                 agent.selectArea("chat");
                 scenario.stage = 5;
             } else if (scenario.stage === 5) {
                 if (agent.areaBusy || agent.activeArea !== "chat") return;
-                if (!scenario.check(!scenario.explorer.visible && !scenario.explorer.activityCall
-                    && windows.every(viewer => !viewer.visible && !viewer.filePath), "el seguimiento cruza áreas")) return;
+                if (!scenario.check(scenario.explorer.visible && !scenario.explorer.activityCall
+                    && windows.every((viewer, index) => viewer.visible === scenario.savedWindows[index].visible
+                        && viewer.filePath === scenario.savedWindows[index].path && viewer.preview === scenario.savedWindows[index].preview),
+                    "Chat altera las vistas del proyecto")) return;
                 console.log("ACTIVITY_OK: IA por HTTP, comandos reales, carpetas, escritura en vivo, visores automáticos, rotación, entrada de ventanas/archivos, líneas modificadas, árbol estable, renombrado, cierre, reapertura, cancelación y aislamiento");
                 steps.stop(); Qt.callLater(Qt.quit);
             }

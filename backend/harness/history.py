@@ -79,6 +79,8 @@ class HistoryStore:
             raise ValueError("Formato del historial incompatible")
         if not all(isinstance(record.get(key), str) for key in ("title", "created_at", "updated_at", "model")):
             raise ValueError("Metadatos del historial inválidos")
+        if "reasoning_effort" in record and not isinstance(record["reasoning_effort"], str):
+            raise ValueError("Esfuerzo de razonamiento del historial inválido")
         if record.get("thread_id") is not None and not isinstance(record["thread_id"], str):
             raise ValueError("Thread del historial inválido")
         area, project_id = record.get("area", "chat"), record.get("project_id", "")

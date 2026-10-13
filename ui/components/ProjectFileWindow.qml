@@ -12,10 +12,13 @@ FloatingWindow {
     id: viewer
     required property AgentBridge bridge
     required property int viewerId
+    property string mainWindowTitle: ""
+    property string projectId: ""
+    property string projectName: ""
     objectName: "projectFileWindow"
-    title: "Visor " + viewerId + " · " + (filePath || bridge.projectName)
-    implicitWidth: viewerId === 1 ? 781 : 857
-    implicitHeight: viewerId === 1 ? 1334 : 662
+    title: "Visor " + viewerId + " · " + (filePath || projectName)
+    implicitWidth: 820
+    implicitHeight: viewerId === 1 ? 1330 : 655
     minimumSize: Qt.size(420, 320)
     color: "transparent"
     visible: false
@@ -147,15 +150,15 @@ FloatingWindow {
         if (!wasVisible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
             placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
                 Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId), title, String(viewerId)];
+                String(Quickshell.processId), title, String(viewerId), mainWindowTitle];
             placement.running = true;
         }
     }
     function refresh() {
         if (!visible || !filePath || pendingId || deleted || writing || !bridge.ready
-            || bridge.activeArea !== "work" || !bridge.projectId) return;
+            || !projectId) return;
         pendingId = "file-viewer-" + viewerId + "-" + (++serial);
-        bridge.sendCommand({ type: "explorer.read", project_id: bridge.projectId,
+        bridge.sendCommand({ type: "explorer.read", project_id: projectId,
                              request_id: pendingId, path: filePath });
     }
     onVisibleChanged: {
@@ -174,12 +177,10 @@ FloatingWindow {
     }
     Connections {
         target: viewer.bridge
-        function onAreaChanged() { viewer.clear(); }
-        function onWorkspaceChanged() { viewer.clear(); }
         function onReadyChanged() { viewer.clear(); }
         function onEventReceived(event) {
             const data = event.data;
-            if (!viewer.visible || !viewer.pendingId || data.project_id !== viewer.bridge.projectId
+            if (!viewer.visible || !viewer.pendingId || data.project_id !== viewer.projectId
                 || data.request_id !== viewer.pendingId) return;
             if (event.type === "explorer.file" && data.path === viewer.filePath) {
                 viewer.pendingId = "";

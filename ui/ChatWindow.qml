@@ -30,12 +30,27 @@ FloatingWindow {
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
     property bool sidebarKeyboardOpen: false
-    readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy
+    readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy && !bridge.projectRunPreparing
     property string performanceModel: ""
     property double elapsedMs: 0
 
-    readonly property ProjectExplorerWindow explorerWindow: ProjectExplorerWindow { bridge: window.bridge }
-    readonly property AccountUsageWindow usageWindow: AccountUsageWindow { bridge: window.bridge }
+    readonly property ProjectExplorerWindow explorerWindow: ProjectExplorerWindow {
+        bridge: window.bridge
+        mainWindowTitle: window.title
+    }
+    readonly property AccountUsageWindow usageWindow: AccountUsageWindow {
+        bridge: window.bridge
+        mainWindowTitle: window.title
+    }
+    // Apertura inicial informativa: conserva el foco en el prompt del chat.
+    Component.onCompleted: Qt.callLater(function() {
+        if (!window.visible) return;
+        window.usageWindow.visible = true;
+        Qt.callLater(function() {
+            const nativeWindow = window.contentItem.Window.window;
+            if (window.visible && nativeWindow) nativeWindow.requestActivate();
+        });
+    })
 
     Shortcut {
         sequence: "Ctrl+B"
@@ -165,8 +180,11 @@ FloatingWindow {
                         elide: Text.ElideRight
                     }
                     Text {
+                        objectName: "workRunStatus"
                         Layout.fillWidth: true
-                        text: window.bridge.workspace
+                        text: window.bridge.projectRunPending ? "Detectando cómo ejecutar…"
+                              : window.bridge.projectRunHere ? window.bridge.projectRunNotice || window.bridge.projectRun.message
+                              : window.bridge.projectRunNotice || window.bridge.workspace
                         textFormat: Text.PlainText
                         color: "#888888"
                         font.pixelSize: 10
@@ -174,18 +192,28 @@ FloatingWindow {
                     }
                 }
                 ActionButton {
-                    objectName: "workExplorerButton"
-                    text: "Explorador"
+                    objectName: "workRunButton"
+                    text: window.bridge.projectRunHere && window.bridge.projectRunActive ? "Detener" : "Ejecutar"
                     font.pixelSize: 11
                     verticalPadding: 7
-                    enabled: window.bridge.ready
-                    onClicked: window.explorerWindow.visible = true
-                }
-                ActionButton {
-                    text: "Abrir carpeta"
-                    font.pixelSize: 11
-                    verticalPadding: 7
-                    onClicked: Qt.openUrlExternally("file://" + encodeURI(window.bridge.workspace).replace(/#/g, "%23").replace(/\?/g, "%3F"))
+                    enabled: window.bridge.canRunProject || (window.bridge.projectRunHere && window.bridge.projectRunActive
+                             && window.bridge.projectRun.phase !== "stopping")
+                    Accessible.name: text === "Detener" ? "Detener programa del proyecto" : "Detectar y ejecutar proyecto con IA"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 450
+                    ToolTip.text: window.bridge.projectRunHere
+                                  ? [window.bridge.projectRunNotice || window.bridge.projectRun.message,
+                                     window.bridge.projectRun.source === "cache" ? "Inicio guardado · sin consulta a la IA" : "",
+                                     window.bridge.projectRun.command || "",
+                                     window.bridge.projectRun.output ? window.bridge.projectRun.output.slice(-1200) : ""].filter(part => !!part).join("\n")
+                                  : window.bridge.projectRunActive ? "Otro proyecto se está ejecutando."
+                                  : window.bridge.projectRunCaches[window.bridge.projectId]
+                                    ? "Ejecutar el inicio guardado del proyecto."
+                                    : "La IA detecta cómo iniciar el proyecto sin añadir mensajes al chat."
+                    onClicked: {
+                        if (window.bridge.projectRunHere && window.bridge.projectRunActive) window.bridge.stopProject();
+                        else window.bridge.runProject();
+                    }
                 }
                 ActionButton {
                     objectName: "workProjectsButton"
@@ -270,7 +298,7 @@ FloatingWindow {
             if (command === "/ayuda") commandHelp.open();
             else if (command === "/historial") { historyPanel.open(); window.bridge.refreshHistory(); }
             // Preparar las sugerencias después de procesar Enter.
-            else if (command === "/modelos") Qt.callLater(composer.openModels);
+            else if (command === "/modelos" || command.startsWith("/modelos ")) Qt.callLater(() => composer.openModels(command));
             else if (command === "/terminal") shellSettings.open();
         }
         function onPlanConnected() { accountPanel.close(); planWelcome.open(); }

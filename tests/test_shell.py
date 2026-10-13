@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import sys
 import tempfile
 import threading
@@ -96,6 +97,46 @@ class ExecutorTests(unittest.TestCase):
         with patch.dict(os.environ, {"AGENT_SHELL_TEST_SECRET": "test-only-secret"}):
             result = self.execute("printf '%s' ${AGENT_SHELL_TEST_SECRET-unset}")
         self.assertEqual(result["output"], "unset")
+
+    def child_environment(self):
+        code = "import json, os; print(json.dumps(dict(os.environ)))"
+        result = self.execute(shlex.quote(sys.executable) + " -c " + shlex.quote(code))
+        self.assertEqual(result["status"], "completed")
+        return json.loads(result["output"])
+
+    def test_wayland_command_preserves_desktop_session_and_filters_backend_secrets(self):
+        desktop = {"PATH": os.defpath, "HOME": str(self.root), "USER": "fixture-user",
+                   "WAYLAND_DISPLAY": "wayland-fixture", "XDG_RUNTIME_DIR": str(self.root),
+                   "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus",
+                   "XDG_SESSION_TYPE": "wayland", "XDG_CONFIG_HOME": str(self.root / "config"),
+                   "QT_QPA_PLATFORM": "wayland", "QT_IM_MODULE": "fixture-ime",
+                   "HYPRLAND_INSTANCE_SIGNATURE": "fixture-compositor", "LANG": "C.UTF-8"}
+        with patch.dict(os.environ, {**desktop, "AGENT_SHELL_TEST_SECRET": "test-only-secret",
+                                    "OPENAI_API_KEY": "test-only-api-key", "TERM": "xterm"}, clear=True):
+            environment = self.child_environment()
+        for name, value in desktop.items():
+            self.assertEqual(environment[name], value, name)
+        self.assertEqual(environment["TERM"], "dumb")
+        self.assertNotIn("AGENT_SHELL_TEST_SECRET", environment)
+        self.assertNotIn("OPENAI_API_KEY", environment)
+
+    def test_x11_command_preserves_display_and_authorization_without_forcing_wayland(self):
+        desktop = {"PATH": os.defpath, "DISPLAY": ":93", "XAUTHORITY": str(self.root / "authority"),
+                   "QT_QPA_PLATFORM": "xcb", "LANG": "C.UTF-8"}
+        with patch.dict(os.environ, desktop, clear=True):
+            environment = self.child_environment()
+        for name, value in desktop.items():
+            self.assertEqual(environment[name], value, name)
+        self.assertNotIn("WAYLAND_DISPLAY", environment)
+        self.assertNotIn("XDG_RUNTIME_DIR", environment)
+
+    def test_headless_command_does_not_invent_graphical_session(self):
+        with patch.dict(os.environ, {}, clear=True):
+            environment = self.child_environment()
+        self.assertEqual(environment["PATH"], os.defpath)
+        self.assertEqual(environment["LANG"], "C.UTF-8")
+        for name in ("WAYLAND_DISPLAY", "DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY", "QT_QPA_PLATFORM"):
+            self.assertNotIn(name, environment)
 
     def test_argument_schema_rejects_permissions_paths_and_invalid_commands(self):
         for value in (None, [], {}, {"command": ""}, {"command": 3}, {"command": "x\0y"},

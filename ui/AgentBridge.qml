@@ -29,6 +29,13 @@ QtObject {
     property string projectName: ""
     property bool areaBusy: false
     property string areaError: ""
+    property var projectRun: ({})
+    property bool projectRunPending: false
+    property string projectRunNotice: ""
+    property var projectRunCaches: ({})
+    readonly property bool projectRunActive: projectRunPending || ["preparing", "inspecting", "starting", "running", "stopping"].indexOf(projectRun.phase) >= 0
+    readonly property bool projectRunHere: !!projectId && projectRun.project_id === projectId
+    readonly property bool projectRunPreparing: projectRunActive && projectRun.phase !== "running"
     readonly property string areaKey: activeArea === "chat" ? "chat" : "work:" + projectId
     readonly property bool workspaceSelected: activeArea === "chat" || !!projectId
     property int shellTimeout: 120
@@ -37,6 +44,7 @@ QtObject {
     property string email: ""
     property string plan: ""
     property string modelName: ""
+    property string reasoningEffort: ""
     property string authUrl: ""
     property string historyDirectory: ""
     property string currentChatId: ""
@@ -64,6 +72,8 @@ QtObject {
                                    && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy
                                       && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
+    readonly property bool canRunProject: canRunShell && activeArea === "work" && !!projectId && !projectRunActive
+                                         && ((authenticated && availableModels.count > 0) || !!projectRunCaches[projectId])
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
@@ -106,11 +116,22 @@ QtObject {
                 sendCommand({ type: "shell.execute", command: command.command });
                 return true;
             }
+            if (command.name === "/modelos" && command.family
+                && !Array.from({length: availableModels.count}, (_, i) => availableModels.get(i).family).includes(command.family)) {
+                status = "La familia solicitada no está disponible en tu cuenta.";
+                return false;
+            }
             if (command.name === "/modelos" && command.model) {
                 for (let i = 0; i < availableModels.count; ++i) {
-                    if (availableModels.get(i).slug === command.model) {
-                        selectModel(command.model);
-                        status = "Cambiando modelo…";
+                    const model = availableModels.get(i);
+                    if (model.slug === command.model && (!command.family || model.family === command.family)) {
+                        const effort = command.effort === "auto" ? "" : command.effort;
+                        if (command.hasEffort && effort && !JSON.parse(model.reasoningEfforts).includes(effort)) {
+                            status = "Ese esfuerzo de razonamiento no está disponible para el modelo seleccionado.";
+                            return false;
+                        }
+                        selectModel(command.model, command.hasEffort ? effort : undefined);
+                        status = "Cambiando modelo y esfuerzo…";
                         return true;
                     }
                 }
@@ -119,7 +140,8 @@ QtObject {
             }
             if (command.name === "/nuevo") newChat();
             else if (command.name === "/detener") cancel();
-            else localCommandRequested(command.name);
+            else localCommandRequested(command.name === "/modelos" && command.family
+                                       ? "/modelos " + command.family : command.name);
             return true;
         }
         if (!canSend || (!text && !image)) return false;
@@ -176,6 +198,18 @@ QtObject {
         sendCommand({ type: "project.delete", project_id: projectId });
     }
 
+    function runProject() {
+        if (!canRunProject) return;
+        projectRunPending = true;
+        projectRunNotice = "";
+        sendCommand({ type: "project.run", project_id: projectId });
+    }
+
+    function stopProject() {
+        if (!projectRunActive || !projectRun.execution_id) return;
+        sendCommand({ type: "project.run.stop", project_id: projectRun.project_id, execution_id: projectRun.execution_id });
+    }
+
     function openChat(chatId) {
         if (!canBrowseHistory) return;
         openingChat = true;
@@ -209,32 +243,37 @@ QtObject {
     }
 
     function login(newAccount = false) {
-        if (!ready || busy || loginBusy || accountBusy) return;
+        if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
         loginBusy = true;
         status = "Preparando el inicio de sesión…";
         sendCommand({ type: "auth.login", new_account: newAccount });
     }
 
     function selectAccount(accountId) {
-        if (!ready || busy || loginBusy || accountBusy) return;
+        if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
         accountBusy = true;
         sendCommand({ type: "auth.select", account_id: accountId });
     }
 
     function cancelLogin() { sendCommand({ type: "auth.cancel" }); }
     function refreshAccount() {
-        if (!ready || busy || loginBusy || accountBusy) return;
+        if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
         accountBusy = true;
         sendCommand({ type: "auth.refresh" });
     }
 
     function logout() {
-        if (!ready || busy || loginBusy || accountBusy) return;
+        if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
         accountBusy = true;
         sendCommand({ type: "auth.logout" });
     }
 
-    function selectModel(slug) { if (canSend) sendCommand({ type: "model.select", model: slug }); }
+    function selectModel(slug, effort) {
+        if (!canSend) return;
+        const request = { type: "model.select", model: slug };
+        if (effort !== undefined) request.reasoning_effort = effort;
+        sendCommand(request);
+    }
 
     function refreshPerformance() {
         if (!ready || performanceBusy) return;
@@ -302,6 +341,8 @@ QtObject {
             activeArea = data.area;
             projectId = data.project ? data.project.project_id : "";
             projectName = data.project ? data.project.name : "";
+            if (data.project) projectRunCaches = Object.assign({}, projectRunCaches,
+                { [data.project.project_id]: !!data.project.has_launch_profile });
             areaBusy = false;
             areaError = "";
             if (previousKey !== areaKey) areaChanged(previousKey, areaKey);
@@ -309,15 +350,30 @@ QtObject {
             areaBusy = false;
             areaError = data.message;
             status = data.message;
+        } else if (event.type === "project.run.cache") {
+            projectRunCaches = Object.assign({}, projectRunCaches, { [data.project_id]: !!data.available });
+        } else if (event.type === "project.run.state") {
+            projectRunPending = false;
+            projectRun = data;
+            projectRunNotice = "";
+        } else if (event.type === "project.run.rejected") {
+            projectRunPending = false;
+            projectRunNotice = data.message;
         } else if (event.type === "project.deleted") {
             areaBusy = false;
             areaError = "";
             performanceHistory = performanceHistory.filter(row => data.chat_ids.indexOf(row.chat_id) < 0);
+            if (projectRun.project_id === data.project_id) projectRun = ({});
+            const caches = Object.assign({}, projectRunCaches);
+            delete caches[data.project_id];
+            projectRunCaches = caches;
             status = "Proyecto eliminado. La carpeta local se conserva.";
         } else if (event.type === "projects.list") {
             projects.clear();
             for (const project of data.projects)
                 projects.append({ projectId: project.project_id, name: project.name, workdir: project.workdir });
+            projectRunCaches = Object.assign({}, projectRunCaches, ...data.projects.map(project =>
+                ({ [project.project_id]: !!project.has_launch_profile })));
         } else if (event.type === "shell.state") {
             workspace = data.workdir;
             shellTimeout = data.timeout_seconds;
@@ -420,10 +476,15 @@ QtObject {
         } else if (event.type === "models.list") {
             availableModels.clear();
             for (const model of data.models)
-                availableModels.append({ slug: model.slug, displayName: model.display_name });
+                availableModels.append({ slug: model.slug, displayName: model.display_name,
+                    family: model.family || "otros", reasoningEfforts: JSON.stringify(model.reasoning_efforts || []),
+                    defaultReasoningEffort: model.default_reasoning_effort || "" });
             modelName = data.selected || "";
+            reasoningEffort = data.reasoning_effort || "";
         } else if (event.type === "model.selected") {
             modelName = data.model || "";
+            reasoningEffort = data.reasoning_effort || "";
+            if (status === "Cambiando modelo y esfuerzo…") status = "Modelo y esfuerzo actualizados.";
         } else if (event.type === "auth.login.started") {
             authUrl = data.url;
             status = "Completa el inicio de sesión en tu navegador.";
@@ -493,6 +554,9 @@ QtObject {
             messages.append({ author: "SISTEMA", body: data.message, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
             conversationChanged();
         } else if (event.type === "backend.disconnected") {
+            projectRunPending = false;
+            projectRun = ({});
+            projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             usageBusy = false;
             accountUsage = ({});
             usageError = "Motor desconectado. Reinicia Agent Shell.";
@@ -520,6 +584,9 @@ QtObject {
         stdout: SplitParser { onRead: data => bridge.receive(data) }
         stderr: SplitParser { onRead: data => console.warn("Error del backend: " + data) }
         onExited: (exitCode, exitStatus) => {
+            bridge.projectRunPending = false;
+            bridge.projectRun = ({});
+            bridge.projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             bridge.usageBusy = false;
             bridge.accountUsage = ({});
             bridge.usageError = "Motor desconectado. Reinicia Agent Shell.";

@@ -32,7 +32,7 @@ GlassDialog {
         }
         Text {
             Layout.fillWidth: true
-            text: "Escribe / para ver sugerencias dentro del editor. Usa ← y → para elegir, Enter para ejecutar, Tab para completar y Esc para ocultarlas. /modelos muestra tus modelos."
+            text: "Escribe / para ver sugerencias dentro del editor. Usa ← y → para elegir, Enter para confirmar, Tab para completar y Esc para ocultarlas. /modelos permite elegir familia, modelo y esfuerzo; por ejemplo /modelos gpt-6."
             color: "#aaaaaa"
             font.pixelSize: 11
             wrapMode: Text.Wrap

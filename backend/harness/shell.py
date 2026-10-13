@@ -15,6 +15,19 @@ from .http import Cancelled
 MAX_COMMAND_LENGTH = 8000
 MAX_OUTPUT_LENGTH = 16000
 DEFAULT_TIMEOUT = 120
+# Conservar la sesión de escritorio sin heredar variables privadas del backend.
+SHELL_ENVIRONMENT = (
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ",
+    "HOME", "USER", "LOGNAME", "SHELL",
+    "WAYLAND_DISPLAY", "DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_SESSION_ID",
+    "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
+    "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
+    "QT_QPA_PLATFORM", "QT_QPA_PLATFORMTHEME", "QT_STYLE_OVERRIDE", "QT_IM_MODULE",
+    "GTK_IM_MODULE", "XMODIFIERS", "GDK_BACKEND",
+    "HYPRLAND_INSTANCE_SIGNATURE", "SWAYSOCK",
+)
 SHELL_TOOL = {
     "type": "function", "name": "shell", "strict": True,
     "description": "Run a non-interactive POSIX shell command in the application's selected working directory. "
@@ -47,6 +60,15 @@ def resolve_workspace(value: str | Path) -> Path:
     return path
 
 
+def command_environment() -> dict[str, str]:
+    """Hereda sólo configuración conocida; no inventa pantallas ni permisos."""
+    environment = {name: os.environ[name] for name in SHELL_ENVIRONMENT if name in os.environ}
+    environment.setdefault("PATH", os.defpath)
+    environment.setdefault("LANG", "C.UTF-8")
+    environment["TERM"] = "dumb"
+    return environment
+
+
 class ShellControl:
     """Evita crear el proceso si el turno ya se canceló."""
 
@@ -61,7 +83,7 @@ class ShellControl:
                 raise Cancelled()
             self._process = subprocess.Popen(
                 ["/bin/sh", "-c", command], cwd=workspace,
-                env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8", "TERM": "dumb"},
+                env=command_environment(),
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
@@ -85,13 +107,14 @@ class ShellControl:
 
 
 class ShellExecutor:
-    def __init__(self, workspace: Path, timeout: float = DEFAULT_TIMEOUT,
+    def __init__(self, workspace: Path, timeout: float | None = DEFAULT_TIMEOUT,
                  max_output: int = MAX_OUTPUT_LENGTH) -> None:
         self.workspace = resolve_workspace(workspace)
         self.timeout = timeout
         self.max_output = max_output
 
-    def execute(self, command: str, control: ShellControl, on_output=lambda output: None) -> dict:
+    def execute(self, command: str, control: ShellControl, on_output=lambda output: None,
+                on_started=lambda: None) -> dict:
         started = time.monotonic()
         process = control.start(command, self.workspace)
         output, truncated, status = "", False, "completed"
@@ -99,6 +122,7 @@ class ShellExecutor:
         last_emitted = started
         ended_at = None
         try:
+            on_started()
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 while selector.get_map():
@@ -107,7 +131,7 @@ class ShellExecutor:
                         status = "interrupted"
                         control.kill()
                         break
-                    if now - started >= self.timeout:
+                    if self.timeout is not None and now - started >= self.timeout:
                         status = "timeout"
                         control.kill()
                         break

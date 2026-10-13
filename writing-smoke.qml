@@ -133,8 +133,8 @@ ShellRoot {
                 scenario.stage = 7;
             } else if (scenario.stage === 7) {
                 if (agent.areaBusy || agent.activeArea !== "chat") return;
-                if (!scenario.check(!scenario.viewer.writing && !scenario.viewer.visible && !code.text,
-                    "cambiar de área conserva escritura")) return;
+                if (!scenario.check(!scenario.viewer.writing && scenario.viewer.visible && code.text === scenario.source(),
+                    "cambiar a Chat pierde el archivo del proyecto")) return;
                 console.log("WRITING_OK: guardado atómico real, escritura progresiva, cursor, Unicode y CRLF, prefijo/sufijo, retarget, sondeo, cancelación, 128 KiB, seguimiento sin interrumpir lectura, eliminación, cierre y reapertura");
                 steps.stop(); Qt.callLater(Qt.quit);
             }

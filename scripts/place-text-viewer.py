@@ -1,4 +1,4 @@
-"""Coloca únicamente el visor de este proceso, sin reglas globales de Hyprland."""
+"""Abre los visores junto al chat de este proceso, sin reglas globales de Hyprland."""
 from __future__ import annotations
 
 import json
@@ -9,14 +9,13 @@ import subprocess
 import sys
 import time
 
-# Referencia de la captura: área útil de 2540 × 1370, sin las barras del monitor.
-# 0: carpetas; 1: texto a la derecha; 2: texto abajo a la izquierda.
-REFERENCE = {0: (154, 25, 553, 640), 1: (1740, 18, 781, 1334),
-             2: (19, 687, 857, 662)}
+# 0: carpetas; 1: texto derecho; 2: texto izquierdo; 3: chat; 4: uso.
+ROLES = (0, 1, 2, 3, 4)
+USAGE_TITLE = "Agent Shell · Uso del plan"
 
 
-def geometry(monitor: dict, viewer_id: int) -> tuple[int, int, int, int]:
-    """Coordenadas lógicas globales, descontando barras y escala/rotación."""
+def geometry(monitor: dict, viewer_id: int, usage_height: int = 140) -> tuple[int, int, int, int]:
+    """Tres columnas centradas; redondeo simétrico hasta un píxel lógico."""
     scale = monitor.get("scale", 1) or 1
     width, height = monitor["width"], monitor["height"]
     if monitor.get("transform", 0) % 2:
@@ -24,11 +23,28 @@ def geometry(monitor: dict, viewer_id: int) -> tuple[int, int, int, int]:
     left, top, right, bottom = monitor.get("reserved", [0, 0, 0, 0])
     width = max(1, round(width / scale) - left - right)
     height = max(1, round(height / scale) - top - bottom)
-    ref_x, ref_y, ref_w, ref_h = REFERENCE[viewer_id]
-    min_w, min_h = (320, 400) if viewer_id == 0 else (420, 320)
-    w = min(width, max(min_w, round(width * ref_w / 2540)))
-    h = min(height, max(min_h, round(height * ref_h / 1370)))
-    x, y = round(width * ref_x / 2540), round(height * ref_y / 1370)
+    margin = min(20, width // 20, height // 20)
+    gap = margin
+    column = max(1, (width - 2 * margin - 2 * gap) // 3)
+    full_height = max(1, height - 2 * margin)
+    half_height = max(1, (full_height - gap) // 2)
+    quota = min(full_height, max(0, usage_height))
+    positions = {
+        0: (margin, margin, column, half_height),
+        1: (width - margin - column, margin, column, full_height),
+        2: (margin, height - margin - half_height, column, half_height),
+        3: (round((width - column) / 2), margin + quota + (gap if quota else 0),
+            column, max(1, full_height - quota - (gap if quota else 0))),
+        4: (round((width - column) / 2), margin, column, max(140, quota)),
+    }
+    x, y, w, h = positions[viewer_id]
+    min_w, min_h = {0: (320, 400), 1: (420, 320), 2: (420, 320),
+                    3: (560, 560), 4: (260, 140)}[viewer_id]
+    # Si tres columnas no caben, conserva legibilidad y limita la superposición
+    # al área útil. No puede garantizarse un mosaico en una pantalla pequeña.
+    fit_w, fit_h = min(width, max(min_w, w)), min(height, max(min_h, h))
+    x -= (fit_w - w) // 2
+    w, h = fit_w, fit_h
     x = max(0, min(x, width - w)) + monitor["x"] + left
     y = max(0, min(y, height - h)) + monitor["y"] + top
     return x, y, w, h
@@ -38,7 +54,21 @@ def hyprctl(*args: str) -> str:
     return subprocess.check_output(["hyprctl", *args], text=True, timeout=1)
 
 
-def place(pid: int, title: str, viewer_id: int) -> bool:
+def workspace_selector(client: dict) -> str:
+    workspace = client.get("workspace", {})
+    identifier = workspace.get("id")
+    if type(identifier) is not int or identifier == 0:
+        raise ValueError("Escritorio de la ventana principal inválido")
+    if identifier > 0:
+        return str(identifier)
+    name = workspace.get("name", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[\w .:+-]+", name):
+        raise ValueError("Nombre de escritorio de la ventana principal inválido")
+    # Hyprland asigna también IDs negativos a escritorios normales con nombre.
+    return name if name == "special" or name.startswith("special:") else "name:" + name
+
+
+def place(pid: int, title: str, viewer_id: int, main_title: str = "") -> bool:
     # Espera acotada al mapeo de la superficie; nunca busca sólo por título.
     prefix = f"Visor {viewer_id} · " if viewer_id else ""
     for _ in range(20):
@@ -48,28 +78,57 @@ def place(pid: int, title: str, viewer_id: int) -> bool:
                        and (c.get("title") == title or (prefix and title.startswith(prefix)
                             and c.get("title", "").startswith(prefix)))
                        and c.get("mapped", True)), None)
-        if client:
+        mains = [c for c in clients if c.get("pid") == pid and c.get("title") == main_title
+                 and c.get("mapped", True)] if main_title else []
+        main = mains[0] if len(mains) == 1 else None
+        if client and (not main_title or main):
             monitors = json.loads(hyprctl("-j", "monitors"))
-            monitor = next((m for m in monitors if m["id"] == client["monitor"]), None)
+            anchor = main or client
+            monitor = next((m for m in monitors if m["id"] == anchor["monitor"]), None)
             if monitor:
-                x, y, width, height = geometry(monitor, viewer_id)
-                address = client["address"]
-                # Dirección validada: ni títulos ni rutas entran en los dispatchers.
-                if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
-                    raise ValueError("Dirección de ventana inválida")
-                target = "address:" + address
+                quotas = [c for c in clients if c.get("pid") == pid and c.get("title") == USAGE_TITLE
+                          and c.get("mapped", True)]
+                usage = quotas[0] if len(quotas) == 1 else None
+                usage_height = usage.get("size", [0, 140])[1] if usage else 0
+                targets = [(client, viewer_id)]
+                # Al abrir el árbol o la tarjeta de uso se alinea el centro.
+                # Abrir/rotar un archivo no recoloca un chat movido manualmente.
+                if main and viewer_id in (0, 4):
+                    targets.append((main, 3))
+                    if usage and usage is not client:
+                        targets.append((usage, 4))
+                # Valida todas las direcciones antes de construir cualquier orden.
+                for window, _ in targets:
+                    if not re.fullmatch(r"0x[0-9a-fA-F]+", window.get("address", "")):
+                        raise ValueError("Dirección de ventana inválida")
+                workspace = workspace_selector(main) if main else ""
                 version = json.loads(hyprctl("-j", "version"))
                 match = re.search(r"(\d+)\.(\d+)", version.get("version", version.get("tag", "")))
-                if match and tuple(map(int, match.groups())) >= (0, 55):
-                    # Desde 0.55 los dispatchers usan Lua; dirección validada arriba.
-                    result = hyprctl("eval",
-                        f'hl.dispatch(hl.dsp.window.float({{action="enable", window="{target}"}})); '
-                        f'hl.dispatch(hl.dsp.window.resize({{x={width}, y={height}, relative=false, window="{target}"}})); '
-                        f'hl.dispatch(hl.dsp.window.move({{x={x}, y={y}, relative=false, window="{target}"}}))')
+                lua = bool(match and tuple(map(int, match.groups())) >= (0, 55))
+                commands = []
+                for window, role in targets:
+                    x, y, width, height = geometry(monitor, role, usage_height)
+                    target = "address:" + window["address"]
+                    move_workspace = bool(main and (window.get("workspace", {}).get("id") != main["workspace"]["id"]
+                                                   or window["monitor"] != main["monitor"]))
+                    if lua:
+                        commands.append(f'hl.dispatch(hl.dsp.window.float({{action="enable", window="{target}"}}))')
+                        if move_workspace:
+                            selector = json.dumps(workspace, ensure_ascii=False)
+                            commands.append(f'hl.dispatch(hl.dsp.window.move({{workspace={selector}, follow=false, window="{target}"}}))')
+                        commands.extend([
+                            f'hl.dispatch(hl.dsp.window.resize({{x={width}, y={height}, relative=false, window="{target}"}}))',
+                            f'hl.dispatch(hl.dsp.window.move({{x={x}, y={y}, relative=false, window="{target}"}}))'])
+                    else:
+                        commands.append(f"dispatch setfloating {target}")
+                        if move_workspace:
+                            commands.append(f"dispatch movetoworkspacesilent {workspace},{target}")
+                        commands.extend([f"dispatch resizewindowpixel exact {width} {height},{target}",
+                                         f"dispatch movewindowpixel exact {x} {y},{target}"])
+                if lua:
+                    result = hyprctl("eval", "; ".join(commands))
                 else:
-                    result = hyprctl("--batch", f"dispatch setfloating {target}; "
-                                     f"dispatch resizewindowpixel exact {width} {height},{target}; "
-                                     f"dispatch movewindowpixel exact {x} {y},{target}")
+                    result = hyprctl("--batch", "; ".join(commands))
                 if any(line.strip() != "ok" for line in result.splitlines() if line.strip()):
                     raise RuntimeError("El compositor rechazó la colocación del visor")
                 return True
@@ -82,10 +141,11 @@ def main() -> int:
         return 0
     try:
         pid, title, viewer_id = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-        if viewer_id not in REFERENCE:
+        main_title = sys.argv[4] if len(sys.argv) > 4 else ""
+        if viewer_id not in ROLES:
             raise ValueError("Identificador de visor inválido")
-        if not place(pid, title, viewer_id):
-            raise RuntimeError("No se encontró el visor en el compositor")
+        if not place(pid, title, viewer_id, main_title):
+            raise RuntimeError("No se encontró el visor o su ventana principal en el compositor")
     except (ValueError, KeyError, RuntimeError, OSError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1

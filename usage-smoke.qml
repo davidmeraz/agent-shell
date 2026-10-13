@@ -36,6 +36,8 @@ ShellRoot {
             try {
             if (scenario.stage === 0) {
                 if (!agent.canSend) return;
+                if (!scenario.check(chat.usageWindow.visible, "el uso no abre al iniciar")) return;
+                if (agent.usageBusy || !agent.accountUsage.checked_at) return;
                 const account = inspector.findChild(chat, "chatAccount");
                 account.open(); inspector.wait(180);
                 const button = inspector.findChild(chat, "chatUsageButton");
@@ -152,6 +154,7 @@ ShellRoot {
                 scenario.stage = 4;
             } else if (scenario.stage === 4) {
                 if (agent.accountBusy || agent.email !== "second@example.invalid") return;
+                if (agent.usageBusy) return;
                 if (!scenario.check(!agent.accountUsage.checked_at && !agent.usageBusy, "consumo anterior conservado al cambiar cuenta")) return;
                 agent.refreshUsage();
                 scenario.stage = 5;
@@ -173,7 +176,8 @@ ShellRoot {
                 scenario.stage = 8;
             } else if (scenario.stage === 8) {
                 if (agent.areaBusy || agent.activeArea !== "work") return;
-                if (!scenario.check(panel.visible && !chat.dialogVisible && agent.accountUsage.checked_at,
+                if (!scenario.check(panel.visible && !chat.dialogVisible && agent.accountUsage.checked_at
+                    && panel.mainWindowTitle === chat.title,
                     "cambiar a Work cierra el uso o borra la consulta")) return;
                 agent.selectArea("chat");
                 scenario.stage = 9;

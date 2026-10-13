@@ -10,10 +10,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class FakeService:
     def __init__(self) -> None:
         self.requests = []
+        self.models = [
+            {"slug": "test-model", "display_name": "Modelo de prueba", "visibility": "list"},
+            {"slug": "other-model", "display_name": "Otro modelo", "visibility": "list"},
+            {"slug": "hidden-model", "visibility": "hidden"},
+        ]
         self.stream_content_type = "text/event-stream; charset=utf-8"
         self.started = threading.Event()
         self.disconnected = threading.Event()
         self.tool_batches = []
+        self.project_run_batches = [[{"command": "cat run.sh"}],
+                                    [{"name": "launch_program", "command": "sh run.sh"}]]
         self.tool_completion_gate = None
         self.tool_preface = ""
         self.tool_stream_items = False
@@ -28,11 +35,7 @@ class FakeService:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"models": [
-                    {"slug": "test-model", "display_name": "Modelo de prueba", "visibility": "list"},
-                    {"slug": "other-model", "display_name": "Otro modelo", "visibility": "list"},
-                    {"slug": "hidden-model", "visibility": "hidden"},
-                ]}).encode())
+                self.wfile.write(json.dumps({"models": fixture.models}).encode())
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -54,8 +57,9 @@ class FakeService:
                     self.wfile.flush()
 
                 try:
-                    batches = fixture.tool_batches or [[{"command": "pwd"}]]
-                    if isinstance(prompt, str) and prompt.startswith("shell") and body.get("tools"):
+                    project_run = body.get("instructions", "").startswith("You execute the selected project")
+                    batches = fixture.project_run_batches if project_run else fixture.tool_batches or [[{"command": "pwd"}]]
+                    if ((project_run or isinstance(prompt, str) and prompt.startswith("shell")) and body.get("tools")):
                         if len(results) < len(batches):
                             specs = batches[len(results)]
                             output = [{"type": "reasoning", "id": "reason-" + uuid.uuid4().hex,

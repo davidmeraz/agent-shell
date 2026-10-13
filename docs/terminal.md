@@ -90,14 +90,38 @@ se rechaza. El protocolo v2 elimina `tool.decide` y los eventos de aprobación.
 ## Procesos y límites
 
 La ejecución utiliza `/bin/sh -c` con stdin cerrado y stdout/stderr combinados.
-El entorno incluye únicamente `PATH`, `LANG` y `TERM`; no hereda las demás variables
-del backend ni inicia un perfil de login. Las herramientas instaladas sólo en
-perfiles interactivos pueden necesitar rutas explícitas.
+El entorno conserva una selección de variables de la sesión del usuario: `PATH`,
+idioma, `HOME`, directorios XDG, conexión Wayland/X11, autorización X11, D-Bus y
+configuración de Qt, entrada de texto y compositor. Así, los programas gráficos
+pueden conectarse al mismo escritorio que Agent Shell. No inventa valores de
+`DISPLAY`, `WAYLAND_DISPLAY` ni permisos: una sesión ausente o inaccesible sigue
+produciendo un error. No hereda variables arbitrarias del backend ni claves de
+API; `TERM=dumb` conserva la salida no interactiva. No inicia un perfil de login;
+las herramientas instaladas sólo en perfiles interactivos pueden necesitar rutas explícitas.
 
 El timeout es de 120 segundos y la salida se limita a 16000 caracteres Unicode.
 La salida adicional se drena sin almacenarla; un indicador señala el recorte.
 Los fragmentos UTF-8 se decodifican de forma incremental y se publican como texto
 plano, con actualizaciones agrupadas cada 250 ms.
+
+El botón **Ejecutar** de Work utiliza `ProjectRunner`, separado del turno de chat.
+En la primera ejecución, el backend adelanta una lectura acotada de manifiestos,
+instrucciones y puntos de entrada. La IA utiliza ese contexto, solicita comandos
+acotados de `shell` si faltan datos o preparación, y elige un
+único comando final con `launch_program`. Este programa se ejecuta en primer plano
+sin timeout, con el mismo entorno y límite de salida; **Detener** y cerrar Agent
+Shell terminan su grupo. La ausencia de un comando de inicio o un fallo real se
+informa en la cabecera de Work. El contexto, instrucciones, respuesta y comandos
+de detección sólo viven en memoria: no se guardan ni aparecen en el chat.
+El comando final sí se guarda en el registro privado del proyecto cuando sale
+con código cero o continúa vivo un segundo. Las siguientes ejecuciones comprueban
+la configuración y reutilizan la orden sin IA, incluso después de reiniciar y sin
+sesión de ChatGPT. Editar fuentes conserva el inicio; cambiar scripts/manifiestos,
+permisos o quitar puntos de entrada lo invalida. Un fallo de la orden guardada
+permite una nueva detección con la salida real, si hay conexión a ChatGPT.
+Sobrevivir un segundo no verifica que una aplicación ya esté lista para usarse.
+Las ventanas gráficas y servidores pueden seguir activos mientras se conversa;
+el programa no se convierte en un job de shell ni se separa de la aplicación.
 
 Cada proceso se crea en un grupo propio. **Detener**, timeout y cierre normal
 terminan el grupo con SIGKILL. No se gestionan PTY, entrada interactiva ni jobs de
@@ -136,7 +160,7 @@ elegido desde Qt dura hasta cerrar la aplicación.
 ## Validación
 
 Las pruebas ejercitan procesos locales en carpetas temporales: salida, Unicode,
-códigos de error, límite, timeout, cancelación de descendientes y entorno mínimo.
+códigos de error, límite, timeout, cancelación de descendientes y entorno de escritorio filtrado.
 El servicio HTTP local solicita llamadas estructuradas para verificar ejecución
 automática, cambios de archivos, pipelines, argumentos inválidos, persistencia,
 continuación y límites del bucle.

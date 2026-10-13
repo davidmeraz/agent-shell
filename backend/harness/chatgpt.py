@@ -2,6 +2,7 @@
 
 from .auth import RESOURCE, ChatGPTSession
 from .http import HttpClient, ServiceError, StreamControl
+from .models import EFFORTS, model_options
 
 
 class ChatGPTClient:
@@ -22,13 +23,15 @@ class ChatGPTClient:
         for model in models:
             if (isinstance(model, dict) and model.get("visibility") == "list"
                     and isinstance(model.get("slug"), str) and model["slug"]):
-                result.append({"slug": model["slug"], "display_name": model.get("display_name") or model["slug"]})
+                result.append(model_options(model))
         if not result:
             raise ServiceError("No hay modelos disponibles para tu cuenta. Revisa el acceso a tu plan.")
         return result
 
     def stream(self, model: str, messages: list[dict], instructions: str, control: StreamControl,
-               tools: list[dict] | None = None):
+               tools: list[dict] | None = None, reasoning_effort: str = ""):
+        if not isinstance(reasoning_effort, str) or (reasoning_effort and reasoning_effort not in EFFORTS):
+            raise ValueError("Esfuerzo de razonamiento inválido")
         control.check()
         control.mark("session_start")
         token = self.session.access_token()
@@ -37,6 +40,8 @@ class ChatGPTClient:
         # El contexto es local. store=false impide depender de threads o respuestas remotas guardadas.
         payload = {"model": model, "instructions": instructions, "input": messages,
                    "store": False, "stream": True}
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": reasoning_effort}
         if tools is not None:
             payload.update(tools=tools, parallel_tool_calls=False, include=["reasoning.encrypted_content"])
         # Algunos streams del plan entregan los elementos completos en

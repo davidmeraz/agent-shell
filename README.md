@@ -4,7 +4,7 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.13.0.** El chat y la terminal no requieren Codex. Consultar cuotas
+**Versión: 0.14.0.** El chat y la terminal no requieren Codex. Consultar cuotas
 desde la aplicación requiere Codex CLI, como dependencia opcional.
 Las etiquetas locales `v0.1.0` a `v0.12.0` conservan las versiones anteriores.
 
@@ -29,8 +29,10 @@ Usa **Enter** para enviar, **Shift+Enter** para un salto de línea, **Detener** 
 interrumpir y **Nuevo chat** para otra conversación. Los mensajes se pueden copiar
 y seleccionar; las respuestas presentan Markdown, tablas y bloques de código.
 
-**Cuenta** reúne los controles de sesión. **Ver uso del plan** abre una ventana
-flotante compacta con las cuotas reportadas por Codex: cada límite, su porcentaje
+**Cuenta** reúne los controles de sesión. La ventana flotante de uso se abre al
+iniciar Agent Shell y consulta las cuotas cuando la cuenta está disponible.
+**Ver uso del plan** permite volver a abrirla si la cierras. Muestra las cuotas
+reportadas por Codex: cada límite, su porcentaje
 restante, una barra fina y el tiempo hasta la renovación. El saldo coincide con
 la presentación de la web (`35% usado = 65% restante`); consumo y fecha local
 están disponibles al pasar el puntero por la renovación informada.
@@ -79,8 +81,31 @@ con código. Puedes elegirla en el explorador o escribir su ruta.
 
 Cada proyecto tiene sus conversaciones, comandos y contexto propios. La terminal
 y `/shell` usan su carpeta; la IA recibe instrucciones para inspeccionar, implementar
-y comprobar el trabajo solicitado. **Abrir carpeta** abre el proyecto en el explorador
-y **Proyectos** permite elegir otro o registrar uno nuevo.
+y comprobar el trabajo solicitado. **Proyectos** permite elegir otro o registrar uno nuevo.
+
+La primera vez, **Ejecutar** pide a la IA que detecte el inicio con las instrucciones,
+archivos y manifiestos del proyecto, usando el modelo seleccionado y uso del plan.
+El backend prepara una lectura acotada de los archivos relevantes para evitar
+consultas de inspección innecesarias. Guarda el comando por proyecto cuando termina
+con código cero o continúa activo durante un segundo. Esto comprueba el proceso,
+no garantiza que una ventana o servidor ya esté listo.
+Las siguientes ejecuciones reutilizan ese inicio localmente, sin consultar a la IA,
+incluso sin conexión a ChatGPT; se conserva al reiniciar Agent Shell.
+Si cambia la configuración de inicio o falla el comando guardado, se descarta y
+se consulta de nuevo a la IA; sin conexión se indica que hay que conectar ChatGPT.
+Editar fuentes no obliga a repetir la detección: la IA recibe instrucciones para
+elegir una orden reutilizable que incluya la compilación incremental necesaria.
+La solicitud, las respuestas y los comandos de preparación
+permanecen en una tarea interna, sin añadir mensajes, conversaciones ni métricas
+al chat. El estado aparece bajo el nombre del proyecto; al pasar el puntero por
+el botón puedes ver el comando y la salida reciente, incluidos errores.
+El botón cambia a **Detener** durante preparación o ejecución. El programa puede
+seguir activo mientras conversas o cambias entre Chat y Work; sólo se permite
+un proyecto ejecutándose a la vez. Al volver a ese proyecto puedes detenerlo.
+El proceso principal no tiene el límite de 120 segundos de `/shell`; termina
+cuando sale, lo detienes o cierras Agent Shell. La preparación sí tiene límites
+de pasos y duración. La IA utiliza los scripts existentes y no modifica el código
+fuente como parte de esta tarea. Si no puede iniciarlo, informa el obstáculo.
 
 En la lista de **Proyectos**, la papelera de cada fila permite eliminarlo después
 de confirmar. Se borran su registro de Work, conversaciones, mediciones y borradores;
@@ -100,9 +125,8 @@ antes de cambiar de espacio.
 En **Work**, los visores acompañan automáticamente el trabajo de la IA: cuando
 ejecuta una herramienta shell se abre el árbol; las carpetas afectadas se expanden
 y los archivos de texto que crea o modifica aparecen en los dos visores. Si hay
-más archivos, las ventanas rotan para mostrar los más recientes. También puedes
-pulsar **Explorador** en la cabecera del proyecto. Se abre el
-**visor de carpetas**, con un árbol expandible. Al seleccionar un archivo se abre
+más archivos, las ventanas rotan para mostrar los más recientes. El
+**visor de carpetas** tiene un árbol expandible. Al seleccionar un archivo se abre
 un **visor de archivos en otra ventana**, con texto UTF-8 de solo lectura que
 puedes seleccionar y copiar. Puedes abrir **hasta dos visores de texto a la vez**:
 cada archivo distinto ocupa una ventana libre, numerada del 1 al 2. Seleccionar
@@ -111,14 +135,26 @@ están ocupados, aparece un aviso: cierra uno para abrir otro archivo, sin reemp
 los que estás leyendo. Todas las ventanas tienen fondo de vidrio mate translúcido, reflejos suaves y
 desenfoque nativo en compositores compatibles.
 
-En Hyprland, al abrirlos se colocan como en la distribución de referencia:
+En Hyprland, Work usa una distribución calculada de tres columnas del mismo ancho:
 **carpetas arriba a la izquierda**, **visor 1 alto a la derecha** y
-**visor 2 abajo a la izquierda**. En un monitor de 2560 × 1440 con área útil
-de 2540 × 1370, las medidas son 553 × 640, 781 × 1334 y 857 × 662,
-respectivamente. La posición y
-el tamaño se adaptan al monitor de la ventana y respetan las zonas reservadas
+**visor 2 abajo a la izquierda**, con el **chat centrado** y la tarjeta de uso encima
+cuando está abierta. Los márgenes y separaciones son de 20 píxeles lógicos; el
+redondeo mantiene la simetría con una diferencia máxima de un píxel. En un monitor
+de 2560 × 1440 con área útil de 2540 × 1370, cada columna mide 820 píxeles:
+las ventanas izquierdas miden 820 × 655 y el visor derecho 820 × 1330.
+El chat aprovecha la altura restante después de descontar la altura real de uso
+y su separación; sin tarjeta abierta ocupa toda la altura de la columna.
+La posición y
+el tamaño se adaptan al monitor de la ventana principal del chat y respetan las zonas reservadas
 por barras. Al cerrar y reabrir una ventana se recupera esa disposición; seleccionar
 un archivo ya abierto no lo mueve. No se modifica la configuración de Hyprland.
+El explorador y los dos visores se abren en el mismo escritorio virtual del chat,
+aunque otro escritorio esté activo cuando la IA los abre. La colocación consulta
+la ubicación actual del chat en cada apertura, sin cambiar el escritorio activo.
+Abrir el explorador alinea también el chat y la tarjeta de uso; abrir la tarjeta en
+Work alinea la columna central. Abrir o cambiar un archivo no recoloca el chat.
+Después puedes mover y redimensionar las ventanas. En pantallas pequeñas, si el
+mosaico no cabe con los tamaños mínimos legibles, las ventanas pueden superponerse.
 Se admiten los dispatchers Lua de Hyprland 0.55+ y las órdenes anteriores.
 En otros compositores, la posición inicial la decide el gestor de ventanas.
 
@@ -141,9 +177,12 @@ al último listado de su carpeta durante esa apertura del árbol; las marcas
 del sondeo se reinician al reabrirlo; el seguimiento de la IA mantiene sus marcas
 durante el trabajo. Las eliminaciones desaparecen del árbol y los renombrados
 aparecen como eliminación y creación. Los cambios pueden venir de la IA o de otra
-aplicación: no se atribuyen al modelo. Cambiar de área, proyecto o carpeta de
-trabajo limpia los visores y cierra las ventanas de archivos; cambiar de área o
-proyecto también cierra el árbol.
+aplicación: no se atribuyen al modelo. Pasar de Work a Chat conserva el árbol,
+las carpetas expandidas, los dos archivos y su actualización automática, vinculados
+al último proyecto de Work. Volver al mismo proyecto mantiene esas vistas.
+Seleccionar otro proyecto o cambiar su carpeta limpia el árbol y cierra los
+archivos anteriores; ir a Work sin proyecto o eliminar el proyecto mostrado
+cierra sus ventanas. Cambiar el directorio de Chat no altera la carpeta de los visores.
 
 Esta base excluye `.git`, `.venv`, `venv`, `node_modules`, `__pycache__` y `.runtime`,
 y no sigue enlaces simbólicos ni admite rutas fuera del proyecto. Cada listado
@@ -210,25 +249,43 @@ Usa **← / →** para elegir, **Enter** para ejecutar, **Tab** para completar
 y **Esc** para ocultar las sugerencias.
 También puedes escribir el comando completo y pulsar **Enviar**.
 
-Al completar `/modelos` aparecen los modelos de tu cuenta en esa misma fila.
+Al completar `/modelos` aparecen las familias de tu cuenta en esa misma fila,
+por ejemplo **GPT-6**, **GPT-5** y **Otros**. Al elegir una, aparecen sus modelos;
+al elegir un modelo compatible, aparecen sus niveles de esfuerzo de razonamiento.
 Mientras escribes `/mode`, `/model` o `/modelo`, sólo se sugiere completar el
-comando; los modelos todavía no se muestran.
-Puedes filtrarlos, por ejemplo con `/modelos gpt`, y elegir con **← / →** y
-Enter o con un clic. Tab completa el
-identificador del modelo sin cambiarlo hasta que confirmes.
+comando; las familias todavía no se muestran. Usa **← / →**, Enter o un clic
+para recorrer los pasos. Tab completa o avanza sin aplicar la selección final;
+Esc conserva el borrador. La elección se aplica al confirmar el esfuerzo, o al
+confirmar un modelo que no ofrece niveles configurables.
+
+Puedes escribir `/modelos gpt-6` para mostrar esa familia; también acepta
+`/modelos gpt-6 modelos`. Un comando completo sería:
+
+```text
+/modelos gpt-6 gpt-6.1-sol high
+```
+
+El selector muestra sólo modelos disponibles para tu cuenta y esfuerzos admitidos
+por cada uno. **Auto** omite el parámetro para usar el valor predeterminado del
+servidor; por ejemplo, `/modelos gpt-6 gpt-6.1-sol auto`.
+La elección se guarda en la conversación y se recupera al reabrirla, incluso
+tras reiniciar. Una conversación antigua sin esfuerzo guardado usa Auto.
+La selección también se aplica a la detección del botón Ejecutar de Work;
+los inicios guardados siguen ejecutándose localmente sin IA.
 
 | Comando | Acción |
 | --- | --- |
 | `/ayuda` | Mostrar los comandos disponibles |
 | `/nuevo` | Preparar una conversación nueva; la anterior queda en el historial |
 | `/historial` | Abrir las conversaciones guardadas |
-| `/modelos` | Elegir modelo dentro del editor |
+| `/modelos [familia] [modelo] [esfuerzo]` | Elegir familia, modelo y esfuerzo dentro del editor |
 | `/terminal` | Cambiar el directorio de la terminal, que permanece disponible; abrir este panel no ejecuta comandos |
 | `/detener` | Cancelar la respuesta o ejecución en curso |
 | `/shell comando` | Ejecutar directamente un comando local, por ejemplo `/shell pwd`, sin consultar a la IA |
 
 Se procesan localmente y no se envían a ChatGPT ni se guardan como mensajes.
-`/modelos` acepta el identificador de un modelo y `/shell` requiere un comando;
+`/modelos` conserva la forma directa `/modelos identificador [esfuerzo]`, además
+de la selección por familia. `/shell` requiere un comando;
 los demás no aceptan argumentos. Completar `/shell` prepara `/shell ` para escribir
 la orden; la ejecución empieza al enviar el comando completo. Las sugerencias
 se ocultan al escribir los argumentos.
@@ -242,7 +299,7 @@ respuesta y usar `/detener`; el envío de mensajes espera a que termine el turno
 La barra lateral reúne nuevo chat, historial, rendimiento y cuenta. Estos accesos
 se concentran en ese panel. El centro muestra la conversación y el editor inferior
 ofrece las acciones de envío y detención. Una etiqueta discreta a la izquierda de
-Enviar muestra el modelo activo y, a su lado, el estado de la respuesta; los textos
+Enviar muestra el modelo activo con su esfuerzo explícito y, a su lado, el estado de la respuesta; los textos
 largos se recortan y pueden consultarse completos al pasar el cursor. El modelo
 recuerda el comando `/modelos` al pasar el cursor. Las sugerencias ocupan ese mismo espacio al usar
 comandos, manteniendo estable la altura del editor.
@@ -338,6 +395,9 @@ historial local, sin incorporarse al contexto que recibe la IA.
 
 La shell se ejecuta localmente con `/bin/sh -c`. La IA recibe el resultado real y
 continúa la respuesta; el chat muestra comando, salida y estado en una tarjeta.
+Los comandos conservan la conexión Wayland/X11 y D-Bus de la sesión, además de
+`HOME` y la configuración del escritorio, para poder abrir aplicaciones gráficas.
+Agent Shell debe iniciarse desde esa sesión; no crea una conexión gráfica ausente.
 Las instrucciones de la IA indican que, ante una petición simple de ejecutar un
 comando, confirme brevemente el resultado sin repetir la salida de la tarjeta.
 Si la tarea requiere análisis, interpreta los resultados sin transcribirlos;
@@ -426,13 +486,22 @@ historial, cambio de modelo y adjuntos del borrador entre áreas. Usa un PNG
 de prueba y un lector inyectado sólo en `tests/fake_backend.py`; no toca el
 portapapeles del usuario. Las pruebas unitarias comprueban por separado los
 lectores Wayland/X11, límites binarios y formato multimodal.
-`usage-smoke.qml` comprueba la tarjeta flotante compacta de cuotas, ausencia de
+`usage-smoke.qml` comprueba apertura y consulta automática al iniciar, tarjeta flotante compacta de cuotas, ausencia de
 controles/datos secundarios, barras finas, F5, chat simultáneo, cambio
 Chat/Work, cierre por Esc/compositor, sondeo visible, consulta y actualización RPC,
 datos desconocidos, reapertura, cambio de cuenta y recuperación. Usa el adaptador
 real con `tests/fake_codex.py` como proceso aislado; no ejecuta Codex instalado,
 no lee sus credenciales y no contacta a servicios externos. Las pruebas unitarias
 comprueban límites de lectura, plazos, errores, aislamiento y limpieza del proceso.
+`models-smoke.qml` comprueba familias, esfuerzos compatibles, Auto, navegación
+con teclado/clic, editor estable, borradores y restauración por conversación,
+con catálogo y HTTP locales. Las pruebas de backend verifican el parámetro
+real enviado, continuidad de herramientas, persistencia e inicio de Work.
+
+`project-run-smoke.qml` comprueba Ejecutar/Detener con detección por HTTP local, reutilización del inicio sin IA y
+un proceso real: tarea sin mensajes ni historial, borrador conservado, chat
+simultáneo, repetición y cambios Chat/Work. Las pruebas unitarias también ejercitan
+fallos, cancelación de preparación, aislamiento y terminación de descendientes.
 `activity-smoke.qml` comprueba herramientas de IA por HTTP con comandos reales:
 apertura automática, carpetas, escritura por partes, animación, rotación de visores,
 renombrado, eliminación, reapertura, cancelación y aislamiento entre áreas.

@@ -10,6 +10,7 @@ ShellRoot {
     id: scenario
     property int stage: 0
     property var explorer: null
+    property string savedProjectId: ""
     readonly property var viewer: explorer ? explorer.activeFileWindow : null
     AgentBridge { id: agent }
     ChatWindow { id: chat; bridge: agent; implicitWidth: 700; implicitHeight: 680 }
@@ -37,9 +38,12 @@ ShellRoot {
             } else if (scenario.stage === 2) {
                 if (agent.busy) return;
                 scenario.explorer = chat.explorerWindow;
-                const button = inspector.findChild(chat, "workExplorerButton");
-                if (!scenario.check(!!scenario.explorer && button.visible && button.enabled, "ventana o botón ausente")) return;
-                inspector.mouseClick(button);
+                if (!scenario.check(!!scenario.explorer && !inspector.findChild(chat, "workExplorerButton"), "ventana ausente o botón manual conservado")) return;
+                if (!scenario.check(scenario.explorer.mainWindowTitle === chat.title
+                    && scenario.explorer.firstFileWindow.mainWindowTitle === chat.title
+                    && scenario.explorer.secondFileWindow.mainWindowTitle === chat.title,
+                    "el explorador o los visores no siguen la identidad de la ventana principal")) return;
+                scenario.explorer.visible = true;
                 const surface = inspector.findChild(scenario.explorer, "projectExplorerMatteSurface");
                 if (!scenario.check(!!surface && surface.waterReflection && surface.radius === 20
                     && surface.topColor.a < 1 && surface.bottomColor.a < 1
@@ -155,7 +159,7 @@ ShellRoot {
                     "cierre nativo conserva visibilidad o lecturas pendientes")) return;
                 scenario.stage = 16;
             } else if (scenario.stage === 16) {
-                inspector.mouseClick(inspector.findChild(chat, "workExplorerButton"));
+                scenario.explorer.visible = true;
                 if (!scenario.check(scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer => !viewer.visible),
                     "el explorador no reabre independientemente tras cierre nativo")) return;
                 scenario.stage = 17;
@@ -172,13 +176,61 @@ ShellRoot {
                 const windows = scenario.explorer.fileWindows;
                 if (windows[0].preview !== "cuarto" || windows[1].preview !== "independiente") return;
                 if (!scenario.check(windows.every(viewer => viewer.visible), "los visores no reabren tras cierre nativo")) return;
+                scenario.savedProjectId = agent.projectId;
                 agent.selectArea("chat");
                 scenario.stage = 20;
             } else if (scenario.stage === 20) {
                 if (agent.areaBusy || agent.activeArea !== "chat") return;
-                if (!scenario.check(!scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer =>
-                    !viewer.visible && !viewer.filePath && !viewer.preview), "cambio de área conserva ventana o texto")) return;
-                console.log("EXPLORER_OK: dos visores, límite, reutilización, ventanas separadas, vidrio mate, carpetas, texto, cambios, Esc por ventana, cierre nativo, reapertura y limpieza por área");
+                const windows = scenario.explorer.fileWindows;
+                if (!scenario.check(scenario.explorer.visible && windows.every(viewer => viewer.visible)
+                    && windows[0].preview === "cuarto" && windows[1].preview === "independiente"
+                    && scenario.explorer.projectId === savedProjectId && !agent.projectId
+                    && scenario.explorer.expanded["src"], "Chat pierde las vistas, el contexto o las carpetas expandidas")) return;
+                agent.submit("/shell printf desde-chat > src/fourth.txt; printf segundo-chat > src/renamed.txt; touch src/in-chat.txt");
+                scenario.stage = 21;
+            } else if (scenario.stage === 21) {
+                if (agent.busy) return;
+                scenario.explorer.refresh();
+                for (const viewer of scenario.explorer.fileWindows) viewer.refresh();
+                if (scenario.explorer.fileWindows[0].preview !== "desde-chat"
+                    || scenario.explorer.fileWindows[1].preview !== "segundo-chat" || !scenario.row("src/in-chat.txt")) return;
+                agent.selectArea("work", savedProjectId);
+                scenario.stage = 22;
+            } else if (scenario.stage === 22) {
+                if (agent.areaBusy || agent.activeArea !== "work") return;
+                if (!scenario.check(scenario.explorer.expanded["src"] && scenario.row("src/in-chat.txt")
+                    && scenario.explorer.fileWindows.every(viewer => viewer.visible && viewer.projectId === savedProjectId),
+                    "volver al mismo proyecto reinicia los visores")) return;
+                agent.submit("/shell mkdir -p next-project; printf nuevo > next-project/main.txt");
+                scenario.stage = 23;
+            } else if (scenario.stage === 23) {
+                if (agent.busy) return;
+                agent.createProject("Otro proyecto", agent.workspace + "/next-project");
+                scenario.stage = 24;
+            } else if (scenario.stage === 24) {
+                if (agent.areaBusy || agent.projectId === savedProjectId || !scenario.row("main.txt")) return;
+                if (!scenario.check(scenario.explorer.projectId === agent.projectId
+                    && scenario.explorer.projectWorkdir === agent.workspace
+                    && !scenario.row("src") && scenario.explorer.fileWindows.every(viewer => !viewer.visible && !viewer.preview),
+                    "otro proyecto hereda archivos o rutas del anterior")) return;
+                scenario.savedProjectId = agent.projectId;
+                scenario.explorer.openFile("main.txt");
+                scenario.stage = 25;
+            } else if (scenario.stage === 25) {
+                if (scenario.viewer.preview !== "nuevo") return;
+                agent.selectArea("chat");
+                scenario.stage = 26;
+            } else if (scenario.stage === 26) {
+                if (agent.areaBusy || agent.activeArea !== "chat") return;
+                if (!scenario.check(scenario.viewer.visible && scenario.viewer.preview === "nuevo", "Chat pierde el segundo proyecto")) return;
+                agent.deleteProject(savedProjectId);
+                scenario.stage = 27;
+            } else if (scenario.stage === 27) {
+                if (agent.areaBusy) return;
+                if (!scenario.check(!scenario.explorer.visible && !scenario.explorer.projectId
+                    && scenario.explorer.fileWindows.every(viewer => !viewer.visible && !viewer.preview),
+                    "eliminar en Chat conserva los visores del proyecto retirado")) return;
+                console.log("EXPLORER_OK: dos visores, límite, lectura viva en Chat, vuelta a Work sin perder carpetas/archivos, aislamiento al cambiar de proyecto, eliminación desde Chat, cierre nativo y reapertura");
                 steps.stop(); Qt.callLater(Qt.quit);
             }
         }

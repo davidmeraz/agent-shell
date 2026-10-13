@@ -31,7 +31,7 @@ flowchart LR
   locales. `AgentBridge.submit` los resuelve antes del envío HTTP; `ChatWindow`
   abre sus paneles y `MessageComposer` ofrece sugerencias en la fila de envío,
   dentro de un espacio reservado de altura fija para evitar desplazar el chat.
-  `/modelos` filtra modelos de la cuenta y confirma su selección localmente;
+  `/modelos` organiza familias → modelos → esfuerzos y confirma la selección localmente;
   el editor no incluye un selector de modelos adicional. `/shell comando` envía
   `shell.execute` para ejecutar directamente sin solicitar una respuesta de IA.
 - `HarnessServer`: valida instrucciones, construye contexto local, coordina
@@ -41,7 +41,15 @@ flowchart LR
 - `HttpClient`: HTTPS verificado sin redirecciones automáticas, errores sin
   diagnósticos privados, lectura SSE y cierre de sockets al cancelar.
 - `ChatGPTClient`: descubre modelos de la cuenta y solicita respuestas.
+- `models.py`: agrupa slugs por generación y normaliza compatibilidad de esfuerzo;
+  usa los niveles anunciados por el catálogo (`supported_reasoning_levels` o
+  `supported_reasoning_efforts`) antes de la tabla limitada de modelos documentados.
+  Un slug desconocido sin datos conserva el valor predeterminado del servidor.
+  No añade modelos que la cuenta no haya anunciado.
 - `ShellExecutor`: ejecuta automáticamente comandos validados, acota la salida y termina grupos de procesos.
+- `ProjectRunner`: tarea interna para inspeccionar un proyecto con el modelo
+  seleccionado e iniciarlo mediante `launch_program`, sin mensajes ni persistencia
+  de chat. Mantiene control HTTP/shell independiente del turno conversacional.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
 - `images.py`: valida imágenes y construye contenido multimodal de Responses.
@@ -160,6 +168,62 @@ todavía no hay compactación.
 
 ## Persistencia y ciclo de vida
 
+La conversación conserva `reasoning_effort` como metadato opcional del esquema 1.
+Una selección válida se guarda antes de cambiar el estado; un fallo de escritura
+conserva modelo, esfuerzo y conversación anteriores. Al reabrir se restaura sólo
+un nivel aún compatible; si falta o deja de estar disponible, usa Auto. Un modelo
+guardado que ya no está disponible tampoco hereda el esfuerzo de otro chat. La selección
+sin conversación abierta permanece en memoria hasta crear una conversación.
+Cada turno captura modelo y esfuerzo y mantiene ambos en todas sus llamadas de
+herramientas. `ChatGPTClient` añade `reasoning: {effort: …}` sólo cuando el nivel
+es explícito; Auto conserva las solicitudes anteriores sin ese campo. No se
+modifica el contexto de mensajes ni se añade un comando al historial por elegirlo.
+La compatibilidad de respaldo procede de la [guía de razonamiento de OpenAI](https://developers.openai.com/api/docs/guides/reasoning)
+y las páginas oficiales de los modelos, no de una dependencia del CLI Codex.
+
+`project.run` captura el identificador del proyecto, su carpeta y modelo, valida
+ausencia de otra ejecución, y reserva un `execution_id`. `LaunchCache` compara
+el inicio persistido con una lectura local antes de consultar al modelo. Si sigue
+vigente, lanza la orden sin IA ni autenticación. Para detectar necesita sesión y
+modelo disponibles. El trabajador realiza hasta ocho solicitudes/comandos con contexto efímero. Sólo
+ejecuta herramientas después de `response.completed` confirmado; valida argumentos
+e identificadores, conserva resultados y razonamiento cifrado únicamente en memoria.
+`launch_program` inicia un proceso en primer plano sin timeout mediante el mismo
+ejecutor y entorno de escritorio. `project.run.state` publica fases, comando,
+salida acotada y resultado para la cabecera de Work; nunca emite eventos de chat,
+herramientas conversacionales o rendimiento, ni crea una conversación.
+
+`launch_profile` es un campo opcional del registro privado del proyecto, con
+versión propia 1, carpeta, comando, huella SHA-256, rutas observadas y fecha de
+validación. El guardado es atómico; una actualización de caché no puede revertir
+un cambio de carpeta concurrente. Cambiar de carpeta elimina el perfil. La interfaz
+recibe sólo `has_launch_profile` y eventos `project.run.cache`, sin el perfil completo.
+El comando se guarda al terminar con código cero o sobrevivir un segundo; no es
+una prueba de disponibilidad del servicio. Detener antes de validar no lo guarda;
+un fallo posterior lo invalida. Un inicio guardado fallido permite una nueva
+detección, una sola vez, con su salida real en el contexto interno.
+
+`project_snapshot` observa manifiestos, locks, instrucciones, README y scripts
+de inicio raíz, los scripts `scripts/{run,start,dev}.sh` y archivos locales citados
+literalmente por la orden. Compara contenido y permisos de configuración/scripts;
+en fuentes compara presencia y permisos, conservando la orden al editar código.
+No añade logs generados a la huella. La lectura no recorre directorios: hasta
+256 entradas raíz, 64 archivos, 1 MiB por archivo y 8 MiB totales. Exceder los
+límites de comprobación desactiva el guardado. El contexto previo contiene hasta
+4 KiB por archivo y 32 KiB totales; excluye `.env`, binarios, enlaces y rutas
+fuera del proyecto. Los archivos referenciados mediante variables o subcomandos
+de shell no se resuelven automáticamente; un fallo de inicio fuerza la revisión.
+
+Chat y cambios de área siguen disponibles. El proceso y su carpeta se conservan
+por proyecto hasta finalizar o detenerlo; los eventos se asocian al identificador
+capturado, y las actualizaciones de trabajadores antiguos se descartan. No se
+puede eliminar el proyecto mientras está activo. El cambio de cuenta se bloquea
+durante la detección; una vez iniciado el programa no hay solicitudes de IA pendientes.
+Detener cancela HTTP y el grupo de procesos propio, sin cancelar una respuesta
+de chat simultánea; cerrar el backend también cancela el ejecutor del proyecto.
+La cabecera contiene Ejecutar/Detener y Proyectos; los visores conservan su apertura
+automática durante el trabajo normal de la IA, sin botones manuales de exploración.
+
 Los chats antiguos pertenecen al área Chat. Los nuevos registros añaden `area`
 y `project_id` sin cambiar el esquema 1. `HarnessServer` filtra el historial por
 estos campos y mantiene una conversación abierta por área/proyecto durante la
@@ -215,10 +279,30 @@ seguida de continuación desde ese contexto con la terminal desactivada.
 
 La posición inicial del árbol y los dos visores en Hyprland se aplica con
 `scripts/place-text-viewer.py`: espera acotada al mapeo, selección por PID y título
-y operaciones por dirección de ventana. Las carpetas quedan arriba a la izquierda,
-el visor 1 alto a la derecha y el 2 abajo a la izquierda, en coordenadas lógicas
-del monitor y descontando las
-zonas reservadas. Sólo actúa en la apertura; no instala reglas globales ni impide
+y operaciones por dirección de ventana. `ChatWindow` pasa su título actual al
+explorador y los dos visores; el helper consulta sólo la ventana principal del
+mismo proceso para tomar su monitor y escritorio virtual. Si el auxiliar aparece
+en otro escritorio, lo traslada con `follow=false` (Lua) o
+`movetoworkspacesilent` (versiones anteriores), sin activar el escritorio destino
+ni activar ventanas ajenas. Los escritorios numerados usan su ID; los nombrados y especiales
+usan su selector validado, incluidos los IDs negativos de Hyprland. Si falta la ventana principal o hay
+una identidad ambigua, la espera termina sin actuar sobre otras ventanas.
+La geometría descuenta escala, rotación y zonas reservadas del monitor. Con ancho
+útil W, margen m y separación g de 20 píxeles lógicos, cada columna mide
+floor((W − 2m − 2g) / 3). Las columnas laterales se anclan a los márgenes y la
+central a round((W − ancho_columna) / 2): el sobrante de redondeo se reparte con
+una diferencia máxima de un píxel. Las dos ventanas izquierdas tienen la misma
+altura floor((H − 2m − g) / 2), alineadas con los bordes superior e inferior del
+visor derecho. La tarjeta de uso ocupa la cabecera central con su altura nativa
+actual; el chat ocupa el resto, o toda la columna cuando la tarjeta no está abierta.
+Abrir el árbol coloca también el chat y la tarjeta de uso del mismo PID, si está
+mapeada; abrir uso en Work coloca esa tarjeta y el chat. Una variación de altura
+del contenido de uso actualiza la columna central con un temporizador de 120 ms.
+Abrir o rotar archivos no recoloca el chat ni los otros visores. En Chat la tarjeta
+no se coloca automáticamente y su ancho inicial sigue siendo 320 píxeles.
+En pantallas donde los mínimos no caben,
+se prioriza la legibilidad y se limita la geometría al área útil, con posible
+superposición. Sólo actúa al abrir o al ajustar la altura de uso; no instala reglas globales ni impide
 mover o redimensionar las ventanas. Detecta la versión para usar dispatchers Lua
 desde Hyprland 0.55 o las órdenes anteriores, siguiendo los
 [dispatchers documentados](https://wiki.hypr.land/0.56.0/Configuring/Basics/Dispatchers/).
@@ -232,6 +316,20 @@ a mostrar la misma ventana; Esc también la oculta. La franja de ruta permite
 arrastrar la ventana, con metadatos discretos en el pie y sin botones ni títulos
 grandes. El árbol muestra las entradas visibles y el texto su número de líneas,
 estado de solo lectura y aviso cuando la vista previa es parcial.
+
+El explorador conserva su propio registro de proyecto y lo comparte con ambos
+visores, separado de `AgentBridge.projectId` y el directorio de Chat. Cambiar de
+Work a Chat conserva las ventanas, expansiones y lecturas periódicas; regresar al
+mismo proyecto no reinicia la vista. En Chat el servidor permite leer sólo el
+último proyecto de Work de la sesión, cargando su registro y confinando las rutas
+a esa carpeta. Seleccionar otro proyecto o cambiar su carpeta invalida las
+solicitudes anteriores y limpia los archivos; Work sin proyecto, borrado del
+proyecto mostrado y desconexión del backend cierran las vistas correspondientes.
+
+`ChatWindow` abre la tarjeta de uso una vez al completar su creación, sin solicitar
+su activación. Si el backend o la cuenta aún no están disponibles, la tarjeta
+consulta al terminar la actualización de cuenta o el login. Cerrarla conserva la
+decisión del usuario durante esa sesión: los cambios de área/cuenta no la reabren.
 
 `ProjectActivity` observa con inotify sólo durante `_run_tool` en Work. Instala
 observadores acotados antes de lanzar shell, incluye nuevas carpetas y agrupa

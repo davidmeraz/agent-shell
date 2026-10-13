@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -15,6 +16,7 @@ class ProjectStore:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._lock = threading.RLock()
 
     def _path(self, project_id: str) -> Path:
         if not isinstance(project_id, str) or not re.fullmatch(r"[0-9a-f]{32}", project_id):
@@ -34,6 +36,10 @@ class ProjectStore:
         return project
 
     def save(self, project: dict) -> None:
+        with self._lock:
+            self._save(project)
+
+    def _save(self, project: dict) -> None:
         destination = self._path(project["project_id"])
         payload = {**project, "updated_at": now()}
         temporary = None
@@ -50,6 +56,30 @@ class ProjectStore:
         finally:
             if temporary:
                 temporary.unlink(missing_ok=True)
+
+    def update_launch_profile(self, project_id: str, workspace: str, profile) -> bool:
+        """Actualiza sólo el inicio, preservando cambios de carpeta concurrentes."""
+        with self._lock:
+            project = self.load(project_id)
+            if project["workdir"] != workspace:
+                return False
+            if profile is None:
+                if "launch_profile" not in project:
+                    return True
+                project.pop("launch_profile")
+            else:
+                project["launch_profile"] = profile
+            self.save(project)
+            return True
+
+    def update_workdir(self, project_id: str, workspace: str) -> dict:
+        with self._lock:
+            project = self.load(project_id)
+            if project["workdir"] != workspace:
+                project.pop("launch_profile", None)
+            project["workdir"] = workspace
+            self.save(project)
+            return project
 
     def create(self, name: str, workdir: str) -> dict:
         if not isinstance(name, str) or not name.strip() or len(name) > 80 or "\0" in name:

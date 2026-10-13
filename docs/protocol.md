@@ -8,10 +8,14 @@ Este sobre no se envía a OpenAI: Python traduce las instrucciones a OAuth/HTTP.
 Los comandos escritos con `/` se resuelven en Qt antes de enviar mensajes.
 `/nuevo` y `/detener` usan `chat.new` y `chat.cancel`; `/historial` abre el panel
 y solicita la lista cuando corresponde. `/ayuda` y `/terminal` abren controles
-locales; `/modelos` muestra modelos dentro del editor sólo al completar ese
+locales; `/modelos` muestra familias dentro del editor sólo al completar ese
 nombre. `/mode`, `/model` y `/modelo` son prefijos para sugerir completar el
 comando, sin activar la selección. El editor no tiene selector de modelos.
-Confirmar un modelo usa `model.select` con un slug validado del catálogo.
+El recorrido es familia → modelo → esfuerzo; no aplica cambios durante los pasos
+intermedios ni al completar con Tab. Acepta `/modelos gpt-6 modelos` para listar
+la familia y `/modelos gpt-6 gpt-6.1-sol high` para la selección completa.
+Conserva `/modelos slug [esfuerzo]`. Confirmar usa `model.select` con un slug
+y esfuerzo validados del catálogo; `auto` se transforma en la cadena vacía.
 Aplicar configuración de terminal usa las instrucciones
 existentes; ningún comando con `/` se traduce a `chat.send`.
 `/shell comando` usa `shell.execute` con el texto de la orden, conservando comillas,
@@ -27,8 +31,8 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `area.select` | `area: chat/work`, `project_id` opcional | Cambiar de área o proyecto y restaurar la conversación de la sesión |
 | `project.create` | `name`: 1–80 caracteres, `workdir` | Registrar una carpeta existente y abrir su proyecto en Work |
 | `project.delete` | `project_id` | Eliminar registro e historiales válidos del proyecto, conservando su carpeta local |
-| `explorer.list` | `project_id`, `request_id`, `path` relativa (vacía para raíz) | Listar una carpeta del proyecto activo, sin inferencia |
-| `explorer.read` | `project_id`, `request_id`, `path` relativa | Leer vista previa UTF-8 de un archivo del proyecto activo |
+| `explorer.list` | `project_id`, `request_id`, `path` relativa (vacía para raíz) | Listar una carpeta del proyecto activo o el último de Work conservado en Chat, sin inferencia |
+| `explorer.read` | `project_id`, `request_id`, `path` relativa | Leer vista previa UTF-8 del proyecto activo o el último de Work conservado en Chat |
 | `projects.list` | Ninguno | Consultar los proyectos registrados sin contactar a OpenAI |
 | `chat.cancel` | Ninguno | Cerrar streaming o detener shell local; conservar el texto y la salida parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
@@ -42,7 +46,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
 | `auth.refresh` | Ninguno | Leer sesión y actualizar catálogo |
 | `auth.logout` | Ninguno | Revocar y cerrar la sesión local |
-| `model.select` | `model` | Seleccionar un slug del catálogo de la cuenta |
+| `model.select` | `model`, `reasoning_effort` opcional: nivel admitido o `""` para Auto | Selección atómica; si falta el esfuerzo conserva el actual para el mismo modelo y usa Auto al cambiarlo; persiste en la conversación abierta |
 | `performance.list` | Ninguno | Consultar los últimos 200 turnos medidos de todos los chats, sin llamadas a OpenAI |
 | `usage.read` | `request_id`: 1–128 caracteres | Consultar cuotas de la sesión ChatGPT de Codex, sin inferencia |
 | `performance.presented` | `turn_id`, `first_visible_ms`, `ui_frame_ms` | Confirmar la aproximación de presentación del primer texto en Qt |
@@ -72,6 +76,22 @@ que su carpeta exista y no contacta a OpenAI.
 
 ## Eventos Python → Qt
 
+Work admite además `{"type":"project.run","project_id":"…"}` y
+`{"type":"project.run.stop","project_id":"…","execution_id":"…"}`.
+El inicio exige el proyecto activo y ausencia de otra
+ejecución o turno de chat en curso; el prompt pertenece al backend y no admite
+argumentos de texto/comando desde Qt. Detener valida ambos identificadores para
+evitar cancelar una ejecución posterior. El programa admite conversación y cambios
+de área simultáneos, mantiene su carpeta y se cancela al cerrar el backend.
+El proyecto que se ejecuta no puede eliminarse. No cambia el historial ni crea
+mensajes, herramientas conversacionales o mediciones. Son ampliaciones compatibles
+de NDJSON v2; `execution_id` viaja en `data`, separado del `run_id` del sobre.
+La detección requiere sesión/modelo disponibles; un inicio guardado válido puede
+ejecutarse sin autenticación. Si la configuración cambia o la orden guardada falla,
+se invalida y se vuelve a detectar una vez. Sin sesión se informa el impedimento.
+Los proyectos visibles incluyen `has_launch_profile` como indicación de inicio
+guardado, aún sujeto a comprobar su huella al ejecutar; excluyen `launch_profile`.
+
 Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 `type`, `run_id: null` y `data`. La secuencia se serializa entre trabajadores.
 
@@ -96,8 +116,11 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `usage.state` | `request_id`, `source: codex`, `account: {email, plan}`, `limits`, `summary` opcional y `checked_at` UTC |
 | `usage.error` | `request_id`, `code`, `message` local apto para mostrar |
 | `usage.finished` | `request_id`: libera el estado de consulta de la interfaz |
-| `models.list` | `models`: slug y display_name; `selected` |
-| `model.selected` | `model`: slug |
+| `models.list` | `models`: `slug`, `display_name`, `family`, `reasoning_efforts` y `default_reasoning_effort`; `selected`, `reasoning_effort` activo |
+| `model.selected` | `model`: slug; `reasoning_effort`: selección explícita o `""` para Auto |
+| `project.run.state` | `execution_id`, `project_id`, `model`, `reasoning_effort`, `workdir`, `phase: preparing/inspecting/starting/running/stopping/completed/failed/interrupted`, `command`, `output`, `exit_code`, `message`, `source: ai/cache`, `cache_available`; `duration_ms` y `truncated` al terminar el programa |
+| `project.run.cache` | `project_id`, `available`: actualiza la disponibilidad del inicio guardado, sin publicar su perfil privado |
+| `project.run.rejected` | `project_id`, `message`: inicio o detención inválidos; no modifica la ejecución activa ni añade mensajes al chat |
 | `chat.busy` | `turn_id` del mensaje de usuario y la medición |
 | `chat.thread` | `thread_id`: id del chat local; `model` |
 | `chat.saved` | `chat_id`, `title` |
@@ -257,7 +280,10 @@ reautorización y debe tratarse como información privada.
 
 Ampliación compatible de v2. Las lecturas funcionan sin sesión y durante una
 respuesta o shell; no cambian conversación, directorio ni historial. Sólo se
-aceptan solicitudes para el proyecto activo en Work. `request_id` es una cadena
+aceptan solicitudes para el proyecto activo en Work o, mientras está seleccionado
+Chat, para el último proyecto de Work de esta sesión. En Chat se carga y valida
+su registro; las lecturas se anclan a su carpeta, no al directorio del chat. Otros
+proyectos y registros eliminados o inválidos se rechazan. `request_id` es una cadena
 de hasta 128 caracteres y `path` una cadena de hasta 4096, sin NUL, rutas absolutas
 ni componentes `..`. No se siguen enlaces simbólicos en ningún componente;
 las carpetas excluidas por el explorador tampoco son accesibles por solicitud.
@@ -284,8 +310,12 @@ Con dos visores visibles, el tercer archivo muestra un aviso local, sin solicita
 lectura ni reemplazar contenido. Cerrar una ventana descarta sus solicitudes pendientes y no
 cierra ni detiene la otra. Seleccionar otro archivo invalida la lectura anterior;
 las respuestas con un identificador no pendiente o de otro proyecto se descartan.
-Cambiar de espacio limpia ambos estados y cierra las ventanas; cambiar la carpeta
-de trabajo limpia el árbol y cierra todos los visores. Las marcas de cambios son locales al
+Qt mantiene el contexto del explorador (`project_id`, nombre y carpeta) separado
+del área activa del chat. Pasar a Chat y regresar al mismo proyecto conserva
+ventanas, carpetas expandidas, contenido y sondeo. Cambiar de proyecto o su carpeta
+limpia el árbol y cierra los archivos; Work sin proyecto, `project.deleted` para el
+contexto mostrado y desconexión del backend limpian ese contexto y cierran las ventanas.
+Las marcas de cambios son locales al
 árbol y no prueban autoría de la IA. El sondeo manual no consulta carpetas plegadas
 ni ofrece un registro persistente de modificaciones. El seguimiento de herramientas
 de IA se describe a continuación.

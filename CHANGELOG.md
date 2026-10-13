@@ -3,6 +3,17 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.14.0] — 2026-10-12
+
+- Uso del plan abierto al iniciar, con consulta automática al estar disponible la cuenta; explorador y visores conservados y actualizados entre Work y Chat, contexto de proyecto independiente, retorno sin perder carpetas/archivos e invalidación al cambiar o eliminar el proyecto.
+- Distribución simétrica de Work en Hyprland: tres columnas iguales, chat centrado con uso encima, dos ventanas izquierdas de igual altura, márgenes y separaciones uniformes; adaptación al área útil y altura real de las cuotas, con reapertura y libertad de movimiento posterior.
+- El explorador y los dos visores de texto se colocan en el escritorio virtual y monitor de la ventana principal del chat en Hyprland, también al reabrirlos y durante aperturas automáticas de la IA; traslado silencioso sin cambiar el escritorio activo.
+- Selector `/modelos` por familias, modelos y esfuerzo de razonamiento en la misma franja compacta; navegación con flechas laterales, compatibilidad por modelo, Auto, envío real del esfuerzo a Responses y detección de Work, y persistencia por conversación sin crear mensajes de chat.
+- Inicio rápido por proyecto: lectura previa acotada para la detección, guardado persistente del comando y siguientes ejecuciones locales sin IA; comprobación de configuración, recuperación de un inicio fallido y uso sin conexión cuando la orden guardada sigue vigente.
+- Botón Ejecutar/Detener en Work, sustituyendo Explorador y Abrir carpeta: la IA detecta el inicio del proyecto mediante archivos reales en una tarea interna, sin mensajes ni historial de chat; programa persistente, estado y salida reciente discretos, conversación simultánea, cancelación y aislamiento por proyecto.
+- Corrección del entorno de shell: conserva la sesión Wayland/X11, autorización X11, D-Bus y configuración del escritorio para abrir aplicaciones gráficas desde comandos locales o de la IA, sin heredar variables arbitrarias del backend; pruebas de Wayland, X11 y ausencia de sesión gráfica.
+- Validación con 230 pruebas del backend, revisión QML y 12 escenarios de interfaz; disposición de cinco ventanas, apertura inicial de uso, conservación entre Chat/Work y reapertura comprobadas en Hyprland real con un backend de prueba, sin inferencia ni OAuth reales.
+
 ## [0.13.0] — 2026-10-12
 
 - Uso del plan en tarjeta flotante compacta: sólo límites, porcentajes restantes, barras finas y renovación; 320 píxeles de ancho y altura adaptativa, sin cabecera, botones ni datos secundarios, arrastre desde la tarjeta, Esc/F5, actualización sólo visible y reapertura, con chat simultáneo y conservación entre Chat/Work.

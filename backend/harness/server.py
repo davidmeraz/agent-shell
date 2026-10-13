@@ -21,6 +21,9 @@ from .events import EventEmitter
 from .context import append_result, close_pending_calls, replay_items, visible_chat
 from .history import HistoryStore
 from .projects import ProjectStore
+from .project_runner import ProjectRunner
+from .models import validate_effort
+from .launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
 from .performance import TurnPerformance
 from .shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
@@ -65,6 +68,7 @@ class HarnessServer:
         self.client = client
         self.conversation: dict | None = None
         self.model = model
+        self.reasoning_effort = ""
         self.models: list[dict] = []
         self.authenticated = False
         self.busy = False
@@ -86,6 +90,7 @@ class HarnessServer:
         self.shell_enabled = True
         self._shell_control = ShellControl(self._stream.cancelled)
         self._local_call: dict | None = None
+        self.project_runner = ProjectRunner(self._emit, LaunchCache(self.projects))
 
     def _emit(self, event_type: str, **data) -> None:
         if not self._closing.is_set():
@@ -116,11 +121,45 @@ class HarnessServer:
         return "chat" if self.active_area == "chat" else "work:" + (self.project["project_id"] if self.project else "")
 
     def _publish_area(self) -> None:
-        self._emit("area.state", area=self.active_area, project=self.project)
+        project = self._visible_project(self.project) if self.project else None
+        self._emit("area.state", area=self.active_area, project=project)
         self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT)
 
     def _publish_projects(self) -> None:
-        self._emit("projects.list", projects=self.projects.list())
+        self._emit("projects.list", projects=[self._visible_project(project) for project in self.projects.list()])
+
+    def _model_options(self, slug=None):
+        return next((row for row in self.models if row["slug"] == (self.model if slug is None else slug)), {})
+
+    def _restore_model(self, record):
+        self.reasoning_effort = ""
+        if record.get("model") in {row["slug"] for row in self.models}:
+            self.model = record["model"]
+            effort = record.get("reasoning_effort", "")
+            self.reasoning_effort = effort if isinstance(effort, str) and effort in self._model_options().get("reasoning_efforts", []) else ""
+
+    def _publish_model(self):
+        self._emit("model.selected", model=self.model, reasoning_effort=self.reasoning_effort)
+
+    def _select_model(self, request):
+        if not isinstance(request.get("model"), str) or not request["model"]:
+            raise ValueError("Selecciona un modelo disponible en tu cuenta")
+        model = self._model_options(request.get("model"))
+        if not model or set(request) - {"type", "model", "reasoning_effort"}:
+            raise ValueError("Selecciona un modelo disponible en tu cuenta")
+        current = self.reasoning_effort if model["slug"] == self.model else ""
+        effort = validate_effort(model, request.get("reasoning_effort", current))
+        if self.conversation is not None:
+            record = {**self.conversation, "model": model["slug"], "reasoning_effort": effort}
+            self.history.save(record)
+            self.conversation = record
+        self.model, self.reasoning_effort = model["slug"], effort
+        self._publish_model()
+
+    def _visible_project(self, project):
+        visible = {key: value for key, value in project.items() if key != "launch_profile"}
+        visible["has_launch_profile"] = bool(self.project_runner.cache.load(project["project_id"], Path(project["workdir"])))
+        return visible
 
     def _select_area(self, area: str, project_id: str | None = None) -> None:
         if area not in ("chat", "work"):
@@ -156,10 +195,9 @@ class HarnessServer:
         if self.conversation is None:
             self._emit("chat.reset")
         else:
-            if self.conversation.get("model") in {row["slug"] for row in self.models}:
-                self.model = self.conversation["model"]
+            self._restore_model(self.conversation)
             self._emit("chat.loaded", chat=visible_chat(self.conversation))
-        self._emit("model.selected", model=self.model)
+        self._publish_model()
         self._publish_history()
 
     def _create_conversation(self, prompt: str) -> dict:
@@ -167,6 +205,8 @@ class HarnessServer:
 
     def _delete_project(self, project_id: str) -> None:
         """Retira sólo registros privados; nunca recorre ni borra la carpeta del proyecto."""
+        if self.project_runner.active and self.project_runner.state.get("project_id") == project_id:
+            raise ValueError("Detén el programa antes de eliminar su proyecto.")
         self.projects.load(project_id)
         chats = [row["chat_id"] for row in self.history.list()
                  if row["area"] == "work" and row["project_id"] == project_id]
@@ -238,7 +278,10 @@ class HarnessServer:
                 allowed = {row["slug"] for row in models}
                 if self.model not in allowed:
                     self.model = models[0]["slug"] if models else ""
-                self._emit("models.list", models=models, selected=self.model)
+                    self.reasoning_effort = ""
+                if self.reasoning_effort not in self._model_options().get("reasoning_efforts", []):
+                    self.reasoning_effort = ""
+                self._emit("models.list", models=models, selected=self.model, reasoning_effort=self.reasoning_effort)
                 self._publish_account()
         except (ServiceError, OSError) as error:
             with self._lock:
@@ -327,10 +370,9 @@ class HarnessServer:
                 measurement["total_ms"] = measurement["elapsed_ms"]
         self.conversation = record
         self._performance = None
-        if record.get("model") in {row["slug"] for row in self.models}:
-            self.model = record["model"]
+        self._restore_model(record)
         self._emit("chat.loaded", chat=visible_chat(record))
-        self._emit("model.selected", model=self.model)
+        self._publish_model()
 
     def _delete_chat(self, chat_id: str) -> None:
         if not self._matches_area(self.history.load(chat_id)):
@@ -610,7 +652,7 @@ class HarnessServer:
                            turn_id=call["turn_id"], **change)
 
     def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
-                    generation: int) -> None:
+                    generation: int, reasoning_effort: str = "") -> None:
         try:
             with self._lock:
                 instructions = AGENT_INSTRUCTIONS
@@ -635,7 +677,8 @@ class HarnessServer:
                     if not self._current_turn(generation):
                         return
                     self._performance.begin_model_call()
-                stream = self.client.stream(model, messages, instructions, control, tools=[SHELL_TOOL])
+                stream = self.client.stream(model, messages, instructions, control, tools=[SHELL_TOOL],
+                                            reasoning_effort=reasoning_effort)
                 for event in stream:
                     terminal = self._response_event(event, generation, defer_completion=True)
                     if terminal:
@@ -690,11 +733,19 @@ class HarnessServer:
             self._emit("explorer.error", project_id=project_id, request_id=request_id,
                        message="Solicitud de explorador inválida")
             return
-        if self.active_area != "work" or not self.project or project_id != self.project["project_id"]:
+        project = self.project
+        # En Chat los visores conservan únicamente el último proyecto de Work.
+        # Cargar su registro evita usar la carpeta de la conversación actual.
+        if self.active_area == "chat" and project_id and project_id == self._last_project_id:
+            try:
+                project = self.projects.load(project_id)
+            except (OSError, ValueError, KeyError, TypeError):
+                project = None
+        if not project or project_id != project["project_id"]:
             self._emit("explorer.error", project_id=project_id, request_id=request_id,
                        message="Selecciona el proyecto activo en Work")
             return
-        root = Path(self.project["workdir"])
+        root = Path(project["workdir"])
         def read_project():
             try:
                 explorer = ProjectExplorer(root)
@@ -722,6 +773,32 @@ class HarnessServer:
             return
         with self._lock:
             action = request.get("type")
+            if action in ("project.run", "project.run.stop"):
+                project_id = request.get("project_id")
+                try:
+                    if action == "project.run.stop":
+                        execution_id = request.get("execution_id")
+                        if not isinstance(project_id, str) or not isinstance(execution_id, str) or not execution_id:
+                            raise ValueError("Solicitud de detención inválida.")
+                        if not self.project_runner.stop(project_id, execution_id):
+                            raise ValueError("Esa ejecución ya terminó o pertenece a otro proyecto.")
+                    else:
+                        if set(request) - {"type", "project_id"}:
+                            raise ValueError("La instrucción de ejecución la prepara el backend.")
+                        if self.active_area != "work" or not self.project or project_id != self.project["project_id"]:
+                            raise ValueError("Selecciona el proyecto que quieres ejecutar en Work.")
+                        if self.busy or self.login_pending or self.account_pending:
+                            raise ValueError("Espera a que termine la operación actual.")
+                        can_detect = self.authenticated and self.model in {row["slug"] for row in self.models}
+                        project = self.projects.load(project_id)
+                        if not can_detect and not self.project_runner.cache.load(project_id, Path(project["workdir"])):
+                            raise ValueError("Conecta ChatGPT y selecciona un modelo para detectar el proyecto.")
+                        run = self.project_runner.reserve(project, self.model, can_detect, self.reasoning_effort)
+                        self._spawn(lambda: self.project_runner.run(run, self.client))
+                except (OSError, ValueError, TypeError) as error:
+                    self._emit("project.run.rejected", project_id=project_id,
+                               message=str(error) if isinstance(error, ValueError) else "No se pudo iniciar el proyecto.")
+                return
             if action == "usage.read":
                 request_id = request.get("request_id")
                 if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
@@ -788,9 +865,7 @@ class HarnessServer:
                         if any(row["project_id"] != self.project["project_id"] and row["workdir"] == str(workspace)
                                for row in self.projects.list()):
                             raise ValueError("Esta carpeta ya pertenece a otro proyecto")
-                        updated = {**self.project, "workdir": str(workspace)}
-                        self.projects.save(updated)
-                        self.project = updated
+                        self.project = self.projects.update_workdir(self.project["project_id"], str(workspace))
                         self._publish_projects()
                     else:
                         self._chat_workspace = workspace
@@ -831,24 +906,23 @@ class HarnessServer:
                         self.conversation = None
                         self._performance = None
                         self._emit("chat.reset")
-                        self._emit("model.selected", model=self.model)
+                        self._publish_model()
                     elif action == "chat.open":
                         self._open_chat(request.get("chat_id"))
                     elif action == "chat.delete":
                         self._delete_chat(request.get("chat_id"))
                     elif action == "history.list":
                         self._publish_history()
-                    elif request.get("model") in {row["slug"] for row in self.models}:
-                        self.model = request["model"]
-                        self._emit("model.selected", model=self.model)
                     else:
-                        self._emit("error", message="Selecciona un modelo disponible en tu cuenta")
-                except (OSError, ValueError, KeyError, TypeError):
+                        self._select_model(request)
+                except (OSError, ValueError, KeyError, TypeError) as error:
                     self._emit("error", message="No se pudo borrar la conversación. Vuelve a actualizar el historial e inténtalo de nuevo."
-                               if action == "chat.delete" else "No se pudo abrir la conversación guardada")
+                               if action == "chat.delete" else str(error) if action == "model.select" and isinstance(error, ValueError)
+                               else "No se pudo guardar la selección de modelo." if action == "model.select"
+                               else "No se pudo abrir la conversación guardada")
                 return
             if action in ("auth.login", "auth.refresh", "auth.logout", "auth.select"):
-                if self.busy or self.login_pending or self.account_pending:
+                if self.busy or self.login_pending or self.account_pending or self.project_runner.preparing:
                     self._emit("error", message="Ya hay una operación en curso")
                 elif action == "auth.login":
                     new_account = request.get("new_account", False)
@@ -916,6 +990,7 @@ class HarnessServer:
                         messages = copy.deepcopy(self.conversation["context"])
                     self.conversation.setdefault("performance", []).append(turn_performance.snapshot())
                     self.conversation["model"] = self.model
+                    self.conversation["reasoning_effort"] = self.reasoning_effort
                     self.history.save(self.conversation)
                 except OSError:
                     if "snapshot" in locals():
@@ -928,6 +1003,7 @@ class HarnessServer:
                 self.busy = True
                 self._generation += 1
                 generation, model = self._generation, self.model
+                reasoning_effort = self.reasoning_effort
                 self._performance = turn_performance
                 self._last_metrics_emitted = 0.0
                 self._stream = StreamControl(lambda phase: self._mark_phase(phase, generation))
@@ -937,7 +1013,7 @@ class HarnessServer:
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)
-                self._spawn(lambda: self._start_turn(messages, model, control, generation))
+                self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort))
 
     def serve(self, source: TextIO) -> None:
         try:
@@ -978,6 +1054,7 @@ class HarnessServer:
             self._emit("backend.disconnected", message="No se pudo leer la sesión o comunicarse con la interfaz")
         finally:
             self._login_cancel.set()
+            self.project_runner.close()
             self._stream.cancel()
             self._shell_control.cancel()
             with self._lock:

@@ -127,4 +127,49 @@ class ExplorerContractTests(unittest.TestCase):
             self.assertIn("message", self.output.wait_for("explorer.error"))
         self.server._select_area("chat")
         self.request("list")
+        self.assertEqual(self.output.wait_for("explorer.list")["project_id"], self.project["project_id"])
+        self.server._select_area("work", "")
+        self.request("list")
         self.assertIn("message", self.output.wait_for("explorer.error"))
+
+    def test_chat_keeps_last_project_reads_live_and_independent_of_chat_folder(self):
+        self.server._chat_workspace = self.root / "chat-folder"
+        self.server._chat_workspace.mkdir()
+        (self.folder / "hello.txt").write_text("proyecto", encoding="utf-8")
+        (self.server._chat_workspace / "hello.txt").write_text("chat", encoding="utf-8")
+        self.server._select_area("chat")
+        self.server.busy = True
+        self.request("read", "hello.txt")
+        self.assertEqual(self.output.wait_for("explorer.file")["text"], "proyecto")
+        (self.folder / "hello.txt").write_text("actualizado", encoding="utf-8")
+        self.request("read", "hello.txt")
+        self.assertEqual(self.output.wait_for("explorer.file")["text"], "actualizado")
+        self.assertEqual(self.server.workspace, self.server._chat_workspace)
+        self.assertIsNone(self.server.conversation)
+        self.assertEqual(self.server.history.list(), [])
+
+    def test_chat_rejects_other_registered_project_and_deleted_retained_project(self):
+        other_folder = self.root / "other"
+        other_folder.mkdir()
+        other = self.server.projects.create("Other", str(other_folder))
+        self.server._select_area("chat")
+        self.request("list", project_id=other["project_id"])
+        self.assertIn("message", self.output.wait_for("explorer.error"))
+        self.server.handle({"type": "project.delete", "project_id": self.project["project_id"]})
+        self.output.wait_for("project.deleted")
+        self.request("list")
+        self.assertIn("message", self.output.wait_for("explorer.error"))
+        self.assertTrue(self.folder.is_dir())
+
+    def test_switching_projects_rejects_old_context_in_work_and_chat(self):
+        other_folder = self.root / "other"
+        other_folder.mkdir()
+        (other_folder / "hello.txt").write_text("otro", encoding="utf-8")
+        other = self.server.projects.create("Other", str(other_folder))
+        self.server._select_area("work", other["project_id"])
+        for area in ("work", "chat"):
+            self.server._select_area(area)
+            self.request("list")
+            self.assertIn("message", self.output.wait_for("explorer.error"))
+            self.request("read", "hello.txt", project_id=other["project_id"])
+            self.assertEqual(self.output.wait_for("explorer.file")["text"], "otro")
