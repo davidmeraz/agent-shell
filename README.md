@@ -8,6 +8,8 @@ el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 desde la aplicación requiere Codex CLI, como dependencia opcional.
 Las etiquetas locales `v0.1.0` a `v0.14.1` conservan las versiones anteriores.
 
+![Agent Shell en Work, con el árbol del proyecto, la conversación y los visores de código.](docs/images/agent-shell-work.png)
+
 ## Preparar y ejecutar
 
 Requisitos: Python 3.11+, Quickshell 0.3.x con Qt Quick Controls, Layouts y Effects, acceso
