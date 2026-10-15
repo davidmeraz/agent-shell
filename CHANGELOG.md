@@ -3,6 +3,17 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.15.0] — 2026-10-15
+
+Esta versión hace más fiable el harness en tareas largas y reduce el contexto innecesario enviado al modelo. El agente puede continuar con límites configurables, espera a que los procesos de shell terminen realmente y conserva una salida compacta para decidir los siguientes pasos. También mejora la recuperación de respuestas transmitidas por streaming e incorpora una auditoría y una guía práctica para equilibrar continuidad, consumo y control.
+
+- Continuación del agente con presupuestos configurables: 32 solicitudes y 64 herramientas por defecto, comandos de IA de hasta 300 segundos, umbral opcional de tokens reportados y detención ante fallos idénticos consecutivos.
+- Continuación automática de comentarios intermedios; respuestas vacías y límites se informan sin presentar la tarea como completada. Resultados y cambios se conservan para continuar.
+- Shell que espera al proceso aunque cierre stdout/stderr; captura de inicio y final de logs, resultados nuevos acotados para el modelo y supresión de eventos de salida sin cambios.
+- Reconstrucción de respuestas finales parciales con los elementos completados del stream, conservación de razonamiento cifrado y cierre explícito del transporte antes de ejecutar herramientas.
+- Auditoría de lógica/consumo y guía de prácticas para LLM con presupuestos, uso eficiente de shell, criterios de aceptación y medición sin confundir tokens con cuota del plan.
+- Regresiones de procesos reales, continuidad, límites, recorte, recuperación del stream e integración Qt; compatibilidad con NDJSON v2 e historial de esquema 1.
+
 ## [0.14.1] — 2026-10-13
 
 - Pruebas QML agrupadas en `tests/ui/` y guía de integración de terminal en `docs/`, con imports, scripts de comprobación y documentación actualizados.

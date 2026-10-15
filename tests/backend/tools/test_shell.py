@@ -6,6 +6,7 @@ import shlex
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from tests.support.sessions import QueueOutput
 from harness.chat.chatgpt import ChatGPTClient
 from harness.core.http import Cancelled, HttpClient
 from harness.core.server import HarnessServer
+from harness.core.limits import AgentLimits
 from harness.tools.shell import ShellControl, ShellExecutor, parse_command
 
 
@@ -66,6 +68,40 @@ class ExecutorTests(unittest.TestCase):
         result = self.execute("sleep 30 & printf '%s' $!; wait")
         self.assertEqual(result["status"], "timeout")
         self.assert_dead(int(result["output"]))
+
+    def test_closed_output_does_not_terminate_a_process_still_working(self):
+        result = self.execute("exec 1>&- 2>&-; sleep 0.1; printf done > finished.txt")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual((self.root / "finished.txt").read_text(), "done")
+
+    def test_closed_output_still_obeys_timeout(self):
+        self.executor.timeout = 0.15
+        result = self.execute("exec 1>&- 2>&-; sleep 30; touch unexpected")
+        self.assertEqual(result["status"], "timeout")
+        self.assertFalse((self.root / "unexpected").exists())
+
+    def test_cancel_with_closed_output_terminates_promptly(self):
+        result = []
+        worker = threading.Thread(target=lambda: result.append(self.execute(
+            "printf ready > started.txt; exec 1>&- 2>&-; sleep 30; touch unexpected")))
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not (self.root / "started.txt").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.control.cancel()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0]["status"], "interrupted")
+        self.assertFalse((self.root / "unexpected").exists())
+
+    def test_truncated_output_keeps_initial_context_and_final_error(self):
+        self.executor.max_output = 80
+        result = self.execute("printf START; yes x | head -c 100000; printf FINAL_ERROR >&2; exit 7")
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["output"]), 80)
+        self.assertTrue(result["output"].startswith("START"))
+        self.assertTrue(result["output"].endswith("FINAL_ERROR"))
+        self.assertEqual(result["exit_code"], 7)
 
     def test_cancel_kills_running_process_group(self):
         result, output = [], []
@@ -143,6 +179,12 @@ class ExecutorTests(unittest.TestCase):
                       {"command": "pwd", "workdir": "/"}, {"command": "pwd", "background": True}):
             with self.subTest(value=str(value)[:70]), self.assertRaises(ValueError):
                 parse_command(json.dumps(value))
+
+    def test_invalid_output_limit_does_not_leave_a_running_process(self):
+        self.executor.max_output = -1
+        with patch("harness.tools.shell.subprocess.Popen") as spawn, self.assertRaises(ValueError):
+            self.execute("sleep 30")
+        spawn.assert_not_called()
 
 
 class AgentShellTests(unittest.TestCase):
@@ -391,12 +433,96 @@ class AgentShellTests(unittest.TestCase):
         self.assertEqual(self.server.conversation["tool_calls"][-1]["output"], "first")
 
     def test_step_limit_does_not_execute_excess_commands(self):
+        self.server.limits = AgentLimits(max_steps=3)
         self.service.tool_batches = [[{"command": "pwd"}]] * 9
         self.start()
         finished = self.finished()
         self.assertEqual(finished["status"], "failed")
         self.assertIn("límite", finished["message"])
-        self.assertEqual(len(self.server.conversation["tool_calls"]), 7)
+        self.assertEqual(len(self.service.requests), 3)
+        self.assertEqual(len(self.server.conversation["tool_calls"]), 3)
+        context = self.server.conversation["context"]
+        self.assertEqual(sum(item.get("type") == "function_call_output" for item in context), 3)
+
+    def test_task_continues_beyond_eight_steps_until_a_final_response(self):
+        self.service.tool_batches = [[{"command": "printf step"}]] * 12
+        self.start()
+        self.assertEqual(self.finished()["status"], "completed")
+        self.assertEqual(len(self.server.conversation["tool_calls"]), 12)
+        self.assertEqual(len(self.service.requests), 13)
+        # Los resultados previos permanecen inmutables para reutilizar el prefijo.
+        for previous, current in zip(self.service.requests, self.service.requests[1:]):
+            prefix = previous["body"]["input"]
+            self.assertEqual(current["body"]["input"][:len(prefix)], prefix)
+
+    def test_tool_budget_rejects_entire_excess_batch_and_closes_pending_calls(self):
+        self.server.limits = AgentLimits(max_tool_calls=1)
+        self.service.tool_batches = [[{"command": "touch unexpected"}, {"command": "pwd"}]]
+        self.start()
+        self.assertEqual(self.finished()["status"], "failed")
+        self.assertFalse((self.root / "unexpected").exists())
+        self.assertFalse(self.server.conversation.get("tool_calls"))
+        results = [item for item in self.server.conversation["context"]
+                   if item.get("type") == "function_call_output"]
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(json.loads(item["output"])["status"] == "interrupted" for item in results))
+
+    def test_reported_token_budget_stops_before_another_model_request(self):
+        self.server.limits = AgentLimits(max_turn_tokens=40)
+        self.service.tool_batches = [[{"command": "pwd"}]] * 5
+        self.start()
+        finished = self.finished()
+        self.assertEqual(finished["status"], "failed")
+        self.assertIn("tokens", finished["message"])
+        self.assertEqual(len(self.service.requests), 2)
+        self.assertEqual(len(self.server.conversation["tool_calls"]), 2)
+
+    def test_identical_failures_stop_without_repeating_forever(self):
+        self.service.tool_batches = [[{"command": "printf broken; exit 7"}]] * 10
+        self.start()
+        finished = self.finished()
+        self.assertEqual(finished["status"], "failed")
+        self.assertIn("mismo comando", finished["message"])
+        self.assertEqual(len(self.service.requests), 3)
+        results = [json.loads(item["output"]) for item in self.server.conversation["context"]
+                   if item.get("type") == "function_call_output"]
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(result["exit_code"] == 7 for result in results))
+
+    def test_changed_approach_after_failure_can_complete(self):
+        self.service.tool_batches = [[{"command": "test -f repaired"}],
+                                     [{"command": "touch repaired"}],
+                                     [{"command": "test -f repaired"}]]
+        self.start()
+        self.assertEqual(self.finished()["status"], "completed")
+        self.assertEqual([call["status"] for call in self.server.conversation["tool_calls"]],
+                         ["error", "completed", "completed"])
+
+    def test_context_output_is_smaller_than_card_and_keeps_tail(self):
+        self.service.tool_batches = [[{"command": "printf START; yes x | head -c 12000; printf END"}]]
+        self.start()
+        self.assertEqual(self.finished()["status"], "completed")
+        record = self.server.conversation
+        self.assertGreater(len(record["tool_calls"][0]["output"]), 12000)
+        result = next(item for item in self.service.requests[-1]["body"]["input"]
+                      if item.get("type") == "function_call_output")
+        content = json.loads(result["output"])
+        self.assertEqual(len(content["output"]), 6000)
+        self.assertTrue(content["output"].startswith("START"))
+        self.assertTrue(content["output"].endswith("END"))
+        self.assertTrue(content["truncated"])
+        self.assertNotIn("duration_ms", content)
+        saved = self.server.history.load(record["chat_id"])
+        self.assertEqual(saved["context"], record["context"])
+
+    def test_http_stream_is_released_before_shell_execution(self):
+        execute = self.server._run_tool
+        def check_stream(*args):
+            self.assertIsNone(self.server._stream._connection)
+            return execute(*args)
+        with patch.object(self.server, "_run_tool", side_effect=check_stream):
+            self.start()
+            self.assertEqual(self.finished()["status"], "completed")
 
     def test_workspace_changes_are_validated_and_blocked_during_a_turn(self):
         self.server.handle({"type": "shell.configure", "workdir": str(self.root / "missing")})

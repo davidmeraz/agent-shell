@@ -45,22 +45,50 @@ class ChatGPTClient:
         if tools is not None:
             payload.update(tools=tools, parallel_tool_calls=False, include=["reasoning.encrypted_content"])
         # Algunos streams del plan entregan los elementos completos en
-        # output_item.done y dejan vacío el output del resumen final.
+        # output_item.done y dejan vacío o parcial el output del resumen final.
         # Sólo reconstruimos después de recibir response.completed; un item
         # completo por sí solo nunca autoriza la ejecución de herramientas.
         finished_items = {}
-        for event in self.http.stream(self.base_url + "/responses", payload, token, control):
-            if tools is not None and event["type"] == "response.output_item.done":
-                index, item = event.get("output_index"), event.get("item")
-                if type(index) is not int or not 0 <= index < 128 or not isinstance(item, dict):
-                    raise ServiceError("El servicio devolvió un elemento incompatible")
-                if index in finished_items:
-                    raise ServiceError("El servicio repitió un elemento de respuesta")
-                finished_items[index] = item
-            if tools is not None and event["type"] == "response.completed":
-                response = event.get("response")
-                if isinstance(response, dict) and not response.get("output") and finished_items:
-                    event = {**event, "response": {**response, "output": [
-                        finished_items[index] for index in sorted(finished_items)
-                    ]}}
-            yield event
+        stream = self.http.stream(self.base_url + "/responses", payload, token, control)
+        try:
+            for event in stream:
+                if tools is not None and event["type"] == "response.output_item.done":
+                    index, item = event.get("output_index"), event.get("item")
+                    if type(index) is not int or not 0 <= index < 128 or not isinstance(item, dict):
+                        raise ServiceError("El servicio devolvió un elemento incompatible")
+                    if index in finished_items:
+                        raise ServiceError("El servicio repitió un elemento de respuesta")
+                    finished_items[index] = item
+                if tools is not None and event["type"] == "response.completed":
+                    response = event.get("response")
+                    if isinstance(response, dict) and finished_items:
+                        final = response.get("output", [])
+                        if not isinstance(final, list) or not all(isinstance(item, dict) for item in final):
+                            raise ServiceError("El servicio devolvió una respuesta incompatible")
+                        ids = [item["id"] for item in final if isinstance(item.get("id"), str)]
+                        if len(ids) != len(set(ids)):
+                            raise ServiceError("El servicio repitió un elemento de respuesta")
+                        streamed = [finished_items[index] for index in sorted(finished_items)]
+                        positions = {item["id"]: index for index, item in enumerate(streamed)
+                                     if isinstance(item.get("id"), str)}
+                        output = []
+                        cursor = 0
+                        # Los IDs comunes son anclas: respetar también el orden de
+                        # elementos que sólo aparezcan en el resumen final.
+                        for item in final:
+                            position = positions.get(item.get("id"))
+                            if position is None:
+                                output.append(item)
+                                continue
+                            if position < cursor:
+                                raise ServiceError("El servicio cambió el orden de los elementos de respuesta")
+                            output.extend(streamed[cursor:position])
+                            output.append({**streamed[position], **item})
+                            cursor = position + 1
+                        output.extend(streamed[cursor:])
+                        event = {**event, "response": {**response, "output": output}}
+                yield event
+        finally:
+            close = getattr(stream, "close", None)
+            if close:
+                close()

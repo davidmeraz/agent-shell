@@ -65,6 +65,8 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
   seleccionado e iniciarlo mediante `launch_program`, sin mensajes ni persistencia
   de chat. Mantiene control HTTP/shell independiente del turno conversacional.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
+- `core/limits.py`: presupuestos configurables por turno y detección de fallos idénticos consecutivos.
+- `tools/output.py`: captura limitada con inicio/final y vista reducida de resultados para el modelo.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
 - `images.py`: valida imágenes y construye contenido multimodal de Responses.
 - `clipboard.py`: lectura binaria acotada del portapapeles; Qt conserva miniaturas,
@@ -171,7 +173,13 @@ sus resultados se conservan localmente y no entran en el contexto del modelo.
 Los fragmentos y el texto final se reconcilian por
 item y parte de contenido. Sólo `response.completed` con estado confirmado
 marca el final de una solicitud al modelo. Si contiene herramientas, el turno
-continúa hasta la respuesta final o un límite, rechazo o cancelación.
+continúa hasta la respuesta final o un límite, rechazo o cancelación. Un mensaje
+marcado como comentario intermedio también provoca continuación; una respuesta
+sin texto ni herramientas produce un error. Los presupuestos predeterminados
+son 32 solicitudes, 64 herramientas y 300 segundos por comando de la IA. Los
+resultados nuevos se recortan una sola vez a 6000 caracteres de salida para el
+modelo, conservando inicio/final, estado y código; la tarjeta retiene hasta
+16000 caracteres. La conexión HTTP se cierra antes de trabajar en la shell.
 Fallos, respuestas incompletas y cortes de conexión conservan el texto
 parcial y liberan los controles.
 
@@ -179,6 +187,9 @@ Los JSON de 0.2.0 siguen siendo legibles. Su antiguo thread_id no se consulta:
 continuar utiliza los mensajes locales. Si faltaba contexto interno, no puede
 reconstruirse. Las conversaciones demasiado largas pueden superar el contexto;
 todavía no hay compactación.
+La [auditoría de continuidad y consumo](harness-audit.md) documenta los cambios,
+las regresiones y el trabajo pendiente; la [guía de prácticas](../guides/llm-practices.md)
+describe los presupuestos configurables y cómo evaluar sus efectos.
 
 ## Persistencia y ciclo de vida
 

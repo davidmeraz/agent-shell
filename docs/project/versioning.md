@@ -5,11 +5,15 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La última versión etiquetada es `0.14.1`: organiza los componentes QML, módulos
-JavaScript, paquetes del backend, documentación y pruebas por responsabilidad.
-Actualiza imports, rutas y descubrimiento de pruebas, con un índice de documentación.
-Conserva NDJSON v2 y el esquema 1 del historial. Incrementa PARCHE por cambios
-internos compatibles.
+La versión `0.15.0` mejora la continuidad y el consumo del agente: amplía los
+presupuestos configurables, continúa después de comentarios intermedios,
+recupera respuestas parciales, limita el contexto de nuevas salidas de shell y
+conserva los diagnósticos al truncar. Corrige la espera y cancelación de procesos
+que cierran stdout, con documentación de uso y auditoría. Conserva NDJSON v2 y
+el esquema 1 del historial; incrementa MENOR por las nuevas opciones de ejecución.
+La versión anterior `0.14.1` organizó los componentes QML, módulos JavaScript,
+paquetes del backend, documentación y pruebas por responsabilidad. Conserva
+NDJSON v2 y el esquema 1 del historial.
 Conserva las funciones de `0.14.0`: ejecución interna de proyectos
 con inicio guardado para repetir sin IA, selección de modelos por familia y
 esfuerzo de razonamiento, entorno gráfico heredado por shell y distribución

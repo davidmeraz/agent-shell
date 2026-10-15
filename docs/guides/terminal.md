@@ -75,9 +75,10 @@ La solicitud usa `store: false`, streaming, esquema estricto y
 `parallel_tool_calls: false`. Aun así, el backend valida las llamadas y procesa
 secuencialmente cualquier lote recibido. No interpreta órdenes de texto libre
 ni de bloques Markdown. Espera siempre una respuesta completada; los fragmentos
-de argumentos no provocan ejecución. Si el resumen final trae `output` vacío,
-reconstruye los elementos completos recibidos en `response.output_item.done`,
-conservando su orden. Recibir ese evento sin `response.completed` tampoco ejecuta nada.
+de argumentos no provocan ejecución. Si el resumen final trae `output` vacío
+o parcial, se combina con los elementos completos de `response.output_item.done`,
+conservando orden e identidad. Recibir ese evento sin `response.completed`
+tampoco ejecuta nada. La conexión HTTP se cierra antes de ejecutar la herramienta.
 
 `shell.py` valida JSON, nombres de campos, longitud y caracteres NUL. El modelo
 no puede escoger directorio ni timeout con argumentos adicionales. Un argumento
@@ -101,10 +102,16 @@ produciendo un error. No hereda variables arbitrarias del backend ni claves de
 API; `TERM=dumb` conserva la salida no interactiva. No inicia un perfil de login;
 las herramientas instaladas sólo en perfiles interactivos pueden necesitar rutas explícitas.
 
-El timeout es de 120 segundos y la salida se limita a 16000 caracteres Unicode.
-La salida adicional se drena sin almacenarla; un indicador señala el recorte.
+El timeout es de 120 segundos en `/shell` y de 300 por defecto para comandos de
+la IA en Chat/Work. La captura se limita a 16000 caracteres Unicode y conserva
+inicio y final; `[…]` señala el centro omitido. La salida adicional se drena sin
+almacenarla completa. Cada resultado nuevo enviado al modelo conversacional
+contiene como máximo 6000 caracteres de salida por defecto, estado, código y
+aviso de recorte. La tarjeta y las métricas conservan la duración de ejecución.
 Los fragmentos UTF-8 se decodifican de forma incremental y se publican como texto
-plano, con actualizaciones agrupadas cada 250 ms.
+plano, con actualizaciones agrupadas cada 250 ms; la interfaz no recibe
+repeticiones de un estado sin cambios. Cerrar stdout/stderr no termina el proceso:
+el ejecutor espera su salida, timeout o cancelación.
 
 El botón **Ejecutar** de Work utiliza `ProjectRunner`, separado del turno de chat.
 En la primera ejecución, el backend adelanta una lectura acotada de manifiestos,
@@ -136,9 +143,19 @@ desde un comando. Los comandos se ejecutan con los permisos del usuario de la
 aplicación. La salida de la herramienta pedida por la IA entra en su contexto;
 la salida de `/shell` permanece en el historial local.
 
-El bucle admite hasta ocho solicitudes al modelo y ocho comandos por turno.
-La última solicitud debe finalizar la respuesta; si vuelve a pedir herramientas,
-el turno termina por límite sin ejecutar esas nuevas llamadas.
+El bucle conversacional admite por defecto 32 solicitudes al modelo y 64
+herramientas por turno. Continúa automáticamente ante herramientas y mensajes
+marcados `phase: commentary`. Una respuesta vacía no se considera éxito.
+La última solicitud permitida puede ejecutar herramientas dentro del presupuesto;
+si aún falta una respuesta final, se conserva el trabajo y se informa el límite.
+Un lote que excede el presupuesto de herramientas no se ejecuta.
+
+Tres fallos consecutivos del mismo comando con el mismo estado, código y salida
+detienen el turno para evitar gastar cuota sin progreso. Un éxito o resultado
+distinto reinicia la cuenta. Un presupuesto opcional de tokens reportados detiene
+nuevas solicitudes al alcanzar el umbral; no estima datos ausentes.
+Consulta las variables y sus rangos en la [guía de prácticas para LLM](llm-practices.md#configurar-duración-y-gasto).
+Estas opciones no cambian los límites de preparación del botón **Ejecutar**.
 
 ## Historial y continuación
 

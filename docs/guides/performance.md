@@ -22,6 +22,8 @@ usa el método de rango más cercano. Los fallos y las interrupciones se cuentan
 aparte y no entran en las estadísticas de latencia. Los turnos en curso tampoco.
 Los turnos con comandos se muestran por separado y no entran en medianas ni p95:
 su duración total incluye ejecución de shell y espera de confirmación.
+En turnos nuevos la ejecución es automática; la espera de confirmación sólo
+corresponde a registros de versiones anteriores.
 
 ## Qué se mide
 
@@ -122,3 +124,11 @@ necesita más observaciones en condiciones similares.
 
 El panel recopila el uso normal. Abrirlo o actualizarlo consulta archivos locales;
 no inicia un benchmark ni envía solicitudes adicionales a OpenAI.
+
+Para optimizar el harness, mide también cuántas tareas terminan correctamente y
+cuántas llamadas requieren: menos tokens con más errores no es una mejora.
+Los resultados de shell nuevos se acotan antes de entrar al contexto; los
+conteos de tokens siguen siendo exclusivamente los reportados por el proveedor.
+`AGENT_SHELL_MAX_TURN_TOKENS` compara el total reportado con un umbral antes de
+otra solicitud, y no predice ni limita la cuota del plan. Consulta
+[prácticas, presupuestos y ejemplos](llm-practices.md).

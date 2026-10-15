@@ -24,6 +24,7 @@ QtObject {
     property string deletingChatId: ""
     readonly property bool shellEnabled: true
     property string workspace: ""
+    property int agentShellTimeout: 300
     property string activeArea: "chat"
     property string projectId: ""
     property string projectName: ""
@@ -377,6 +378,7 @@ QtObject {
         } else if (event.type === "shell.state") {
             workspace = data.workdir;
             shellTimeout = data.timeout_seconds;
+            agentShellTimeout = data.agent_timeout_seconds ?? data.timeout_seconds;
             status = "Terminal disponible · ejecución automática.";
         } else if (event.type === "tool.updated") {
             updateTool(data.call);

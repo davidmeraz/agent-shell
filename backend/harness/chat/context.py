@@ -8,6 +8,7 @@ import copy
 import json
 
 from .images import validate_image
+from ..tools.output import DEFAULT_CONTEXT_OUTPUT, compact_result
 
 
 def replay_items(items: list) -> list[dict]:
@@ -62,9 +63,11 @@ def visible_chat(record: dict) -> dict:
     return {key: value for key, value in record.items() if key != "context"}
 
 
-def append_result(record: dict, call_id: str, result: dict) -> None:
+def append_result(record: dict, call_id: str, result: dict,
+                  output_limit: int = DEFAULT_CONTEXT_OUTPUT) -> None:
     record["context"].append({"type": "function_call_output", "call_id": call_id,
-                              "output": json.dumps(result, ensure_ascii=False)})
+                              "output": json.dumps(compact_result(result, output_limit),
+                                                   ensure_ascii=False, separators=(",", ":"))})
 
 
 def close_pending_calls(record: dict) -> None:

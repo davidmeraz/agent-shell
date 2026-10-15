@@ -11,6 +11,7 @@ from ..chat.context import replay_items
 from ..core.http import Cancelled, ServiceError, StreamControl, service_error
 from .launch_cache import command_paths, project_snapshot
 from ..tools.shell import SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
+from ..tools.output import compact_result
 
 LAUNCH_TOOL = {
     "type": "function", "name": "launch_program", "strict": True,
@@ -89,6 +90,8 @@ class ProjectRunner:
             if run is not self.current:
                 return
             if run.control.cancelled.is_set() and changes.get("phase") in ACTIVE_PHASES - {"stopping"}:
+                return
+            if all(self.state.get(key) == value for key, value in changes.items()):
                 return
             self.state.update(changes)
             self.emit("project.run.state", **self.state)
@@ -202,7 +205,7 @@ class ProjectRunner:
             # Sólo manifiestos/documentación y fuentes seleccionadas: no adjunta secretos .env.
             context = {"project_snapshot": snapshot.context}
             if failed_start:
-                context["failed_cached_start"] = failed_start
+                context["failed_cached_start"] = {**failed_start, "result": compact_result(failed_start["result"])}
             messages = [{"role": "user", "content": RUN_PROMPT + "\nProject data: "
                          + json.dumps(context, ensure_ascii=False)}]
             self.update(run, phase="preparing", source="ai", cache_available=False,
@@ -263,7 +266,8 @@ class ProjectRunner:
                     result = ShellExecutor(run.workspace).execute(command, run.shell)
                     run.control.check()
                     messages.append({"type": "function_call_output", "call_id": call["call_id"],
-                                     "output": json.dumps(result, ensure_ascii=False)})
+                                     "output": json.dumps(compact_result(result), ensure_ascii=False,
+                                                          separators=(",", ":"))})
             raise ServiceError("No se encontró un comando para iniciar el proyecto.")
         except Cancelled:
             self.update(run, phase="interrupted", message="Ejecución detenida")

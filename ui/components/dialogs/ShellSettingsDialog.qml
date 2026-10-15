@@ -42,8 +42,9 @@ GlassDialog {
         Text {
             Layout.fillWidth: true
             text: "La IA usa la terminal cuando la tarea lo requiere. Los comandos se ejecutan sin confirmación "
-                  + "con los permisos de tu usuario; su salida se envía a ChatGPT. Máximo "
-                  + dialog.bridge.shellTimeout + " segundos por comando."
+                  + "con los permisos de tu usuario; su salida acotada se envía a ChatGPT. Máximo "
+                  + dialog.bridge.agentShellTimeout + " segundos por comando de IA y "
+                  + dialog.bridge.shellTimeout + " segundos con /shell."
             color: "#bbbbbb"
             font.pixelSize: 12
             wrapMode: Text.Wrap

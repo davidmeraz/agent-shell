@@ -25,18 +25,24 @@ from ..work.project_runner import ProjectRunner
 from ..chat.models import validate_effort
 from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
+from .limits import AgentLimits, FailureTracker
 from ..chat.performance import TurnPerformance
 from ..tools.shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
 from .version import get_version
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_PROMPT_LENGTH = 16000
-MAX_AGENT_STEPS = 8
-MAX_TOOL_CALLS = 8
 AGENT_INSTRUCTIONS = (
     "You are the assistant in Agent Shell. Respond in the user's language. "
     "The shell tool is always available and is a core part of this application. "
     "Use it to complete local tasks, inspect files, run programs and make requested changes. "
+    "Continue implementing and checking until the requested outcome is reached. "
+    "A plan or progress message is not task completion. Do not ask the user to say 'continue'. "
+    "Recover from command failures using the evidence and a changed approach; do not repeat identical failures. "
+    "Stop for user cancellation, a real blocker requiring user input, or a harness budget limit. "
+    "Prefer targeted searches (rg), bounded file reads and concise test output. "
+    "Batch related inspections in one command; use && for dependent steps so failures remain visible. "
+    "Do not reread unchanged files or rerun passing checks without a reason. "
     "For ordinary conversation, reply directly when no command is needed. "
     "Commands execute automatically with the user's permissions through /bin/sh -c, "
     "without interactive stdin or a login profile. All shell commands are permitted; "
@@ -56,7 +62,9 @@ class HarnessServer:
     """Mantiene stdin libre durante OAuth, descubrimiento y streaming HTTP."""
 
     def __init__(self, history_root: Path, output: TextIO, session, client,
-                 model: str = "", workspace: Path | None = None, usage_reader=None) -> None:
+                 model: str = "", workspace: Path | None = None, usage_reader=None,
+                 limits: AgentLimits | None = None) -> None:
+        self.limits = limits or AgentLimits()
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
         self.projects = ProjectStore(self.history.root / "projects")
@@ -123,7 +131,8 @@ class HarnessServer:
     def _publish_area(self) -> None:
         project = self._visible_project(self.project) if self.project else None
         self._emit("area.state", area=self.active_area, project=project)
-        self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT)
+        self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT,
+                   agent_timeout_seconds=self.limits.shell_timeout)
 
     def _publish_projects(self) -> None:
         self._emit("projects.list", projects=[self._visible_project(project) for project in self.projects.list()])
@@ -587,7 +596,7 @@ class HarnessServer:
 
     def _tool_output(self, call: dict, output: str, generation: int) -> None:
         with self._lock:
-            if self._current_turn(generation):
+            if self._current_turn(generation) and call["output"] != output:
                 call["output"] = output
                 self._emit("tool.updated", call=call)
                 if time.monotonic() - self._last_saved >= 0.5:
@@ -617,7 +626,7 @@ class HarnessServer:
             if error:
                 return {"status": "error", "output": error}
             shell_control = self._shell_control
-            executor = ShellExecutor(self.workspace)
+            executor = ShellExecutor(self.workspace, timeout=self.limits.shell_timeout)
             project_id = self.project["project_id"] if self.active_area == "work" and self.project else ""
             if project_id:
                 self._emit("work.activity", project_id=project_id, call_id=call["id"],
@@ -653,6 +662,12 @@ class HarnessServer:
 
     def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
                     generation: int, reasoning_effort: str = "") -> None:
+        failures = FailureTracker(self.limits.repeated_failures)
+        continuation = {
+            "role": "developer", "content":
+            "Your last response was an intermediate update. Continue the user's task using tools as needed. "
+            "When finished, provide the result and verification, or state the concrete blocker."
+        }
         try:
             with self._lock:
                 instructions = AGENT_INSTRUCTIONS
@@ -669,27 +684,45 @@ class HarnessServer:
                     )
                 else:
                     instructions += "You are in Chat, the conversation space. Prioritize clear, helpful conversation. "
-                instructions += "Working directory: " + str(self.workspace)
-            for step in range(MAX_AGENT_STEPS):
+                instructions += (f"Shell timeout: {self.limits.shell_timeout} seconds per command. "
+                                 "Working directory: " + str(self.workspace))
+            for _ in range(self.limits.max_steps):
                 completed = None
+                streamed_text = False
                 control.check()
                 with self._lock:
                     if not self._current_turn(generation):
                         return
+                    tokens = (self._performance.usage or {}).get("total_tokens", 0)
+                    if self.limits.max_turn_tokens and tokens >= self.limits.max_turn_tokens:
+                        raise ServiceError("Se alcanzó el presupuesto de tokens reportados del turno. "
+                                           "El trabajo se conserva, pero la tarea no está confirmada como terminada.")
                     self._performance.begin_model_call()
                 stream = self.client.stream(model, messages, instructions, control, tools=[SHELL_TOOL],
                                             reasoning_effort=reasoning_effort)
-                for event in stream:
-                    terminal = self._response_event(event, generation, defer_completion=True)
-                    if terminal:
-                        if event["type"] == "response.completed":
-                            completed = event["response"]
-                        break
+                try:
+                    for event in stream:
+                        if event["type"] in ("response.output_text.delta", "response.output_text.done"):
+                            streamed_text = streamed_text or bool(event.get("delta") or event.get("text"))
+                        terminal = self._response_event(event, generation, defer_completion=True)
+                        if terminal:
+                            if event["type"] == "response.completed":
+                                completed = event["response"]
+                            break
+                finally:
+                    # Liberar el socket ANTES de trabajar en shell, no en el siguiente paso/GC.
+                    close = getattr(stream, "close", None)
+                    if close:
+                        close()
                 if completed is None:
                     control.check()
                     raise ServiceError("La transmisión terminó antes de confirmar la respuesta completa")
                 output = replay_items(completed.get("output", []))
                 calls = [item for item in output if item.get("type") == "function_call"]
+                assistant_messages = [item for item in output if item.get("type") == "message"
+                                      and item.get("role") == "assistant"]
+                intermediate = bool(assistant_messages) and all(
+                    item.get("phase") == "commentary" for item in assistant_messages)
                 with self._lock:
                     if not self._current_turn(generation):
                         return
@@ -699,20 +732,38 @@ class HarnessServer:
                         raise ServiceError("El servicio repitió un identificador de herramienta; no se ejecutó de nuevo")
                     self.conversation["context"].extend(output)
                     self.history.save(self.conversation)
-                    if not calls:
+                    if not calls and not intermediate:
+                        if not streamed_text and not any(
+                            part.get("text") or part.get("refusal")
+                            for item in assistant_messages for part in item.get("content", [])
+                            if isinstance(part, dict)
+                        ):
+                            raise ServiceError("La respuesta terminó sin texto ni herramientas; "
+                                               "no se puede confirmar que la tarea haya terminado.")
                         self._finish("completed")
                         return
-                    if step == MAX_AGENT_STEPS - 1 or self._performance.tool_calls + len(calls) > MAX_TOOL_CALLS:
-                        raise ServiceError("Se alcanzó el límite de pasos o comandos de este turno. Puedes continuar con otro mensaje.")
+                    if self._performance.tool_calls + len(calls) > self.limits.max_tool_calls:
+                        raise ServiceError("Se alcanzó el límite de comandos del turno. "
+                                           "El trabajo se conserva, pero quedan pasos sin completar.")
+                    if intermediate and not calls:
+                        self.conversation["context"].append(continuation.copy())
+                        self.history.save(self.conversation)
                 for item in calls:
                     result = self._run_tool(item, control, generation)
                     with self._lock:
                         if not self._current_turn(generation):
                             return
-                        append_result(self.conversation, item["call_id"], result)
+                        append_result(self.conversation, item["call_id"], result,
+                                      self.limits.context_output_chars)
                         self.history.save(self.conversation)
+                        if failures.observe(item, result):
+                            raise ServiceError("El mismo comando falló repetidamente con el mismo resultado. "
+                                               "Se detuvo el turno para evitar gastar cuota sin progreso; "
+                                               "revisa el último error antes de continuar.")
                 with self._lock:
                     messages = copy.deepcopy(self.conversation["context"])
+            raise ServiceError("Se alcanzó el límite de solicitudes al modelo del turno. "
+                               "El trabajo y los resultados se conservaron; la tarea aún no está confirmada como terminada.")
         except Cancelled:
             with self._lock:
                 if self.busy and generation == self._generation:

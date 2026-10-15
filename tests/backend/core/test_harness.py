@@ -20,6 +20,7 @@ from tests.support.sessions import QueueOutput, BackendSession
 from harness.chat.chatgpt import ChatGPTClient
 from harness.core.http import HttpClient, ServiceError, StreamControl, read_sse, service_error
 from harness.core.server import HarnessServer
+from harness.core.limits import AgentLimits
 
 
 class ServerTests(unittest.TestCase):
@@ -56,6 +57,45 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([item["role"] for item in request["body"]["input"]], ["user", "assistant", "user"])
         self.assertEqual(request["body"]["input"][1]["content"][0]["text"], "Hola desde ChatGPT. 🎵")
         self.assertEqual(len(self.server.conversation["messages"]), 4)
+
+    def test_intermediate_commentary_continues_automatically_without_duplicate_text(self):
+        def response(item_id, phase, text):
+            return iter([{"type": "response.completed", "response": {"status": "completed", "output": [
+                {"type": "message", "id": item_id, "role": "assistant", "phase": phase,
+                 "content": [{"type": "output_text", "text": text}]}]}}])
+        client = self.server.client = Mock()
+        client.stream.side_effect = [response("update", "commentary", "Voy a comprobarlo."),
+                                     response("final", "final_answer", "Verificado.")]
+        self.assertEqual(self.send("comprobar")["status"], "completed")
+        self.assertEqual(client.stream.call_count, 2)
+        sent = client.stream.call_args.args[1]
+        self.assertEqual(sent[-1]["role"], "developer")
+        messages = [item for item in self.server.conversation["context"] if item.get("role") == "assistant"]
+        self.assertEqual(len(messages), 2)
+        self.assertEqual([item["phase"] for item in messages], ["commentary", "final_answer"])
+
+    def test_repeated_commentary_is_bounded_and_never_reported_as_completed(self):
+        self.server.limits = AgentLimits(max_steps=2)
+        client = self.server.client = Mock()
+        def response(*args, **kwargs):
+            return iter([{"type": "response.completed", "response": {"status": "completed", "output": [
+                {"type": "message", "id": "update-" + str(client.stream.call_count),
+                 "role": "assistant", "phase": "commentary",
+                 "content": [{"type": "output_text", "text": "Revisando."}]}]}}])
+        client.stream.side_effect = response
+        result = self.send("comprobar")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("límite", result["message"])
+        self.assertEqual(client.stream.call_count, 2)
+
+    def test_empty_completed_response_is_not_task_success(self):
+        self.server.client = Mock()
+        self.server.client.stream.return_value = iter([
+            {"type": "response.completed", "response": {"status": "completed", "output": []}}
+        ])
+        result = self.send("comprobar")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("sin texto", result["message"])
 
     def test_login_for_another_account_passes_flag_and_preserves_chat(self):
         self.send("conservar")

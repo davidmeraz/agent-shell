@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from harness.core.server import HarnessServer
+from harness.core.limits import AgentLimits
 from harness.core.version import get_version
 
 def main() -> None:
@@ -41,11 +42,16 @@ def main() -> None:
         args.workspace = resolve_workspace(args.workspace)
     except (ValueError, OSError):
         parser.error("--workspace debe indicar un directorio existente")
+    try:
+        limits = AgentLimits.from_environment()
+    except ValueError as error:
+        parser.error(str(error))
     from harness.account.auth import ChatGPTSession
     from harness.chat.chatgpt import ChatGPTClient
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     session = ChatGPTSession(args.session_root)
-    HarnessServer(args.history_root, sys.stdout, session, ChatGPTClient(session), args.model, args.workspace).serve(sys.stdin)
+    HarnessServer(args.history_root, sys.stdout, session, ChatGPTClient(session), args.model,
+                  args.workspace, limits=limits).serve(sys.stdin)
 
 if __name__ == "__main__":
     main()

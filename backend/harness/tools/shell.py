@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from ..core.http import Cancelled
+from .output import BoundedOutput
 
 MAX_COMMAND_LENGTH = 8000
 MAX_OUTPUT_LENGTH = 16000
@@ -34,6 +35,9 @@ SHELL_TOOL = {
                    "Commands execute automatically; all commands are permitted without user approval. "
                    "Return stdout/stderr, exit code and status. "
                    "The UI displays the output in a terminal card; acknowledge the outcome briefly without repeating the output. "
+                   "Each call starts a fresh shell: cd, variables and activated environments do not persist. "
+                   "Use explicit paths or combine dependent commands with &&. "
+                   "Output is bounded and may contain only its beginning and end; prefer targeted reads. "
                    "Do not request background jobs or interactive input.",
     "parameters": {"type": "object", "properties": {"command": {"type": "string"}},
                    "required": ["command"], "additionalProperties": False},
@@ -116,8 +120,9 @@ class ShellExecutor:
     def execute(self, command: str, control: ShellControl, on_output=lambda output: None,
                 on_started=lambda: None) -> dict:
         started = time.monotonic()
+        captured = BoundedOutput(self.max_output)
         process = control.start(command, self.workspace)
-        output, truncated, status = "", False, "completed"
+        status = "completed"
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         last_emitted = started
         ended_at = None
@@ -125,7 +130,8 @@ class ShellExecutor:
             on_started()
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
-                while selector.get_map():
+                # EOF sólo describe las tuberías: un proceso puede cerrarlas y seguir trabajando.
+                while selector.get_map() or process.poll() is None:
                     now = time.monotonic()
                     if control.cancelled.is_set():
                         status = "interrupted"
@@ -148,25 +154,22 @@ class ShellExecutor:
                             selector.unregister(key.fileobj)
                             continue
                         text = decoder.decode(chunk)
-                        available = max(0, self.max_output - len(output))
-                        truncated = truncated or len(text) > available
-                        output += text[:available]
+                        captured.append(text)
                     if now - last_emitted >= 0.25:
-                        on_output(output)
+                        # También actúa como pulso para comprobar inicios de Work sin salida.
+                        on_output(captured.text)
                         last_emitted = now
-            tail = decoder.decode(b"", final=True)
-            available = max(0, self.max_output - len(output))
-            truncated = truncated or len(tail) > available
-            output += tail[:available]
+            captured.append(decoder.decode(b"", final=True))
         finally:
             control.kill()
             process.wait(timeout=2)
             process.stdout.close()
             control.release()
+        output = captured.text
         on_output(output)
         if control.cancelled.is_set():
             status = "interrupted"
         if status == "completed" and process.returncode != 0:
             status = "error"
         return {"status": status, "output": output, "exit_code": process.returncode,
-                "truncated": truncated, "duration_ms": round((time.monotonic() - started) * 1000, 3)}
+                "truncated": captured.truncated, "duration_ms": round((time.monotonic() - started) * 1000, 3)}

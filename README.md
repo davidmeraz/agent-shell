@@ -4,9 +4,9 @@ Aplicación de chat con ejecución local de shell para Linux, con **Quickshell y
 **ChatGPT** y respuestas progresivas. Se conecta directamente a OpenAI mediante
 el flujo oficial **Sign in with ChatGPT** para aplicaciones locales.
 
-**Versión: 0.14.1.** El chat y la terminal no requieren Codex. Consultar cuotas
+**Versión: 0.15.0.** El chat y la terminal no requieren Codex. Consultar cuotas
 desde la aplicación requiere Codex CLI, como dependencia opcional.
-Las etiquetas locales `v0.1.0` a `v0.14.0` conservan las versiones anteriores.
+Las etiquetas locales `v0.1.0` a `v0.14.1` conservan las versiones anteriores.
 
 ## Preparar y ejecutar
 
@@ -405,9 +405,14 @@ un fallo, timeout o interrupción debe comunicarse como tal.
 **Detener** cancela el proceso y su grupo, además de la respuesta en curso.
 Recuperar un chat no vuelve a ejecutar comandos guardados.
 
-Cada comando tiene un máximo de 120 segundos y devuelve hasta 16000 caracteres
-de stdout/stderr combinados. Un turno admite hasta ocho solicitudes al modelo y
-ocho comandos, ejecutados en orden. No hay terminal interactiva ni gestión de
+Los comandos de la IA tienen por defecto un máximo de 300 segundos; `/shell`
+conserva 120 segundos. Las tarjetas retienen hasta 16000 caracteres de
+stdout/stderr combinados, conservando el inicio y el final cuando se recorta.
+Cada resultado nuevo enviado al modelo contiene hasta 6000 caracteres de esa
+salida. Un turno admite por defecto 32 solicitudes al modelo y 64 herramientas,
+ejecutadas en orden. Continúa ante herramientas o comentarios intermedios;
+fallos idénticos repetidos y presupuestos agotados terminan con una explicación,
+conservando el trabajo pendiente. No hay terminal interactiva ni gestión de
 trabajos en segundo plano. El directorio es el punto de partida, no un aislamiento
 del sistema: los comandos tienen los permisos de tu usuario. Su salida se comparte
 con ChatGPT cuando la ejecución la solicita la IA; `/shell` conserva su salida local.
@@ -416,6 +421,10 @@ posteriores. Usa `/terminal` para cambiarlo o combina, por ejemplo,
 `/shell cd carpeta && pwd`.
 
 Consulta [diseño, permisos y límites de la integración](docs/guides/terminal.md).
+La [guía de prácticas para LLM](docs/guides/llm-practices.md) explica cómo reducir
+llamadas, configurar presupuestos y verificar la finalización de una tarea.
+La [auditoría del harness](docs/technical/harness-audit.md) recoge los fallos
+corregidos y las limitaciones pendientes.
 
 ## Historial y contexto
 
@@ -451,6 +460,17 @@ error para iniciar otro chat; aún no hay resumen automático ni compactación.
 | `AGENT_SHELL_MODEL` / `--model` | Modelo inicial si aparece en el catálogo |
 | `AGENT_SHELL_WORKSPACE` / `--workspace` | Directorio inicial de shell; también se puede cambiar desde Terminal |
 | `AGENT_SHELL_PYTHON` | Intérprete del backend, por defecto `.venv/bin/python` |
+| `AGENT_SHELL_MAX_STEPS` | Máximo de solicitudes al modelo por turno; 32 por defecto |
+| `AGENT_SHELL_MAX_TOOL_CALLS` | Máximo de herramientas por turno; 64 por defecto |
+| `AGENT_SHELL_COMMAND_TIMEOUT` | Segundos por comando de IA en Chat/Work; 300 por defecto |
+| `AGENT_SHELL_CONTEXT_OUTPUT_CHARS` | Caracteres por salida nueva de herramienta en el contexto conversacional; 6000 por defecto |
+| `AGENT_SHELL_MAX_TURN_TOKENS` | Umbral de tokens totales reportados por turno; 0 lo desactiva |
+| `AGENT_SHELL_REPEATED_FAILURES` | Fallos consecutivos idénticos antes de detenerse; 3 por defecto |
+
+Los presupuestos se leen al iniciar. Consulta [rangos y ejemplos](docs/guides/llm-practices.md#configurar-duración-y-gasto).
+El umbral de tokens se comprueba entre solicitudes; no representa la cuota del
+plan ni impide que una respuesta lo sobrepase. `/shell` y la detección interna
+del botón **Ejecutar** conservan sus propios límites.
 
 Las opciones anteriores `--codex-executable`, `--chat-root` y
 `AGENT_SHELL_CODEX` fueron retiradas.

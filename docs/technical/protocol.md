@@ -128,7 +128,7 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.saved` | `chat_id`, `title` |
 | `chat.loaded` | `chat`: registro visible con mensajes, métricas y herramientas; excluye `context` |
 | `chat.deleted` | `chat_id` de la conversación local eliminada |
-| `shell.state` | `enabled: true`, `workdir` absoluto, `timeout_seconds` |
+| `shell.state` | `enabled: true`, `workdir` absoluto, `timeout_seconds` para `/shell`, `agent_timeout_seconds` opcional para comandos de la IA |
 | `shell.started` | `turn_id` de la ejecución local |
 | `shell.finished` | `turn_id`, `status: completed/error/timeout/interrupted`, `message` |
 | `shell.rejected` | `message`: petición local inválida, ocupada o que no pudo guardarse; no altera la ejecución activa |
