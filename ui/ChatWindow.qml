@@ -32,7 +32,7 @@ NativeWindow {
     property var accountToRemove: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
-                                           || settingsDialog.visible || shellSettings.visible || limitsDialog.visible
+                                           || settingsDialog.visible || shellSettings.visible || limitsDialog.visible || unifiedConfigDialog.visible
                                            || commandHelp.visible
                                            || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
@@ -612,6 +612,7 @@ NativeWindow {
                 visible: window.bridge.workspaceSelected && window.bridge.unifiedMode && window.bridge.engineReady
                 compact: window.height < 680
                 bridge: window.bridge
+                onConfigureRequested: unifiedConfigDialog.open()
             }
 
             MessageComposer {
@@ -914,10 +915,20 @@ NativeWindow {
         anchors.centerIn: parent
         width: Math.min(460, window.width - 40)
         onLimitsRequested: limitsDialog.open()
+        onUnifiedRequested: unifiedConfigDialog.open()
         onShellRequested: shellSettings.open()
         onAccountRequested: accountPanel.open()
         onUsageRequested: window.openUsage()
         onCommandsRequested: commandHelp.open()
+    }
+
+    UnifiedConfigDialog {
+        id: unifiedConfigDialog
+        objectName: "unifiedConfigDialog"
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(540, window.width - 36)
+        height: Math.min(680, window.height - 40)
     }
 
     ShellSettingsDialog {

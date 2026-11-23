@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import AgentShell.Native
 import "../shared"
 
-// Ventana flotante de un subagente: tarea, actividad en vivo, informe y totales.
+// Ventana flotante de un subagente: tarea, actividad en vivo, informe, métricas y modo compacto.
 NativeWindow {
     id: card
     required property NativeWindow mainWindow
@@ -18,13 +18,22 @@ NativeWindow {
     property bool wanted: false
     property bool pinned: false
     property double nowMs: Date.now()
+    property string side: "right"
+    property bool anotherRunning: false
+    property int visiblePeers: 1
     // Al cerrarse conserva lo último que mostró mientras termina la animación.
     property var shown: null
-    property bool placed: false
+    property bool placed: !compositor
     property real presence: wanted && placed ? 1 : 0
     property bool showReport: false
+    property bool autoCompact: false
+    property bool manualMode: false
+    property bool manualCompact: false
+    readonly property int compactHeight: 126
+    readonly property int expandedHeight: 420
     readonly property bool hovered: hover.hovered
     readonly property bool working: !!shown && shown.status === "running"
+    readonly property bool compact: manualMode ? manualCompact : (!working && !pinned && autoCompact)
     readonly property bool compositor: !!NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE")
                                        && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen"
     readonly property color accentColor: GemaTheme.synced ? GemaTheme.accent : "#dce8f7"
@@ -36,29 +45,69 @@ NativeWindow {
         quota_exhausted: "Sin cuota", incomplete: "Incompleto" })[shown.status] || "Falló"
     readonly property string elapsedText: !shown ? "" : elapsed(working
         ? Math.max(0, nowMs - shown.started_at * 1000) : shown.duration_ms)
+    readonly property string compactSummary: {
+        if (!shown) return "";
+        const raw = shown.error || shown.summary || shown.task || "";
+        return raw.replace(/\s+/g, " ").trim();
+    }
     signal dismissed()
 
     objectName: "agentWindow_" + role
     title: "Agent Shell · Agente · " + label
-    implicitWidth: 540
-    implicitHeight: 328
-    minimumSize: Qt.size(400, 240)
+    minimumSize: compact ? Qt.size(360, compactHeight) : Qt.size(360, 260)
+    maximumSize: compact ? Qt.size(640, compactHeight) : Qt.size(16777215, 16777215)
+    implicitWidth: 480
+    implicitHeight: compact ? compactHeight : expandedHeight
     color: "transparent"
     visible: wanted || presence > 0.01
     onClosed: dismissed()
-    onAgentChanged: if (agent) shown = agent
-    onVisibleChanged: {
-        if (!visible) { placed = false; return; }
-        if (!compositor) { placed = true; return; }
-        placement.running = false;
-        placement.command = [NativeApp.pythonExecutable, NativeApp.placementScript, String(NativeApp.processId),
-            title, String(22 + slot), mainWindow.title];
-        placement.running = true;
-        placementLimit.restart();
+    onAgentChanged: {
+        if (!agent) return;
+        const fresh = !shown || shown.id !== agent.id;
+        shown = agent;
+        if (fresh && agent.status === "running") {
+            resetCompactState();
+        } else if (visible && !working && !pinned && !manualMode && (anotherRunning || visiblePeers > 1)) {
+            autoCompact = true;
+            finishCompactTimer.stop();
+        }
+    }
+    onVisibleChanged: if (!visible) placed = !compositor
+    onMaximumSizeChanged: {
+        if (!compact && maximumSize.height >= expandedHeight && height < expandedHeight)
+            height = expandedHeight;
     }
     // Aparecer mientras se escribe en el chat no debe sacarlo del editor.
     onWantedChanged: if (wanted && mainWindow.active) Qt.callLater(() => mainWindow.requestActivate())
-    onWorkingChanged: showReport = !working
+    onWorkingChanged: {
+        showReport = !working;
+        if (working) {
+            resetCompactState();
+        } else if (visible && !pinned && !manualMode) {
+            if (anotherRunning || visiblePeers > 1) {
+                autoCompact = true;
+                finishCompactTimer.stop();
+            } else {
+                finishCompactTimer.restart();
+            }
+        }
+    }
+    onAnotherRunningChanged: {
+        if (shown && visible && anotherRunning && !working && !pinned && !manualMode) {
+            autoCompact = true;
+            finishCompactTimer.stop();
+        }
+    }
+    onVisiblePeersChanged: {
+        if (shown && visible && visiblePeers > 1 && !working && !pinned && !manualMode) {
+            autoCompact = true;
+            finishCompactTimer.stop();
+        }
+    }
+    onHoveredChanged: {
+        if (!hovered && !working && !pinned && !manualMode && !autoCompact && visible)
+            finishCompactTimer.restart();
+    }
     onOutcomeChanged: if (outcome && visible && GemaTheme.animations) finishGlow.restart()
     Behavior on presence {
         NumberAnimation {
@@ -67,6 +116,25 @@ NativeWindow {
         }
     }
 
+    function toggleCompact() {
+        const nextCompact = !compact;
+        manualMode = true;
+        manualCompact = nextCompact;
+        finishCompactTimer.stop();
+        if (!nextCompact) showReport = !working;
+    }
+    function expand() {
+        manualMode = true;
+        manualCompact = false;
+        finishCompactTimer.stop();
+        showReport = !working;
+    }
+    function resetCompactState() {
+        autoCompact = false;
+        manualMode = false;
+        manualCompact = false;
+        finishCompactTimer.stop();
+    }
     function elapsed(ms) {
         const seconds = Math.floor(ms / 1000);
         return seconds < 60 ? seconds + " s" : Math.floor(seconds / 60) + " min " + (seconds % 60) + " s";
@@ -82,18 +150,20 @@ NativeWindow {
         return Math.max(0, Math.min(1, (presence - 0.14 * step) / (1 - 0.14 * step)));
     }
 
-    NativeProcess {
-        id: placement
-        errorOutput: LineParser { onRead: data => console.warn("Posición del subagente: " + data) }
-        onExited: card.placed = card.visible
+    Timer {
+        id: finishCompactTimer
+        interval: 3500
+        onTriggered: {
+            if (!card.working && !card.pinned && !card.hovered && !card.manualMode)
+                card.autoCompact = true;
+        }
     }
-    Timer { id: placementLimit; interval: 700; onTriggered: card.placed = card.visible }
 
     component IconButton: Button {
         id: iconButton
         property bool accented: false
-        implicitWidth: 28
-        implicitHeight: 28
+        implicitWidth: 26
+        implicitHeight: 26
         padding: 0
         hoverEnabled: true
         focusPolicy: Qt.NoFocus
@@ -105,12 +175,12 @@ NativeWindow {
         contentItem: Text {
             text: iconButton.text
             color: iconButton.accented ? card.accentColor : iconButton.hovered ? "#ffffff" : "#9fb0c2"
-            font.pixelSize: 13
+            font.pixelSize: 12
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
-            radius: 9
+            radius: 8
             color: iconButton.accented ? Qt.alpha(card.accentColor, 0.2) : iconButton.hovered ? "#24ffffff" : "#10ffffff"
             border.width: 1
             border.color: iconButton.accented ? Qt.alpha(card.accentColor, 0.5) : "#1cffffff"
@@ -143,43 +213,50 @@ NativeWindow {
     component Stat: Rectangle {
         id: stat
         required property string caption
+        required property string shortCaption
         property real amount: 0
         property string suffix: ""
         property string literal: ""
         property string tip: ""
         property real displayed: amount
+        readonly property string formatted: stat.literal
+            || (stat.suffix ? stat.displayed.toFixed(1) + stat.suffix : String(Math.round(stat.displayed)))
         Behavior on displayed { NumberAnimation { duration: GemaTheme.animations ? 420 : 0; easing.type: Easing.OutCubic } }
         Layout.fillWidth: true
         Layout.preferredWidth: 1
-        implicitHeight: 44
-        radius: 11
+        implicitHeight: card.compact ? 26 : 28
+        radius: 9
         color: "#0effffff"
         border.width: 1
         border.color: "#18ffffff"
-        ColumnLayout {
+        RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 11
-            anchors.rightMargin: 6
-            anchors.topMargin: 5
-            anchors.bottomMargin: 5
-            spacing: 0
+            anchors.leftMargin: 9
+            anchors.rightMargin: 9
+            spacing: 5
             Text {
-                text: stat.literal || (stat.suffix ? stat.displayed.toFixed(1) + stat.suffix : String(Math.round(stat.displayed)))
+                text: stat.formatted
                 color: "#f2f6fb"
-                font.pixelSize: 14
+                font.pixelSize: 12
                 font.weight: Font.Bold
                 font.features: { "tnum": 1 }
+                elide: Text.ElideRight
             }
             Text {
-                text: stat.caption
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                visible: stat.shortCaption !== ""
+                text: stat.shortCaption
                 color: "#8d9cad"
                 font.pixelSize: 10
+                elide: Text.ElideRight
             }
         }
         HoverHandler { id: statHover }
-        ToolTip.visible: statHover.hovered && stat.tip !== ""
+        ToolTip.visible: statHover.hovered
         ToolTip.delay: 250
-        ToolTip.text: stat.tip
+        ToolTip.text: stat.tip ? stat.caption + ": " + stat.formatted + "\n" + stat.tip
+                               : stat.caption + ": " + stat.formatted
     }
 
     Item {
@@ -187,8 +264,8 @@ NativeWindow {
         anchors.fill: parent
         opacity: card.presence
         scale: 0.94 + 0.06 * card.presence
-        transformOrigin: Item.Right
-        transform: Translate { x: 40 * (1 - card.presence) }
+        transformOrigin: card.side === "left" ? Item.Right : Item.Left
+        transform: Translate { x: (card.side === "left" ? 40 : -40) * (1 - card.presence) }
 
         MattePanel {
             anchors.fill: parent
@@ -224,15 +301,16 @@ NativeWindow {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 18
-            spacing: 10
+            anchors.margins: card.compact ? 12 : 14
+            spacing: card.compact ? 6 : 8
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 13
+                spacing: 10
                 opacity: card.stage(1)
                 AgentMedallion {
                     objectName: "agentMedallion_" + card.role
+                    size: card.compact ? 36 : 42
                     glyph: card.glyph
                     working: card.working && card.visible
                     outcome: card.outcome
@@ -241,7 +319,7 @@ NativeWindow {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 2
+                    spacing: 1
                     Text {
                         objectName: "agentTitle_" + card.role
                         Layout.fillWidth: true
@@ -249,7 +327,7 @@ NativeWindow {
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         color: "#f5f8fc"
-                        font.pixelSize: 17
+                        font.pixelSize: 15
                         font.weight: Font.Bold
                         style: Text.Raised
                         styleColor: GemaTheme.textShadow
@@ -265,13 +343,13 @@ NativeWindow {
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         color: "#a9b8c8"
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                     }
                 }
                 Rectangle {
-                    implicitWidth: chip.implicitWidth + 22
-                    implicitHeight: 26
-                    radius: 13
+                    implicitWidth: chip.implicitWidth + 18
+                    implicitHeight: 24
+                    radius: 12
                     color: Qt.alpha(card.stateColor, 0.16)
                     border.width: 1
                     border.color: Qt.alpha(card.stateColor, 0.5)
@@ -282,10 +360,16 @@ NativeWindow {
                         anchors.centerIn: parent
                         text: card.stateName
                         color: card.stateColor
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         font.weight: Font.DemiBold
                         Behavior on color { ColorAnimation { duration: 300 } }
                     }
+                }
+                IconButton {
+                    objectName: "agentToggle_" + card.role
+                    text: card.compact ? "▾" : "▴"
+                    Accessible.name: card.compact ? "Expandir tarjeta" : "Compactar tarjeta"
+                    onClicked: card.toggleCompact()
                 }
                 IconButton {
                     objectName: "agentPin_" + card.role
@@ -341,10 +425,52 @@ NativeWindow {
                 }
             }
 
+            // Resumen clicable de 1 línea en modo compacto para abrir el informe al instante.
+            Item {
+                visible: card.compact
+                Layout.fillWidth: true
+                implicitHeight: 20
+                opacity: card.stage(2)
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 8
+                    Rectangle {
+                        Layout.fillHeight: true
+                        implicitWidth: 3
+                        radius: 1.5
+                        color: Qt.alpha(card.stateColor, 0.8)
+                    }
+                    Text {
+                        objectName: "agentSummary_" + card.role
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        text: card.compactSummary
+                        textFormat: Text.PlainText
+                        maximumLineCount: 1
+                        elide: Text.ElideRight
+                        color: card.shown && card.shown.error ? "#ffb3bf" : "#d4dfe9"
+                        font.pixelSize: 12
+                    }
+                    Text {
+                        text: "Ver informe"
+                        color: summaryHover.hovered ? "#f2f6fb" : "#8d9cad"
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
+                }
+                HoverHandler { id: summaryHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: card.expand() }
+                ToolTip.visible: summaryHover.hovered
+                ToolTip.delay: 350
+                ToolTip.text: "Clic para expandir y ver el informe completo"
+            }
+
             RowLayout {
+                visible: !card.compact
                 Layout.fillWidth: true
                 Layout.fillHeight: false
-                spacing: 10
+                spacing: 8
                 opacity: card.stage(2)
                 Rectangle {
                     Layout.fillHeight: true
@@ -359,10 +485,10 @@ NativeWindow {
                     text: card.shown ? card.shown.task : ""
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
-                    maximumLineCount: card.height > 420 ? 5 : 2
+                    maximumLineCount: card.height > 440 ? 4 : 2
                     elide: Text.ElideRight
                     color: "#dbe4ee"
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                     lineHeight: 1.15
                     HoverHandler { id: taskHover }
                     ToolTip.visible: taskHover.hovered && truncated
@@ -372,6 +498,7 @@ NativeWindow {
             }
 
             RowLayout {
+                visible: !card.compact
                 spacing: 18
                 opacity: card.stage(3)
                 Tab { report: false; text: "Actividad" }
@@ -379,9 +506,10 @@ NativeWindow {
             }
 
             Item {
+                visible: !card.compact
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.topMargin: 3
+                Layout.fillHeight: !card.compact
+                Layout.topMargin: 2
                 opacity: card.stage(3)
                 AgentActivity {
                     objectName: "agentActivity_" + card.role
@@ -420,17 +548,19 @@ NativeWindow {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 opacity: card.stage(4)
-                Stat { caption: "Tiempo"; literal: card.elapsedText }
-                Stat { caption: "Acciones"; amount: card.shown ? card.shown.tool_calls : 0 }
+                Stat { caption: "Tiempo"; shortCaption: ""; literal: card.elapsedText }
+                Stat { caption: "Acciones"; shortCaption: "acc."; amount: card.shown ? card.shown.tool_calls : 0 }
                 Stat {
                     caption: "Archivos"
+                    shortCaption: "arch."
                     amount: card.shown ? card.shown.files_changed.length : 0
                     tip: card.shown ? card.shown.files_changed.slice(0, 12).join("\n") : ""
                 }
                 Stat {
                     caption: "Tokens"
+                    shortCaption: card.working ? "" : "tok"
                     amount: card.shown ? card.shown.tokens_used / 1000 : 0
                     suffix: " k"
                     literal: card.working ? "—" : ""
@@ -439,6 +569,7 @@ NativeWindow {
         }
 
         MouseArea {
+            visible: !card.compact
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             width: 18

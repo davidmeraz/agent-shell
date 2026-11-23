@@ -4,18 +4,26 @@ import QtQuick.Layouts
 import "../.."
 import "../shared"
 
-// Equipo del modo unificado: el arquitecto activo y el subagente que se usaría en cada rol.
+// Equipo del modo unificado: cascada de arquitectos con umbral de cuota y 2 obreros dedicados.
 GlassPanel {
     id: team
     objectName: "unifiedTeam"
     required property AgentBridge bridge
     property bool compact: false
-    readonly property var activeAgent: bridge.activeAgent
-    readonly property bool planning: bridge.busy && !activeAgent
+    signal configureRequested()
+    readonly property var activeAgents: bridge.activeAgents
+    readonly property bool planning: bridge.busy && activeAgents.length === 0
     readonly property string delegations: !bridge.agentTurn ? ""
         : bridge.agents.length ? " · " + bridge.agents.length + (bridge.agents.length === 1 ? " DELEGACIÓN" : " DELEGACIONES")
         : bridge.busy ? "" : " · SIN DELEGAR"
     readonly property var architect: bridge.unifiedArchitect
+    readonly property var cascade: bridge.unifiedCascade || []
+    readonly property int threshold: typeof bridge.unifiedConfig.quota_threshold === "number"
+        ? bridge.unifiedConfig.quota_threshold : 35
+    readonly property bool parallelWorkers: bridge.unifiedConfig.parallel_workers !== false
+    readonly property var workerSlots: bridge.unifiedTeam.length
+        ? bridge.unifiedTeam
+        : [{ role: "chatgpt", provider: "chatgpt", workers: [] }, { role: "claude", provider: "claude", workers: [] }]
     readonly property color accentColor: GemaTheme.synced ? GemaTheme.accentInk : "#ffffff"
     implicitHeight: content.implicitHeight + 20
     radius: 14
@@ -28,6 +36,9 @@ GlassPanel {
     }
     function engine(provider) {
         return provider === "agy" ? "Antigravity" : provider === "claude" ? "Claude Code" : "ChatGPT";
+    }
+    function slotTitle(slot) {
+        return slot === "chatgpt" ? "OBRERO CHATGPT" : slot === "claude" ? "OBRERO CLAUDE" : "OBRERO GEMINI";
     }
     function quota(worker) {
         return typeof worker.remaining === "number" ? worker.remaining + "% restante" : "cuota sin medir";
@@ -61,13 +72,12 @@ GlassPanel {
         id: cell
         required property string title
         required property string role
+        required property var options
         readonly property int uses: team.bridge.agents.filter(agent => agent.role === role).length
-        readonly property var options: {
-            const row = team.bridge.unifiedTeam.find(entry => entry.role === role);
-            return row ? row.workers : [];
-        }
-        readonly property bool working: !!team.activeAgent && team.activeAgent.role === role
-        readonly property var worker: working && team.activeAgent.worker.name ? team.activeAgent.worker : (options.length ? options[0] : null)
+        readonly property var runningAgent: team.activeAgents.find(agent => agent.role === role) || null
+        readonly property bool working: !!runningAgent
+        readonly property var worker: working && runningAgent.worker && runningAgent.worker.name
+            ? runningAgent.worker : (options.length ? options[0] : null)
         objectName: "unifiedWorker_" + role
         Layout.fillWidth: true
         Layout.preferredWidth: 1
@@ -98,7 +108,10 @@ GlassPanel {
             Label {
                 objectName: "unifiedWorkerName_" + cell.role
                 Layout.fillWidth: true
-                text: cell.worker ? team.symbol(cell.worker.provider) + " " + cell.worker.name : "No disponible"
+                text: cell.worker
+                    ? team.symbol(cell.worker.provider) + " " + cell.worker.name
+                      + (cell.worker.effort ? " (" + cell.worker.effort + ")" : "")
+                    : "No disponible"
                 color: cell.worker ? GemaTheme.textColor : GemaTheme.subtleColor
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
@@ -106,20 +119,22 @@ GlassPanel {
             Label {
                 Layout.fillWidth: true
                 visible: !team.compact
-                text: cell.worker ? team.engine(cell.worker.provider) + " · " + team.quota(cell.worker) : ""
+                text: cell.worker ? team.engine(cell.worker.provider) + " · " + team.quota(cell.worker) : "Conecta este proveedor"
                 color: GemaTheme.subtleColor
                 font.pixelSize: 10
             }
         }
 
         HoverHandler { id: cellHover }
-        ToolTip.visible: cellHover.hovered && cell.options.length > 0
+        ToolTip.visible: cellHover.hovered
         ToolTip.delay: 300
-        ToolTip.text: "Orden de uso según la cuota\n" + cell.options.map((worker, index) =>
-            (index + 1) + ". " + worker.name + (worker.effort ? " (" + worker.effort + ")" : "")
-            + " · " + team.engine(worker.provider) + " · " + team.quota(worker)).slice(0, 7).join("\n")
+        ToolTip.text: cell.worker
+            ? cell.title + "\n" + cell.worker.name + (cell.worker.effort ? " (" + cell.worker.effort + ")" : "")
+              + " · " + team.engine(cell.worker.provider) + " · " + team.quota(cell.worker)
+              + (team.parallelWorkers ? "\nPuede trabajar en paralelo con el otro obrero en archivos distintos." : "")
+            : cell.title + ": proveedor no conectado o sin cuota."
         Accessible.role: Accessible.StaticText
-        Accessible.name: "Subagente " + cell.title.toLowerCase() + ": " + (cell.worker ? cell.worker.name : "no disponible")
+        Accessible.name: cell.title.toLowerCase() + ": " + (cell.worker ? cell.worker.name : "no disponible")
     }
 
     ColumnLayout {
@@ -128,7 +143,7 @@ GlassPanel {
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         anchors.margins: 10
-        spacing: 8
+        spacing: 7
 
         RowLayout {
             Layout.fillWidth: true
@@ -155,20 +170,116 @@ GlassPanel {
                 visible: !!team.architect.model
                 text: team.engine(team.architect.provider)
                       + (team.architect.effort ? " · " + team.architect.effort : "")
+                      + (typeof team.architect.remaining === "number" ? " · " + team.architect.remaining + "%" : "")
                 color: GemaTheme.subtleColor
                 font.pixelSize: 10
+            }
+            Button {
+                id: configButton
+                objectName: "unifiedConfigButton"
+                implicitWidth: 24
+                implicitHeight: 24
+                padding: 0
+                hoverEnabled: true
+                focusPolicy: Qt.NoFocus
+                enabled: team.bridge.ready && !team.bridge.busy
+                onClicked: team.configureRequested()
+                Accessible.name: "Configurar cascada y obreros del modo unificado"
+                ToolTip.visible: hovered
+                ToolTip.delay: 300
+                ToolTip.text: "Configurar cascada de arquitectos, umbral (≤ " + team.threshold + "%) y obreros"
+                contentItem: Text {
+                    text: "⚙"
+                    color: configButton.hovered ? team.accentColor : GemaTheme.subtleColor
+                    font.pixelSize: 12
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    radius: 7
+                    color: configButton.hovered ? "#24ffffff" : "#10ffffff"
+                    border.width: 1
+                    border.color: configButton.hovered ? "#48ffffff" : "#1effffff"
+                }
+            }
+        }
+
+        // Vista compacta de la cascada de relevos por cuota (ej. Neon -> Opus -> Astra · <=35%).
+        RowLayout {
+            objectName: "unifiedCascadeRow"
+            Layout.fillWidth: true
+            Layout.leftMargin: 2
+            visible: !team.compact && team.cascade.length > 0
+            spacing: 4
+            Repeater {
+                model: team.cascade
+                delegate: RowLayout {
+                    id: stepItem
+                    required property var modelData
+                    required property int index
+                    spacing: 4
+                    Text {
+                        visible: stepItem.index > 0
+                        text: "›"
+                        color: "#667788"
+                        font.pixelSize: 11
+                    }
+                    Rectangle {
+                        implicitWidth: stepLabel.implicitWidth + 10
+                        implicitHeight: 19
+                        radius: 6
+                        color: stepItem.modelData.active
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#22ffffff")
+                            : "#0cffffff"
+                        border.width: 1
+                        border.color: stepItem.modelData.active
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#58ffffff")
+                            : "#1cffffff"
+                        opacity: !stepItem.modelData.available ? 0.45
+                            : stepItem.modelData.below_threshold && !stepItem.modelData.active ? 0.55 : 1.0
+                        Text {
+                            id: stepLabel
+                            anchors.centerIn: parent
+                            textFormat: Text.PlainText
+                            text: (stepItem.index + 1) + ". " + team.symbol(stepItem.modelData.provider) + " "
+                                + stepItem.modelData.name
+                                + (stepItem.modelData.effort ? " " + stepItem.modelData.effort : "")
+                                + (typeof stepItem.modelData.remaining === "number" ? " · " + stepItem.modelData.remaining + "%" : "")
+                            color: stepItem.modelData.active ? team.accentColor : GemaTheme.subtleColor
+                            font.pixelSize: 10
+                            font.weight: stepItem.modelData.active ? Font.DemiBold : Font.Normal
+                        }
+                    }
+                }
+            }
+            Item { Layout.fillWidth: true }
+            Label {
+                objectName: "unifiedThresholdBadge"
+                text: "≤" + team.threshold + "%" + (team.parallelWorkers ? " · ∥" : "")
+                color: GemaTheme.subtleColor
+                font.pixelSize: 10
+                HoverHandler { id: badgeHover }
+                ToolTip.visible: badgeHover.hovered
+                ToolTip.delay: 250
+                ToolTip.text: "Cambia al siguiente arquitecto al llegar a ≤ " + team.threshold + "% restante"
+                    + (team.parallelWorkers ? "\nObreros en paralelo habilitados en archivos distintos" : "\nObreros en secuencia")
             }
         }
 
         GridLayout {
             Layout.fillWidth: true
-            columns: team.width < 600 ? 2 : 4
+            columns: Math.max(1, Math.min(team.workerSlots.length, team.width < 460 ? 1 : 2))
             columnSpacing: 6
             rowSpacing: 6
-            WorkerCell { title: "EXPLORADOR"; role: "explorer" }
-            WorkerCell { title: "CONSTRUCTOR"; role: "builder" }
-            WorkerCell { title: "ESPECIALISTA"; role: "specialist" }
-            WorkerCell { title: "REVISOR"; role: "reviewer" }
+            Repeater {
+                model: team.workerSlots
+                delegate: WorkerCell {
+                    required property var modelData
+                    title: team.slotTitle(modelData.role)
+                    role: modelData.role
+                    options: modelData.workers || []
+                }
+            }
         }
     }
 }

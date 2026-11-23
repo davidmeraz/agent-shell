@@ -1,4 +1,4 @@
-"""Architect/worker delegation: runs one bounded task with any provider."""
+"""Architect/worker delegation: runs bounded tasks on dedicated workers across providers."""
 
 from __future__ import annotations
 
@@ -32,10 +32,12 @@ ROLE_TOOLS = {
 CLAUDE_READ_ONLY_TOOLS = "Read,Grep,Glob"
 MAX_TASK_LENGTH = 16000
 MAX_DELEGATIONS_PER_ROUND = 6
+VALID_WORKER_SLOTS = ("chatgpt", "claude", "agy")
 
 WORKER_INSTRUCTIONS = (
-    "You are a subagent executing one bounded task assigned by an architect model. "
-    "Respond in the language of the task. Work only inside the working directory and only on this task. "
+    "You are a dedicated worker executing one bounded task assigned by an architect model. "
+    "Respond in the language of the task. Work only inside the working directory and only on the files "
+    "and scope of this task (another worker may run concurrently on disjoint files). "
     "Do not ask questions and do not delegate. Run the relevant checks when you can. "
     "Finish with a short report: what you changed, which files, which checks ran with their real result, "
     "and anything left undone. Never report a check you did not run. "
@@ -55,53 +57,58 @@ DELEGATE_TOOL: dict[str, Any] = {
     "name": "delegate",
     "strict": True,
     "description": (
-        "Assign one bounded task to a subagent from any available provider. It works in the same directory "
-        "but does not see this conversation. The harness picks the model by role and remaining quota."
+        "Assign one bounded task to one of your two dedicated workers ('chatgpt' or 'claude'). "
+        "Both workers share the working directory and can run in parallel when their tasks touch disjoint files. "
+        "Workers do not see this conversation, so make each task self-contained."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Self-contained work order: file paths, expected behavior, constraints and "
+                "description": "Self-contained work order: exact file paths, expected behavior, constraints and "
                                "acceptance checks.",
             },
-            "role": {
-                "type": "string",
-                "enum": list(ROLE_TIERS),
-                "description": "explorer: read code and report, no edits. builder: normal implementation and its "
-                               "tests. specialist: subtle logic. reviewer: run tests and find defects, no edits.",
-            },
-            "provider": {
+            "worker": {
                 "type": ["string", "null"],
-                "enum": ["chatgpt", "agy", "claude", None],
-                "description": "Preferred provider, or null to choose by remaining quota.",
+                "enum": ["chatgpt", "claude", "agy", None],
+                "description": "Target worker: 'chatgpt' (full shell, tests, builds and edits), 'claude' (reading, "
+                               "editing and refactoring), or null to auto-pick by remaining quota.",
+            },
+            "read_only": {
+                "type": "boolean",
+                "description": "True to inspect/review without editing files; false to implement or modify files.",
             },
         },
-        "required": ["task", "role", "provider"],
+        "required": ["task", "worker", "read_only"],
         "additionalProperties": False,
     },
 }
 
 ARCHITECT_INSTRUCTIONS = (
-    "Unified mode is active: you are the architect of a team of subagents. You decide the design and integrate "
-    "the results; they do the work. Use an explorer to learn unfamiliar code instead of reading it all yourself, "
-    "a builder for implementation and its tests, and a specialist only for subtle logic. After any change, use a "
-    "reviewer, which runs on a different vendor than the builder, and send confirmed defects back to a builder. "
-    "Subagents share the working directory and run one at a time, in order. Do not write code yourself except for "
-    "a trivial edit, and answer directly, without delegating, when no work on files is needed. "
-    "A subagent report is a claim: check the decisive facts before relying on it. "
+    "Unified mode is active: you are the architect coordinating two dedicated workers from different providers: "
+    "worker 'chatgpt' (full shell, builds, tests, and file edits) and worker 'claude' (code reading, editing, "
+    "and refactoring). You decide the design, split work into clean self-contained tasks, and integrate and "
+    "verify the results. "
+    "You may delegate to 'chatgpt' and 'claude' in parallel in the same round ONLY when their tasks touch "
+    "disjoint files; if tasks edit the same files or depend on each other, delegate sequentially. "
+    "Set read_only to true for code exploration or cross-provider review without edits, and prefer reviewing "
+    "changes with the other worker than the one that wrote them. "
+    "Do not write substantial code yourself except for a trivial edit, and answer directly without delegating "
+    "when no work on files is needed. "
+    "A worker report is a claim: verify decisive facts before relying on it. "
 )
 
 CLI_ARCHITECT_INSTRUCTIONS = ARCHITECT_INSTRUCTIONS + (
-    "Do not use your own sub-agents. To delegate, end your response with one or more fenced blocks, each "
-    "holding one JSON object, and then stop; the harness runs them and sends you the results:\n"
+    "Do not use your own built-in sub-agents. To delegate, end your response with one or more fenced blocks, each "
+    "holding one JSON object, and then stop; the harness runs them (in parallel across different workers when "
+    "possible) and sends you the results:\n"
     "```delegate\n"
-    '{"task": "self-contained work order with paths and acceptance checks", "role": "explorer|builder|specialist|reviewer", '
-    '"provider": null}\n'
+    '{"task": "self-contained work order with exact paths and acceptance checks", "worker": "chatgpt|claude|null", '
+    '"read_only": false}\n'
     "```\n"
-    "provider may be chatgpt, agy, claude or null to choose by remaining quota. "
-    "A response without these blocks ends the turn.\n\n"
+    "worker may be chatgpt, claude or null to auto-pick by remaining quota; set read_only to true for inspection "
+    "or review without edits. A response without these blocks ends the turn.\n\n"
 )
 
 DELEGATE_BLOCK_RE = re.compile(r"^```delegate[ \t]*\n(.*?)\n```[ \t]*$", re.DOTALL | re.MULTILINE)
@@ -156,13 +163,36 @@ def parse_delegate_arguments(arguments: str) -> dict:
         raise ValueError("delegate requires a non-empty task.")
     if len(task) > MAX_TASK_LENGTH:
         raise ValueError(f"delegate task exceeds {MAX_TASK_LENGTH} characters.")
-    role = args.get("role") or "builder"
-    if role not in ROLE_TIERS:
-        raise ValueError("delegate role must be explorer, builder, specialist or reviewer.")
-    provider = args.get("provider") or ""
-    if provider not in ("", "chatgpt", "agy", "claude"):
-        raise ValueError("delegate provider must be chatgpt, agy, claude or null.")
-    return {"task": task.strip(), "role": role, "provider": provider}
+
+    raw_worker = args.get("worker") if "worker" in args else args.get("provider")
+    worker = "" if raw_worker is None else raw_worker
+    if not isinstance(worker, str) or (worker and worker not in VALID_WORKER_SLOTS):
+        raise ValueError("delegate worker must be chatgpt, claude, agy or null.")
+
+    raw_role = args.get("role")
+    if raw_role is not None and raw_role != "":
+        if not isinstance(raw_role, str) or raw_role not in ROLE_TIERS:
+            raise ValueError("delegate role must be explorer, builder, specialist or reviewer.")
+
+    if "read_only" in args and args["read_only"] is not None:
+        if not isinstance(args["read_only"], bool):
+            raise ValueError("delegate read_only must be a boolean.")
+        read_only = args["read_only"]
+    else:
+        read_only = raw_role in READ_ONLY_ROLES
+
+    if raw_role in ROLE_TIERS:
+        role = raw_role
+    else:
+        role = "reviewer" if read_only else "builder"
+
+    return {
+        "task": task.strip(),
+        "worker": worker,
+        "provider": worker,
+        "read_only": read_only,
+        "role": role,
+    }
 
 
 def extract_delegations(text: str) -> list[str]:
@@ -192,7 +222,7 @@ def is_quota_error(error: ServiceError) -> bool:
 
 
 class WorkerRouter:
-    """Executes a task with one candidate and normalizes the outcome."""
+    """Executes a task with one candidate and normalizes the outcome (thread-safe across workers)."""
 
     def __init__(self, chatgpt_client, agy_client, claude_client) -> None:
         self.chatgpt = chatgpt_client
@@ -202,14 +232,29 @@ class WorkerRouter:
         self.shell_timeout = 120
         self.context_output_chars = 12000
 
-    def run(self, task: str, candidate: Candidate, control: StreamControl, max_steps: int,
-            progress: Callable[[str], None], role: str) -> WorkerResult:
+    def run(
+        self,
+        task: str,
+        candidate: Candidate,
+        control: StreamControl,
+        max_steps: int,
+        progress: Callable[[str], None],
+        role: str,
+        *,
+        workspace: Path | None = None,
+        shell_timeout: int | None = None,
+        context_output_chars: int | None = None,
+    ) -> WorkerResult:
+        effective_workspace = workspace if workspace is not None else self.workspace
+        effective_timeout = shell_timeout if shell_timeout is not None else self.shell_timeout
+        effective_output_chars = context_output_chars if context_output_chars is not None else self.context_output_chars
         result = WorkerResult(provider=candidate.provider, model=candidate.model)
         child = WorkerControl(control)
         runner = {"chatgpt": self._run_chatgpt, "agy": self._run_agy, "claude": self._run_claude}[candidate.provider]
-        before = snapshot_files(self.workspace)
+        before = snapshot_files(effective_workspace)
         try:
-            runner(task, candidate, child, max_steps, progress, role, result)
+            runner(task, candidate, child, max_steps, progress, role, result,
+                   effective_workspace, effective_timeout, effective_output_chars)
             if role in READ_ONLY_ROLES and result.files_changed:
                 result.status = "failed"
                 result.error = f"The {role} edited files although its role is read-only."
@@ -221,21 +266,22 @@ class WorkerRouter:
         except (OSError, ValueError, KeyError, TypeError) as error:
             result.status = "failed"
             result.error = str(error)
-        after = snapshot_files(self.workspace) if before is not None else None
+        after = snapshot_files(effective_workspace) if before is not None else None
         if after is not None:
             changed = {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}
             result.files_changed = sorted(changed.union(result.files_changed))
-            # The user may be editing too, so disk changes alone do not prove a violation.
+            # The user or a parallel worker may be editing too, so disk changes alone do not prove a violation.
             if changed and role in READ_ONLY_ROLES and not result.error:
                 result.warning = f"Files changed on disk while this {role} ran: {', '.join(sorted(changed)[:10])}."
         return result
 
-    def _run_chatgpt(self, task, candidate, control, max_steps, progress, role, result) -> None:
+    def _run_chatgpt(self, task, candidate, control, max_steps, progress, role, result,
+                     workspace: Path, shell_timeout: int, context_output_chars: int) -> None:
         messages: list[dict] = [{"role": "user", "content": task}]
         tools = ROLE_TOOLS[role]
         allowed = {tool["name"] for tool in tools}
         instructions = (WORKER_INSTRUCTIONS + ROLE_INSTRUCTIONS[role] + "Commands run through /bin/sh -c without stdin. "
-                        "Working directory: " + str(self.workspace))
+                        "Working directory: " + str(workspace))
         for _ in range(max_steps):
             control.check()
             completed = self._complete_chatgpt(candidate, messages, instructions, control, tools)
@@ -257,10 +303,10 @@ class WorkerRouter:
                 result.tool_calls += 1
                 progress(self._describe(call["name"], call["arguments"]))
                 name = call["name"] if call["name"] in allowed else ""
-                outcome = self._execute(name, call["arguments"], control, result)
+                outcome = self._execute(name, call["arguments"], control, result, workspace, shell_timeout)
                 messages.append({
                     "type": "function_call_output", "call_id": call["call_id"],
-                    "output": json.dumps(compact_result(outcome, self.context_output_chars), ensure_ascii=False),
+                    "output": json.dumps(compact_result(outcome, context_output_chars), ensure_ascii=False),
                 })
         result.status = "incomplete"
         result.error = f"The worker reached its limit of {max_steps} steps before finishing."
@@ -284,19 +330,20 @@ class WorkerRouter:
                 close()
         raise ServiceError("The worker stream ended before completing.")
 
-    def _execute(self, name: str, arguments: str, control: StreamControl, result: WorkerResult) -> dict:
+    def _execute(self, name: str, arguments: str, control: StreamControl, result: WorkerResult,
+                 workspace: Path, shell_timeout: int) -> dict:
         try:
             if name == "shell":
-                executor = ShellExecutor(self.workspace, timeout=self.shell_timeout)
+                executor = ShellExecutor(workspace, timeout=shell_timeout)
                 return executor.execute(parse_command(arguments), ShellControl(control.cancelled))
             if name == "read_file":
-                return execute_read_file(self.workspace, arguments)
+                return execute_read_file(workspace, arguments)
             if name == "grep_files":
-                return execute_grep_files(self.workspace, arguments)
+                return execute_grep_files(workspace, arguments)
             if name == "apply_patch":
-                outcome = execute_apply_patch(self.workspace, arguments)
+                outcome = execute_apply_patch(workspace, arguments)
                 for change in outcome.get("files", []):
-                    self._record_path(change.get("path", ""), result)
+                    self._record_path(change.get("path", ""), result, workspace)
                 return outcome
             raise ValueError("This tool is not available to your role.")
         except (ValueError, TypeError, OSError, UnicodeError) as error:
@@ -313,11 +360,12 @@ class WorkerRouter:
         except (ValueError, TypeError):
             return name
 
-    def _run_agy(self, task, candidate, control, max_steps, progress, role, result) -> None:
+    def _run_agy(self, task, candidate, control, max_steps, progress, role, result,
+                 workspace: Path, _shell_timeout: int, _context_output_chars: int) -> None:
         seen: set[int] = set()
         usage = 0
         for event in self.agy.stream_turn(WORKER_INSTRUCTIONS + ROLE_INSTRUCTIONS[role] + "\n\n" + task,
-                                          candidate.model, self.workspace, control):
+                                          candidate.model, workspace, control):
             control.check()
             kind = event["type"]
             if kind == "text_delta" and event.get("done"):
@@ -327,9 +375,9 @@ class WorkerRouter:
                 if step not in seen:
                     seen.add(step)
                     result.tool_calls += 1
-                    progress(summarize_agy_tool(event["tool_name"], event.get("parameters"), self.workspace))
+                    progress(summarize_agy_tool(event["tool_name"], event.get("parameters"), workspace))
                 if event.get("state") == "DONE" and not event.get("error"):
-                    self._record_edit(event["tool_name"], event.get("parameters"), result)
+                    self._record_edit(event["tool_name"], event.get("parameters"), result, workspace)
             elif kind == "error":
                 raise ServiceError(event.get("message") or "The agy worker returned an error.")
             elif kind == "result":
@@ -339,10 +387,11 @@ class WorkerRouter:
                 result.tokens_used = usage or (event.get("usage") or {}).get("total_tokens", 0)
         self._require_report(result)
 
-    def _run_claude(self, task, candidate, control, max_steps, progress, role, result) -> None:
+    def _run_claude(self, task, candidate, control, max_steps, progress, role, result,
+                    workspace: Path, _shell_timeout: int, _context_output_chars: int) -> None:
         tools: dict[str, tuple[str, dict]] = {}
         for event in self.claude.stream_turn(
-            WORKER_INSTRUCTIONS + ROLE_INSTRUCTIONS[role] + "\n\n" + task, candidate.model, self.workspace, control,
+            WORKER_INSTRUCTIONS + ROLE_INSTRUCTIONS[role] + "\n\n" + task, candidate.model, workspace, control,
             effort=candidate.effort, isolated=True, tools=CLAUDE_READ_ONLY_TOOLS if role in READ_ONLY_ROLES else "",
         ):
             control.check()
@@ -350,9 +399,9 @@ class WorkerRouter:
             if kind == "tool_start" and event["tool_use_id"] not in tools:
                 tools[event["tool_use_id"]] = (event["tool_name"], event.get("parameters") or {})
                 result.tool_calls += 1
-                progress(summarize_claude_tool(event["tool_name"], event.get("parameters"), self.workspace))
+                progress(summarize_claude_tool(event["tool_name"], event.get("parameters"), workspace))
             elif kind == "tool_done" and not event.get("is_error"):
-                self._record_edit(*tools.get(event["tool_use_id"], ("", {})), result)
+                self._record_edit(*tools.get(event["tool_use_id"], ("", {})), result, workspace)
             elif kind == "error":
                 raise ServiceError(event.get("message") or "The Claude worker returned an error.")
             elif kind == "result":
@@ -367,16 +416,16 @@ class WorkerRouter:
         if not result.summary.strip():
             raise ServiceError("The worker ended without a report.")
 
-    def _record_edit(self, tool_name: str, parameters: Any, result: WorkerResult) -> None:
+    def _record_edit(self, tool_name: str, parameters: Any, result: WorkerResult, workspace: Path) -> None:
         if tool_name.lower() in EDIT_TOOLS and isinstance(parameters, dict):
             path = next((parameters[key] for key in PATH_KEYS if isinstance(parameters.get(key), str)), "")
-            self._record_path(path, result)
+            self._record_path(path, result, workspace)
 
-    def _record_path(self, path: str, result: WorkerResult) -> None:
+    def _record_path(self, path: str, result: WorkerResult, workspace: Path) -> None:
         if not path:
             return
         try:
-            path = str(Path(path).relative_to(self.workspace))
+            path = str(Path(path).relative_to(workspace))
         except ValueError:
             pass
         if path not in result.files_changed:

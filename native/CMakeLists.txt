@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(agent-shell VERSION 0.26.0 LANGUAGES CXX)
+set(version_file "${CMAKE_CURRENT_SOURCE_DIR}/../pyproject.toml")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${version_file}")
+file(STRINGS "${version_file}" version_line REGEX "^version = " LIMIT_COUNT 1)
+if(NOT version_line MATCHES "^version = \"(([0-9]+\\.[0-9]+\\.[0-9]+)([-+][0-9A-Za-z.+-]+)?)\"$")
+    message(FATAL_ERROR "No se encontró una versión SemVer en pyproject.toml")
+endif()
+set(app_version "${CMAKE_MATCH_1}")
+project(agent-shell VERSION "${CMAKE_MATCH_2}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,7 +56,7 @@ target_include_directories(agent-shell PRIVATE
 )
 
 target_compile_definitions(agent-shell PRIVATE
-    AGENT_SHELL_VERSION="${PROJECT_VERSION}"
+    AGENT_SHELL_VERSION="${app_version}"
     AGENT_SHELL_INSTALL_DATADIR="${AGENT_SHELL_INSTALL_DATADIR}"
 )
 

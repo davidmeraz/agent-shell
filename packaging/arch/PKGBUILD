@@ -1,6 +1,6 @@
 # Maintainer: Agent Shell Contributors
 pkgname=agent-shell
-pkgver=0.26.0
+pkgver=0.27.0
 pkgrel=1
 pkgdesc="Aplicación nativa Qt6/Wayland de IA para Linux integrada con Hyprland y el tema Gema"
 arch=('x86_64')

@@ -18,12 +18,17 @@ QtObject {
     property bool providerBusy: false
     property bool unifiedMode: false
     property var unifiedArchitect: ({})
+    property var unifiedCascade: []
     property var unifiedTeam: []
+    property var unifiedConfig: ({})
+    property string unifiedConfigError: ""
+    property var providerCatalogs: ({})
     property var resolvedModels: ({})
     // Subagentes del turno actual o del último; `agentTurn` indica que hubo un turno unificado.
     property var agents: []
     property bool agentTurn: false
-    readonly property var activeAgent: agents.find(agent => agent.status === "running") || null
+    readonly property var activeAgents: agents.filter(agent => agent.status === "running")
+    readonly property var activeAgent: activeAgents.length ? activeAgents[0] : null
     property var providerUsage: ({})
     property bool teamUsageBusy: false
     readonly property bool engineReady: unifiedMode ? !!unifiedArchitect.model : (provider === "agy" && agyAvailable)
@@ -401,6 +406,23 @@ QtObject {
         sendCommand({ type: "unified.toggle" });
     }
 
+    function prepareUnified() {
+        if (!ready) return;
+        sendCommand({ type: "unified.prepare" });
+    }
+
+    function configureUnified(config) {
+        if (!ready || busy) return;
+        unifiedConfigError = "";
+        sendCommand(Object.assign({ type: "unified.configure" }, config));
+    }
+
+    function resetUnifiedConfig() {
+        if (!ready || busy) return;
+        unifiedConfigError = "";
+        sendCommand({ type: "unified.configure", reset: true });
+    }
+
     function selectProvider(nextProvider) {
         if (unifiedMode) return;
         if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing) return;
@@ -614,7 +636,10 @@ QtObject {
             claudePlan = data.claude_plan || "";
             if (typeof data.unified_mode === "boolean") unifiedMode = data.unified_mode;
             unifiedArchitect = data.unified_architect || ({});
+            unifiedCascade = data.unified_cascade || [];
             unifiedTeam = data.unified_team || [];
+            if (data.unified_config) unifiedConfig = data.unified_config;
+            if (data.provider_catalogs) providerCatalogs = data.provider_catalogs;
             resolvedModels = data.resolved_models || {};
             if (!busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy) {
                 if (unifiedMode) {
@@ -653,6 +678,13 @@ QtObject {
                 ? Object.assign({}, previous, { error: data.error }) : data);
         } else if (event.type === "unified.usage.finished") {
             teamUsageBusy = false;
+        } else if (event.type === "unified.config.state") {
+            unifiedConfig = data.config || unifiedConfig;
+            unifiedConfigError = "";
+            status = "Configuración del modo unificado guardada.";
+        } else if (event.type === "unified.config.rejected") {
+            unifiedConfigError = data.message || "No se pudo guardar la configuración del modo unificado.";
+            status = unifiedConfigError;
         } else if (event.type === "unified.agent") {
             agents = agents.some(agent => agent.id === data.id)
                 ? agents.map(agent => agent.id === data.id ? data : agent) : agents.concat(data);

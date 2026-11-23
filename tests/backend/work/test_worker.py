@@ -219,9 +219,20 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(child.cancelled.is_set())
 
     def test_arguments_are_validated(self):
-        self.assertEqual(parse_delegate_arguments('{"task": " x ", "role": "reviewer", "provider": null}'),
-                         {"task": "x", "role": "reviewer", "provider": ""})
-        for bad in ('[]', '{"task": ""}', '{"task": "x", "role": "boss"}', '{"task": "x", "provider": "other"}', '{'):
+        self.assertEqual(
+            parse_delegate_arguments('{"task": " x ", "worker": "claude", "read_only": true}'),
+            {"task": "x", "worker": "claude", "provider": "claude", "read_only": True, "role": "reviewer"},
+        )
+        # Legacy role/provider syntax remains accepted for robustness.
+        self.assertEqual(
+            parse_delegate_arguments('{"task": " x ", "role": "reviewer", "provider": null}'),
+            {"task": "x", "worker": "", "provider": "", "read_only": True, "role": "reviewer"},
+        )
+        for bad in (
+            '[]', '{"task": ""}', '{"task": "x", "role": "boss"}',
+            '{"task": "x", "provider": "other"}', '{"task": "x", "worker": "other"}',
+            '{"task": "x", "read_only": "yes"}', '{',
+        ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 parse_delegate_arguments(bad)
 

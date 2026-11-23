@@ -5,7 +5,11 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.26.0` añade la vista de iconos grandes como modo predeterminado en el
+La versión `0.27.0` añade el modo unificado con arquitecto y obreros, su configuración
+persistente (`backend/harness/work/unified_config.py`), los motores Claude Code y
+Antigravity, y el runtime nativo Qt/Hyprland. Incrementa MENOR por las nuevas
+capacidades de delegación, motores e interfaz.
+La versión anterior `0.26.0` añade la vista de iconos grandes como modo predeterminado en el
 explorador de archivos (`ExplorerIconCard.qml`, `ProjectExplorerWindow.qml`) con iconos
 vectoriales grandes de carpetas y archivos, navegación por ruta (*breadcrumbs*) y
 selector dual en la cabecera (`Ctrl+1` iconos grandes / `Ctrl+2` árbol compacto).

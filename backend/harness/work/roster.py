@@ -1,9 +1,13 @@
-"""Worker roster: ranks live provider catalogs by capability tier and remaining quota."""
+"""Worker roster: ranks live provider catalogs by capability tier, cascade config, and remaining quota."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .unified_config import UnifiedConfig
 
 # Tiers come from product-line names, never from versions, so new releases are picked up
 # from the live catalog. Unlisted lines (and flagships) are never selected as workers.
@@ -13,11 +17,17 @@ TIER_LINES = {
     "opus": "strong", "sol": "strong",
 }
 ARCHITECT_LINES = frozenset({"astra", "opus", "argon"})
+CASCADE_PRODUCT_LINES = frozenset({"neon", "argon", "hydrogen", "astra", "opus", "fable", *TIER_LINES})
 ROLE_TIERS = {
     "explorer": ("fast", "balanced", "strong"),
     "builder": ("balanced", "fast", "strong"),
     "specialist": ("strong", "balanced", "fast"),
     "reviewer": ("balanced", "strong", "fast"),
+}
+WORKER_TIER_FALLBACKS = {
+    "fast": ("fast", "balanced", "strong"),
+    "balanced": ("balanced", "strong", "fast"),
+    "strong": ("strong", "balanced", "fast"),
 }
 READ_ONLY_ROLES = frozenset({"explorer", "reviewer"})
 TIER_EFFORTS = {
@@ -54,6 +64,15 @@ def quota_bucket(provider: str, model: str = "") -> str:
     return provider
 
 
+def bucket_remaining(bucket: str, remaining: dict[str, float]) -> float | None:
+    """Porcentaje restante del bucket; agy:argon comparte cuota Gemini si no hay bucket propio."""
+    if bucket in remaining:
+        return remaining[bucket]
+    if bucket == "agy:argon" and "agy:gemini" in remaining:
+        return remaining["agy:gemini"]
+    return None
+
+
 def vendor(slug: str) -> str:
     return slug.split("-", 1)[0].lower()
 
@@ -67,6 +86,13 @@ def model_tier(slug: str) -> str:
 
 def model_version(slug: str) -> tuple[int, ...]:
     return tuple(int(number) for number in re.findall(r"\d+", EFFORT_SUFFIX_RE.sub("", slug.lower())))
+
+
+def _product_line(slug: str) -> str:
+    for part in EFFORT_SUFFIX_RE.sub("", slug.lower()).split("-"):
+        if part in CASCADE_PRODUCT_LINES:
+            return part
+    return ""
 
 
 def build_roster(catalogs: dict[str, list[dict]]) -> list[Candidate]:
@@ -87,13 +113,173 @@ def build_roster(catalogs: dict[str, list[dict]]) -> list[Candidate]:
 
 
 def _pick_effort(rows: list[dict], preferred: tuple[str, ...]) -> tuple[dict, str]:
-    for effort in preferred:
+    seen: set[str] = set()
+    ordered = [effort for effort in preferred if effort and not (effort in seen or seen.add(effort))]
+    for effort in ordered:
         for row in rows:
             if row["slug"].endswith("-" + effort):
                 return row, ""
             if effort in row.get("reasoning_efforts", []):
                 return row, effort
     return rows[0], ""
+
+
+def _pick_provider_effort(provider: str, rows: list[dict], preferred: tuple[str, ...]) -> tuple[dict, str]:
+    row, effort = _pick_effort(rows, preferred)
+    if provider == "agy":
+        return row, ""
+    return row, effort
+
+
+def resolve_model_candidate(
+    provider: str,
+    model: str,
+    effort: str,
+    catalogs: dict[str, list[dict]],
+    *,
+    tier: str = "balanced",
+    role: str = "architect",
+) -> Candidate | None:
+    """Resuelve un modelo explícito o automático contra el catálogo en vivo del proveedor."""
+    rows = catalogs.get(provider) or []
+    if not rows:
+        return None
+    fallback_efforts = (effort, *ARCHITECT_EFFORTS) if role == "architect" else (effort, *TIER_EFFORTS.get(tier, ("medium", "high", "low")))
+
+    if model:
+        base = EFFORT_SUFFIX_RE.sub("", model)
+        if provider == "agy" and effort:
+            target = f"{base}-{effort}"
+            variant = next((row for row in rows if row["slug"] == target), None)
+            if variant is not None:
+                return Candidate(provider, variant["slug"], "", role, quota_bucket(provider, variant["slug"]))
+
+        exact = [row for row in rows if row["slug"] == model]
+        if exact:
+            row, picked_effort = _pick_provider_effort(provider, exact, fallback_efforts)
+            return Candidate(provider, row["slug"], picked_effort, role, quota_bucket(provider, row["slug"]))
+
+        # Si cambió la versión en el catálogo (p. ej. gpt-6.3-astra o gemini-4.5-neon), busca la misma línea.
+        line = _product_line(model)
+        if line:
+            same_line = [row for row in rows if _product_line(row["slug"]) == line]
+            if same_line:
+                newest = max(model_version(row["slug"]) for row in same_line)
+                newest_rows = [row for row in same_line if model_version(row["slug"]) == newest]
+                row, picked_effort = _pick_provider_effort(provider, newest_rows, fallback_efforts)
+                return Candidate(provider, row["slug"], picked_effort, role, quota_bucket(provider, row["slug"]))
+
+    if role == "architect":
+        if provider == "agy":
+            for line in ("neon", "argon", "hydrogen"):
+                line_rows = [row for row in rows if _product_line(row["slug"]) == line]
+                if line_rows:
+                    newest = max(model_version(row["slug"]) for row in line_rows)
+                    newest_rows = [row for row in line_rows if model_version(row["slug"]) == newest]
+                    row, picked_effort = _pick_provider_effort(provider, newest_rows, fallback_efforts)
+                    return Candidate(provider, row["slug"], picked_effort, role, quota_bucket(provider, row["slug"]))
+        fallback = architect_candidate({provider: rows}, {}, provider)
+        if fallback is None:
+            return None
+        if effort and provider != "agy":
+            matched = [row for row in rows if row["slug"] == fallback.model]
+            if matched and effort in matched[0].get("reasoning_efforts", []):
+                return Candidate(fallback.provider, fallback.model, effort, role, fallback.bucket)
+        return fallback
+
+    # Obrero automático según nivel preferido (balanceado por defecto).
+    for target_tier in WORKER_TIER_FALLBACKS.get(tier, ("balanced", "strong", "fast")):
+        tier_rows = [row for row in rows if model_tier(row["slug"]) == target_tier]
+        if tier_rows:
+            newest = max(model_version(row["slug"]) for row in tier_rows)
+            newest_rows = [row for row in tier_rows if model_version(row["slug"]) == newest]
+            row, picked_effort = _pick_provider_effort(provider, newest_rows, fallback_efforts)
+            return Candidate(provider, row["slug"], picked_effort, target_tier, quota_bucket(provider, row["slug"]))
+
+    row, picked_effort = _pick_provider_effort(provider, rows, fallback_efforts)
+    return Candidate(provider, row["slug"], picked_effort, tier, quota_bucket(provider, row["slug"]))
+
+
+def select_architect(
+    catalogs: dict[str, list[dict]],
+    remaining: dict[str, float],
+    config: UnifiedConfig,
+    exhausted: set[str] | None = None,
+) -> Candidate | None:
+    """Recorre la cascada configurada cambiando al siguiente cuando la cuota restante <= umbral."""
+    spent = exhausted or set()
+    threshold = float(config.quota_threshold)
+    resolved: list[Candidate] = []
+    for step in config.architect_cascade:
+        candidate = resolve_model_candidate(step.provider, step.model, step.effort, catalogs, role="architect")
+        if candidate is not None and candidate.bucket not in spent:
+            resolved.append(candidate)
+
+    if not resolved:
+        fallback_remaining = {**remaining, **dict.fromkeys(spent, 0.0)}
+        return architect_candidate(catalogs, fallback_remaining, "")
+
+    for idx, candidate in enumerate(resolved):
+        left = bucket_remaining(candidate.bucket, remaining)
+        is_last = idx == len(resolved) - 1
+        if left is None:
+            return candidate
+        if not is_last and left > threshold:
+            return candidate
+        if is_last and left > LOW_QUOTA_PERCENT:
+            return candidate
+
+    positive = [
+        (bucket_remaining(candidate.bucket, remaining) or 0.0, -idx, candidate)
+        for idx, candidate in enumerate(resolved)
+        if (bucket_remaining(candidate.bucket, remaining) or 0.0) > 0
+    ]
+    if positive:
+        return max(positive, key=lambda entry: (entry[0], entry[1]))[2]
+    return resolved[0]
+
+
+def build_configured_workers(
+    catalogs: dict[str, list[dict]],
+    config: UnifiedConfig,
+) -> dict[str, Candidate | None]:
+    """Resuelve cada ranura de obrero configurada (p. ej. ChatGPT y Claude)."""
+    result: dict[str, Candidate | None] = {}
+    for worker in config.workers:
+        result[worker.slot] = resolve_model_candidate(
+            worker.provider,
+            worker.model,
+            worker.effort,
+            catalogs,
+            tier=worker.tier,
+            role=worker.slot,
+        )
+    return result
+
+
+def rank_worker_slots(
+    workers: dict[str, Candidate | None],
+    remaining: dict[str, float],
+    preferred_slot: str = "",
+    read_only: bool = False,
+) -> list[tuple[str, Candidate]]:
+    """Ordena los obreros configurados disponibles priorizando la ranura elegida y la cuota."""
+    entries = [(slot, candidate) for slot, candidate in workers.items() if candidate is not None]
+
+    def key(item: tuple[str, Candidate]):
+        slot, candidate = item
+        left = bucket_remaining(candidate.bucket, remaining)
+        score = UNKNOWN_QUOTA_PERCENT if left is None else left
+        unsuited = read_only and candidate.provider == "agy"
+        return (
+            score <= 0,
+            bool(preferred_slot) and slot != preferred_slot,
+            score < LOW_QUOTA_PERCENT,
+            unsuited,
+            -score,
+        )
+
+    return sorted(entries, key=key)
 
 
 def architect_candidate(catalogs: dict[str, list[dict]], remaining: dict[str, float],

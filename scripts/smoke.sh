@@ -34,7 +34,7 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
     if [[ "$smoke_config" == project-run-smoke.qml ]]; then smoke_project_run=1; fi
     smoke_run="$smoke_runtime/${smoke_config%.qml}"
     mkdir -p "$smoke_run/workspace"
-    env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen \
+    env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 \
         AGENT_SHELL_APP_DIR="$project_root" \
         AGENT_SHELL_WORKSPACE="$smoke_run/workspace" \
         AGENT_SHELL_PYTHON="${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}" \

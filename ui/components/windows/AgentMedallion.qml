@@ -9,15 +9,16 @@ Item {
     property bool working: false
     property string outcome: ""
     property color tint: "#ffffff"
-    implicitWidth: 52
-    implicitHeight: 52
+    property int size: 42
+    implicitWidth: size
+    implicitHeight: size
 
     Rectangle {
         id: ripple
         anchors.centerIn: parent
-        width: 44
-        height: 44
-        radius: 22
+        width: medallion.size - 6
+        height: medallion.size - 6
+        radius: width / 2
         color: "transparent"
         border.width: 1
         border.color: medallion.tint
@@ -35,9 +36,9 @@ Item {
     }
     Rectangle {
         anchors.centerIn: parent
-        width: 40
-        height: 40
-        radius: 20
+        width: medallion.size - 10
+        height: medallion.size - 10
+        radius: width / 2
         gradient: Gradient {
             GradientStop { position: 0; color: Qt.alpha(medallion.tint, 0.26) }
             GradientStop { position: 1; color: Qt.alpha(medallion.tint, 0.06) }
@@ -59,8 +60,8 @@ Item {
                 property real sweep: medallion.working ? 100 : 360
                 centerX: orbit.width / 2
                 centerY: orbit.height / 2
-                radiusX: 23
-                radiusY: 23
+                radiusX: (medallion.size - 6) / 2
+                radiusY: (medallion.size - 6) / 2
                 startAngle: -90
                 sweepAngle: sweep
                 Behavior on sweep { NumberAnimation { duration: GemaTheme.animations ? 620 : 0; easing.type: Easing.InOutCubic } }
@@ -79,7 +80,7 @@ Item {
         anchors.centerIn: parent
         text: medallion.outcome || medallion.glyph
         color: medallion.tint
-        font.pixelSize: 18
+        font.pixelSize: Math.max(12, Math.round(medallion.size * 0.36))
         font.weight: Font.Bold
         style: Text.Raised
         styleColor: GemaTheme.textShadow

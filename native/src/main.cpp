@@ -18,10 +18,6 @@
 
 #include <iostream>
 
-#ifndef AGENT_SHELL_VERSION
-#define AGENT_SHELL_VERSION "0.26.0"
-#endif
-
 #ifndef AGENT_SHELL_INSTALL_DATADIR
 #define AGENT_SHELL_INSTALL_DATADIR "/usr/share/agent-shell"
 #endif

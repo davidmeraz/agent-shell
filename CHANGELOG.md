@@ -5,6 +5,16 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Sin publicar
 
+## [0.27.0] — 2026-11-23
+
+Esta versión incorpora el modo unificado con arquitecto y obreros, los motores Claude Code y Antigravity, y su configuración persistente.
+
+- Modo unificado con arquitecto, obreros y uso por proveedor, y ventanas de agente.
+- Configuración persistente del modo unificado en `unified.json` (`backend/harness/work/unified_config.py`): cascada de arquitectos, umbral de cuota, obreros en paralelo y ranuras de obreros, con el diálogo `UnifiedConfigDialog.qml`.
+- Motores Antigravity CLI (Gemini/Claude) y Claude Code CLI con selector superior de tres motores.
+- Runtime nativo Qt/Hyprland, dock inferior con cuota por chat y diálogo unificado de **Ajustes**.
+- Botón **Git** y visor lateral del flujo de commits en **Work** y **App**; mejoras de desplazamiento, ámbito e indentación en el visor de archivos.
+- Corrección del bloqueo al reabrir historiales largos.
 - Botón **Archivos** junto a **Git** en **Work** y **App** para abrir o cerrar el explorador del proyecto seleccionado.
 
 ## [0.26.0] — 2026-11-22

@@ -1,4 +1,4 @@
-"""Unified mode end to end: each provider as architect delegating through HarnessServer."""
+"""Unified mode end to end: architect cascade with quota threshold and 2 dedicated workers (parallel)."""
 
 import json
 import tempfile
@@ -16,7 +16,13 @@ from harness.chat.chatgpt import ChatGPTClient
 from harness.core.http import HttpClient
 from harness.core.server import MAX_DELEGATION_ROUNDS, HarnessServer
 
-BLOCK = '```delegate\n{"task": "create a.py", "role": "explorer", "provider": null}\n```'
+BLOCK = '```delegate\n{"task": "create a.py", "worker": null, "read_only": false}\n```'
+NEON_CATALOG = [
+    {"slug": "gemini-4-neon-xhigh", "display_name": "Gemini 4 Neon (XHigh)", "reasoning_efforts": []},
+    {"slug": "gemini-4-neon-high", "display_name": "Gemini 4 Neon (High)", "reasoning_efforts": []},
+    {"slug": "gemini-4-argon-high", "display_name": "Gemini 4 Argon (High)", "reasoning_efforts": []},
+    {"slug": "gemini-3.8-flash-medium", "display_name": "Gemini 3.8 Flash (Medium)", "reasoning_efforts": []},
+]
 
 
 def claude_turn(answer, **result):
@@ -27,7 +33,7 @@ def claude_turn(answer, **result):
 
 
 def agy_turn(answer):
-    return [{"type": "init", "conversation_id": "a1", "model": "gemini"},
+    return [{"type": "init", "conversation_id": "a1", "model": "gemini-4-neon-xhigh"},
             {"type": "text_delta", "conversation_id": "a1", "step_index": 1, "state": "DONE", "text": answer,
              "done": True, "usage": {"total_tokens": 10}},
             {"type": "result", "conversation_id": "a1", "status": "SUCCESS", "response": answer,
@@ -35,10 +41,11 @@ def agy_turn(answer):
 
 
 class UnifiedModeTests(unittest.TestCase):
-    def start(self, provider, session=None, client=None, agy=None, claude=None):
-        temp = tempfile.TemporaryDirectory()
-        self.addCleanup(temp.cleanup)
-        root = Path(temp.name)
+    def start(self, provider, session=None, client=None, agy=None, claude=None, root=None):
+        if root is None:
+            temp = tempfile.TemporaryDirectory()
+            self.addCleanup(temp.cleanup)
+            root = Path(temp.name)
         self.output = QueueOutput()
         server = HarnessServer(root / "chats", self.output, session or _OfflineSession(), client, workspace=root,
                                config_root=root / "config", agy_client=agy, claude_client=claude)
@@ -70,31 +77,169 @@ class UnifiedModeTests(unittest.TestCase):
         self.assertEqual(self.send(server)["status"], "completed")
         architect, worker, followup = claude.calls
         self.assertIn("you are the architect", architect["prompt"])
-        self.assertEqual((worker["model"], worker["session_id"]), ("claude-haiku", ""))
+        self.assertEqual((architect["model"], architect["effort"]), ("claude-opus", "xhigh"))
+        self.assertEqual((worker["model"], worker["effort"], worker["session_id"]), ("claude-sonnet", "medium", ""))
         self.assertNotIn("you are the architect", worker["prompt"])
         self.assertEqual([c["isolated"] for c in claude.calls], [False, True, False])
         self.assertEqual(followup["session_id"], "s1")
         self.assertIn("Created a.py", followup["prompt"])
         card, = [c for c in server.conversation["tool_calls"] if c["command"].startswith("delegate")]
-        self.assertEqual((card["command"], card["status"]), ("delegate explorer claude/claude-haiku: create a.py", "completed"))
+        self.assertEqual((card["command"], card["status"]), ("delegate claude claude/claude-sonnet: create a.py", "completed"))
         answers = [m["text"] for m in server.conversation["messages"] if m["role"] == "assistant"]
         self.assertEqual(answers, ["Plan\n" + BLOCK, "All verified."])
 
-    def test_gemini_architect_delegates_to_another_provider(self):
+    def test_gemini_neon_architect_delegates_to_claude_worker(self):
         agy = _FakeAgyClient(turns=[agy_turn(BLOCK.replace("null", '"claude"')), agy_turn("Verified.")])
-        agy.models = lambda force=False: [{"slug": "gemini-4-argon-high", "display_name": "Gemini 4 Argon (High)",
-                                           "reasoning_efforts": []}]
+        agy.models = lambda force=False: NEON_CATALOG
         claude = _FakeClaudeClient(turns=[claude_turn("Created a.py")])
         server = self.start("agy", agy=agy, claude=claude)
         server.handle({"type": "unified.toggle"})
         self.assertEqual(self.send(server)["status"], "completed")
-        self.assertEqual([c["model"] for c in claude.calls], ["claude-haiku"])
+        self.assertEqual(agy.calls[0]["model"], "gemini-4-neon-xhigh")
+        self.assertEqual([c["model"] for c in claude.calls], ["claude-sonnet"])
         self.assertEqual(server.conversation["messages"][-1]["text"], "Verified.")
+
+    def test_cascade_switches_neon_to_opus_to_astra_at_35_percent(self):
+        with FakeService() as service:
+            service.models = [
+                {"slug": "gpt-6.2-astra", "display_name": "GPT-6.2-Astra", "visibility": "list"},
+                {"slug": "gpt-6.1-terra", "display_name": "GPT-6.1-Terra", "visibility": "list"},
+            ]
+            agy = _FakeAgyClient(turns=[agy_turn("Turn 1 by Neon.")])
+            agy.models = lambda force=False: NEON_CATALOG
+            claude = _FakeClaudeClient(turns=[claude_turn("Turn 2 by Opus.")])
+            client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
+            server = self.start("chatgpt", FakeSession(), client, agy=agy, claude=claude)
+            server._agy_models = list(NEON_CATALOG)
+            server._last_quota_snapshots = {
+                "agy:gemini": {"session_used": 20, "captured_at": 0},   # 80% remaining
+                "claude": {"session_used": 10, "captured_at": 0},       # 90% remaining
+                "chatgpt": {"session_used": 5, "captured_at": 0},       # 95% remaining
+            }
+            server.handle({"type": "unified.toggle"})
+
+            # Turn 1: Gemini 4 Neon (xhigh)
+            self.assertEqual(self.send(server, "step 1")["status"], "completed")
+            self.assertEqual(agy.calls[0]["model"], "gemini-4-neon-xhigh")
+
+            # Gemini drops to 35% remaining (65% used) -> switches to Claude Opus 5.5 (xhigh)
+            server._last_quota_snapshots["agy:gemini"] = {"session_used": 65, "captured_at": 0}
+            self.assertEqual(self.send(server, "step 2")["status"], "completed")
+            self.assertEqual((claude.calls[0]["model"], claude.calls[0]["effort"]), ("claude-opus", "xhigh"))
+            notices = [
+                json.loads(line)["data"]["message"]
+                for line in self.output.getvalue().splitlines()
+                if json.loads(line)["type"] == "chat.notice"
+            ]
+            self.assertTrue(any("35%" in msg and "Opus" in msg for msg in notices), notices)
+
+            # Claude drops to 35% remaining (65% used) -> switches to GPT-6.2-Astra (high)
+            server._last_quota_snapshots["claude"] = {"session_used": 65, "captured_at": 0}
+            self.assertEqual(self.send(server, "step 3")["status"], "completed")
+            req_body = service.requests[-1]["body"]
+            self.assertEqual(req_body["model"], "gpt-6.2-astra")
+            self.assertEqual(req_body["reasoning"], {"effort": "high"})
+            notices = [
+                json.loads(line)["data"]["message"]
+                for line in self.output.getvalue().splitlines()
+                if json.loads(line)["type"] == "chat.notice"
+            ]
+            self.assertTrue(any("35%" in msg and "Astra" in msg for msg in notices), notices)
+
+    def test_two_dedicated_workers_run_truly_in_parallel(self):
+        barrier = threading.Barrier(2, timeout=4.0)
+        with FakeService() as service:
+            service.models = [
+                {"slug": "gpt-6.2-astra", "display_name": "GPT-6.2-Astra", "visibility": "list"},
+                {"slug": "gpt-6.1-terra", "display_name": "GPT-6.1-Terra", "visibility": "list"},
+            ]
+            parallel_blocks = (
+                '```delegate\n{"task": "edit backend.py", "worker": "chatgpt", "read_only": false}\n```\n'
+                '```delegate\n{"task": "edit ui.qml", "worker": "claude", "read_only": false}\n```'
+            )
+            agy = _FakeAgyClient(turns=[agy_turn(parallel_blocks), agy_turn("Both merged.")])
+            agy.models = lambda force=False: NEON_CATALOG
+
+            claude = _FakeClaudeClient(turns=[claude_turn("Claude finished ui.qml")])
+            orig_claude = claude.stream_turn
+
+            def synced_claude(prompt, model, workspace, control, **kwargs):
+                barrier.wait()
+                yield from orig_claude(prompt, model, workspace, control, **kwargs)
+
+            claude.stream_turn = synced_claude
+
+            client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
+            orig_chatgpt_stream = client.stream
+
+            def synced_chatgpt(model, messages, instructions, control, **kwargs):
+                barrier.wait()
+                yield from orig_chatgpt_stream(model, messages, instructions, control, **kwargs)
+
+            client.stream = synced_chatgpt
+
+            server = self.start("chatgpt", FakeSession(), client, agy=agy, claude=claude)
+            server._agy_models = list(NEON_CATALOG)
+            server._last_quota_snapshots = {
+                "agy:gemini": {"session_used": 10, "captured_at": 0},
+                "claude": {"session_used": 10, "captured_at": 0},
+                "chatgpt": {"session_used": 10, "captured_at": 0},
+            }
+            server.handle({"type": "unified.toggle"})
+            # If the two workers ran sequentially, the barrier would raise BrokenBarrierError and fail.
+            self.assertEqual(self.send(server, "work in parallel")["status"], "completed")
+            self.assertEqual(server.conversation["messages"][-1]["text"], "Both merged.")
+            cards = [c["command"] for c in server.conversation["tool_calls"]]
+            self.assertEqual(len(cards), 2)
+            self.assertIn("delegate chatgpt chatgpt/gpt-6.1-terra", cards[0])
+            self.assertIn("delegate claude claude/claude-sonnet", cards[1])
+
+    def test_chatgpt_architect_parallel_delegation_across_both_workers(self):
+        barrier = threading.Barrier(2, timeout=4.0)
+        with FakeService() as service:
+            service.models = [
+                {"slug": "gpt-6.2-astra", "display_name": "GPT-6.2-Astra", "visibility": "list"},
+                {"slug": "gpt-6.1-terra", "display_name": "GPT-6.1-Terra", "visibility": "list"},
+            ]
+            service.tool_batches = [[
+                {"name": "delegate", "arguments": json.dumps({"task": "work backend", "worker": "chatgpt", "read_only": False})},
+                {"name": "delegate", "arguments": json.dumps({"task": "work ui", "worker": "claude", "read_only": False})},
+            ]]
+            claude = _FakeClaudeClient(turns=[claude_turn("Claude done")])
+            orig_claude = claude.stream_turn
+
+            def synced_claude(prompt, model, workspace, control, **kwargs):
+                barrier.wait()
+                yield from orig_claude(prompt, model, workspace, control, **kwargs)
+
+            claude.stream_turn = synced_claude
+
+            client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
+            orig_chatgpt_stream = client.stream
+
+            def synced_chatgpt(model, messages, instructions, control, **kwargs):
+                if model == "gpt-6.1-terra":
+                    barrier.wait()
+                yield from orig_chatgpt_stream(model, messages, instructions, control, **kwargs)
+
+            client.stream = synced_chatgpt
+
+            server = self.start("chatgpt", FakeSession(), client, claude=claude)
+            server._last_quota_snapshots = {
+                "claude": {"session_used": 70, "captured_at": 0},   # 30% <= 35% -> ChatGPT architect runs
+                "chatgpt": {"session_used": 10, "captured_at": 0},
+            }
+            server.handle({"type": "unified.toggle"})
+            self.assertEqual(self.send(server, "shell parallel")["status"], "completed")
+            cards = [c["command"] for c in server.conversation["tool_calls"]]
+            self.assertEqual(len(cards), 2)
+            self.assertIn("delegate chatgpt chatgpt/gpt-6.1-terra", cards[0])
+            self.assertIn("delegate claude claude/claude-sonnet", cards[1])
 
     def test_chatgpt_architect_receives_failed_worker_as_error(self):
         with FakeService() as service:
             service.tool_batches = [[{"name": "delegate", "arguments": json.dumps(
-                {"task": "create a.py", "role": "explorer", "provider": "claude"})}]]
+                {"task": "create a.py", "worker": "claude", "read_only": True})}]]
             claude = _FakeClaudeClient(turns=[claude_turn("", is_error=True, error="API error")])
             client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
             server = self.start("chatgpt", FakeSession(), client, claude=claude)
@@ -136,7 +281,7 @@ class UnifiedModeTests(unittest.TestCase):
         original = claude.stream_turn
 
         def stream(prompt, model, workspace, control, **kwargs):
-            if model != "claude-haiku":
+            if model != "claude-sonnet":
                 yield from original(prompt, model, workspace, control, **kwargs)
                 return
             working.set()
@@ -151,7 +296,7 @@ class UnifiedModeTests(unittest.TestCase):
         server._stream.cancel()
         self.assertEqual(self.output.wait_for("chat.finished")["status"], "interrupted")
 
-    def test_toggle_is_rejected_while_busy_and_lists_workers_when_on(self):
+    def test_toggle_is_rejected_while_busy_and_lists_two_workers_when_on(self):
         server = self.start("claude", claude=_FakeClaudeClient())
         server.busy = True
         server.handle({"type": "unified.toggle"})
@@ -161,13 +306,45 @@ class UnifiedModeTests(unittest.TestCase):
         state = {}
         while not state.get("unified_mode"):
             state = self.output.wait_for("provider.state")
-        self.assertEqual([row["role"] for row in state["unified_team"]], ["explorer", "builder", "specialist", "reviewer"])
-        self.assertEqual([row["workers"][0]["name"] for row in state["unified_team"]],
-                         ["Claude Haiku", "Claude Sonnet", "Claude Opus", "Claude Sonnet"])
+        self.assertEqual([row["role"] for row in state["unified_team"]], ["chatgpt", "claude"])
+        self.assertEqual(state["unified_team"][0]["workers"], [])
+        self.assertEqual(state["unified_team"][1]["workers"][0]["name"], "Claude Sonnet")
+        self.assertEqual(len(state["unified_cascade"]), 3)
+        self.assertEqual(state["unified_config"]["quota_threshold"], 35)
         server.handle({"type": "unified.toggle"})
         while state["unified_mode"]:
             state = self.output.wait_for("provider.state")
         self.assertEqual(state["unified_team"], [])
+        self.assertEqual(state["unified_cascade"], [])
+
+    def test_configure_unified_updates_persists_and_resets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = _FakeClaudeClient()
+            server = self.start("claude", claude=claude, root=root)
+            server.handle({"type": "unified.configure", "quota_threshold": 42, "parallel_workers": False})
+            saved = self.output.wait_for("unified.config.state")
+            self.assertEqual(saved["config"]["quota_threshold"], 42)
+            self.assertFalse(saved["config"]["parallel_workers"])
+
+            server.handle({"type": "unified.configure", "quota_threshold": 200})
+            rejected = self.output.wait_for("unified.config.rejected")
+            self.assertIn("umbral", rejected["message"].lower())
+
+            # Reload in a fresh server instance to verify persistence
+            reloaded_output = QueueOutput()
+            reloaded = HarnessServer(
+                root / "chats", reloaded_output, _OfflineSession(), None,
+                workspace=root, config_root=root / "config", claude_client=claude,
+            )
+            self.addCleanup(reloaded.project_runner.close)
+            self.assertEqual(reloaded.unified_config.quota_threshold, 42)
+            self.assertFalse(reloaded.unified_config.parallel_workers)
+
+            reloaded.handle({"type": "unified.configure", "reset": True})
+            reset_state = reloaded_output.wait_for("unified.config.state")
+            self.assertEqual(reset_state["config"]["quota_threshold"], 35)
+            self.assertTrue(reset_state["config"]["parallel_workers"])
 
     def test_manual_selection_is_locked_and_restored(self):
         server = self.start("claude", claude=_FakeClaudeClient())
@@ -191,6 +368,7 @@ class UnifiedModeTests(unittest.TestCase):
             state = self.output.wait_for("provider.state")
         architect = state["unified_architect"]
         self.assertTrue(all(architect.get(key) for key in ("provider", "model", "name")))
+        self.assertEqual(architect["effort"], "xhigh")
         server.handle({"type": "unified.toggle"})
         while state.get("unified_mode"):
             state = self.output.wait_for("provider.state")
@@ -214,20 +392,23 @@ class UnifiedModeTests(unittest.TestCase):
 
     def test_team_reports_quota_resolved_version_and_skips_exhausted(self):
         claude = _FakeClaudeClient()
-        claude.resolved_models = {"claude-haiku": "claude-haiku-5-5"}
+        claude.resolved_models = {"claude-sonnet": "claude-sonnet-5-5"}
         server = self.start("claude", claude=claude)
         server.unified_mode = True
         server._last_quota_snapshots = {"claude": {"session_used": 12.4, "weekly_used": 3.0, "captured_at": 0}}
-        first = server._unified_team()[0]["workers"][0]
-        self.assertEqual(first, {"provider": "claude", "model": "claude-haiku", "name": "Claude Haiku 5.5",
-                                 "effort": "medium", "remaining": 88})
+        claude_slot = next(row for row in server._unified_team() if row["role"] == "claude")
+        self.assertEqual(claude_slot["workers"][0], {
+            "provider": "claude", "model": "claude-sonnet", "name": "Claude Sonnet 5.5",
+            "effort": "medium", "remaining": 88,
+        })
         server.worker_router.mark_exhausted("claude")
-        self.assertEqual([row["workers"] for row in server._unified_team()], [[], [], [], []])
+        self.assertEqual([row["workers"] for row in server._unified_team()], [[], []])
 
     def test_every_subagent_is_announced_with_its_progress_and_outcome(self):
         tool = {"type": "tool_start", "session_id": "s", "tool_use_id": "t1", "tool_name": "Read",
                 "parameters": {"file_path": "a.py"}}
-        claude = _FakeClaudeClient(turns=[claude_turn(BLOCK + "\n" + BLOCK.replace("explorer", "builder")),
+        two_blocks = BLOCK + "\n" + BLOCK.replace("false", "true")
+        claude = _FakeClaudeClient(turns=[claude_turn(two_blocks),
                                           [tool] + claude_turn("found it"), claude_turn("", is_error=True, error="boom"),
                                           claude_turn("Done.")])
         server = self.start("claude", claude=claude)
@@ -238,10 +419,10 @@ class UnifiedModeTests(unittest.TestCase):
             events.append(self.output.wait_for("unified.agent"))
         first = [e for e in events if e["id"] == events[0]["id"]]
         self.assertEqual((first[0]["role"], first[0]["status"], first[0]["worker"]["model"], first[0]["task"]),
-                         ("explorer", "running", "claude-haiku", "create a.py"))
+                         ("claude", "running", "claude-sonnet", "create a.py"))
         self.assertTrue(any("read_file a.py" in line for e in first for line in e["lines"]))
         self.assertEqual((first[-1]["status"], first[-1]["summary"], first[-1]["tool_calls"]), ("completed", "found it", 1))
-        self.assertEqual((events[-1]["role"], events[-1]["status"], events[-1]["error"]), ("builder", "failed", "boom"))
+        self.assertEqual((events[-1]["role"], events[-1]["status"], events[-1]["error"]), ("claude", "failed", "boom"))
         self.output.wait_for("chat.finished")
 
     def test_cancelled_subagent_is_not_left_running(self):
@@ -250,7 +431,7 @@ class UnifiedModeTests(unittest.TestCase):
         original = claude.stream_turn
 
         def stream(prompt, model, workspace, control, **kwargs):
-            if model != "claude-haiku":
+            if model != "claude-sonnet":
                 yield from original(prompt, model, workspace, control, **kwargs)
                 return
             working.set()
@@ -268,19 +449,17 @@ class UnifiedModeTests(unittest.TestCase):
             event = self.output.wait_for("unified.agent")
         self.assertEqual(event["status"], "interrupted")
 
-    ARGON = [{"slug": "gemini-4-argon-high", "display_name": "Gemini 4 Argon (High)", "reasoning_efforts": []}]
-
     def test_architect_out_of_quota_is_replaced_within_the_turn(self):
         agy = _FakeAgyClient(turns=[agy_turn(BLOCK), [{"type": "error", "message": "RESOURCE_EXHAUSTED (code 429)"}]])
-        agy.models = lambda force=False: self.ARGON
+        agy.models = lambda force=False: NEON_CATALOG
         claude = _FakeClaudeClient(turns=[claude_turn("found the bug"), claude_turn("Finished by Opus.")])
         server = self.start("agy", agy=agy, claude=claude)
         server._last_quota_snapshots["claude"] = {"session_used": 50, "captured_at": 0}
-        server._last_quota_snapshots["agy:argon"] = {"session_used": 10, "captured_at": 0}
+        server._last_quota_snapshots["agy:gemini"] = {"session_used": 10, "captured_at": 0}
         server.handle({"type": "unified.toggle"})
         self.assertEqual(self.send(server)["status"], "completed")
         handoff = claude.calls[-1]
-        self.assertEqual((handoff["model"], handoff["isolated"]), ("claude-opus", False))
+        self.assertEqual((handoff["model"], handoff["effort"], handoff["isolated"]), ("claude-opus", "xhigh", False))
         for fragment in ("you are the architect", "build it", "found the bug"):
             self.assertIn(fragment, handoff["prompt"])
         self.assertEqual((server.conversation["provider"], server.conversation["model"]), ("claude", "claude-opus"))
@@ -293,6 +472,7 @@ class UnifiedModeTests(unittest.TestCase):
             claude = _FakeClaudeClient(turns=[claude_turn("Finished by Opus.")])
             client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
             server = self.start("chatgpt", FakeSession(), client, claude=claude)
+            # Claude is <= 35% so ChatGPT runs first; ChatGPT hits quota error -> falls back to Claude (20% > 0).
             server._last_quota_snapshots["claude"] = {"session_used": 80, "captured_at": 0}
             server.handle({"type": "unified.toggle"})
             self.assertEqual(self.send(server, "fail")["status"], "completed")
@@ -308,6 +488,7 @@ class UnifiedModeTests(unittest.TestCase):
             server.handle({"type": "unified.toggle"})
             self.assertEqual(self.send(server)["status"], "completed")
             self.assertEqual(service.requests[0]["body"]["model"], "gpt-6.2-astra")
+            self.assertEqual(service.requests[0]["body"]["reasoning"], {"effort": "high"})
             self.assertIn("build it", json.dumps(service.requests[0]["body"]["input"]))
 
     def test_turn_fails_when_every_architect_is_exhausted(self):
@@ -320,25 +501,27 @@ class UnifiedModeTests(unittest.TestCase):
 
     def test_ordinary_architect_error_is_not_retried(self):
         agy = _FakeAgyClient()
-        agy.models = lambda force=False: self.ARGON
+        agy.models = lambda force=False: NEON_CATALOG
         claude = _FakeClaudeClient(turns=[claude_turn("", is_error=True, error="API error")])
         server = self.start("claude", agy=agy, claude=claude)
-        server._last_quota_snapshots["agy:argon"] = {"session_used": 80, "captured_at": 0}
+        server._last_quota_snapshots["agy:gemini"] = {"session_used": 80, "captured_at": 0}
         server.handle({"type": "unified.toggle"})
         self.assertEqual(self.send(server)["status"], "failed")
 
-    def test_reviewer_avoids_the_vendor_that_built(self):
-        agy = _FakeAgyClient(turns=[agy_turn("reviewed")])
-        rows = [{"slug": "gemini-3.8-flash-medium", "display_name": "Gemini 3.8 Flash (Medium)", "reasoning_efforts": []}]
-        agy.models = lambda force=False: rows
-        claude = _FakeClaudeClient(turns=[
-            claude_turn(BLOCK.replace("explorer", "builder") + "\n" + BLOCK.replace("explorer", "reviewer")),
-            claude_turn("built"), claude_turn("Done.")])
-        server = self.start("claude", agy=agy, claude=claude)
-        server.handle({"type": "unified.toggle"})
-        self.assertEqual(self.send(server)["status"], "completed")
-        cards = [c["command"].split(":")[0] for c in server.conversation["tool_calls"]]
-        self.assertEqual(cards, ["delegate builder claude/claude-sonnet", "delegate reviewer agy/gemini-3.8-flash-medium"])
+    def test_worker_quota_exhausted_falls_back_to_other_dedicated_worker(self):
+        with FakeService() as service:
+            service.models = [{"slug": "gpt-6.1-terra", "display_name": "GPT-6.1-Terra", "visibility": "list"}]
+            agy = _FakeAgyClient(turns=[agy_turn(BLOCK.replace("null", '"claude"')), agy_turn("Done by fallback.")])
+            agy.models = lambda force=False: NEON_CATALOG
+            claude = _FakeClaudeClient(turns=[claude_turn("", is_error=True, error="You've hit your session limit")])
+            client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
+            server = self.start("chatgpt", FakeSession(), client, agy=agy, claude=claude)
+            server._agy_models = list(NEON_CATALOG)
+            server._last_quota_snapshots["agy:gemini"] = {"session_used": 10, "captured_at": 0}
+            server.handle({"type": "unified.toggle"})
+            self.assertEqual(self.send(server)["status"], "completed")
+            self.assertEqual(server.conversation["messages"][-1]["text"], "Done by fallback.")
+            self.assertEqual(service.requests[0]["body"]["model"], "gpt-6.1-terra")
 
     def test_usage_is_published_for_every_provider_and_errors_stay_isolated(self):
         agy = _FakeAgyClient()

@@ -5,7 +5,11 @@ import unittest
 from tests.support import paths  # noqa: F401
 from harness.core.http import Cancelled, StreamControl
 from harness.work.quota_router import EXHAUSTED_COOLDOWN, QuotaAwareRouter
-from harness.work.roster import Candidate, architect_candidate, build_roster, model_tier, quota_bucket, rank
+from harness.work.roster import (
+    Candidate, architect_candidate, build_configured_workers, build_roster, model_tier,
+    quota_bucket, rank, rank_worker_slots, select_architect,
+)
+from harness.work.unified_config import ArchitectStep, UnifiedConfig, WorkerSlotConfig
 from harness.work.worker import WorkerResult
 
 
@@ -182,6 +186,109 @@ class QuotaRouterTests(unittest.TestCase):
         control.cancel()
         with self.assertRaises(Cancelled):
             router.run("t", control, ROSTER, REMAINING)
+
+
+class ArchitectCascadeAndWorkersTests(unittest.TestCase):
+    LIVE_CATALOGS = {
+        "agy": [
+            row("gemini-4-neon-high"),
+            row("gemini-4-neon-xhigh"),
+            row("gemini-4-argon-high"),
+            row("gemini-3.8-flash-medium"),
+        ],
+        "claude": [
+            row("claude-opus", ("low", "medium", "high", "xhigh", "max")),
+            row("claude-sonnet", ("low", "medium", "high", "xhigh", "max")),
+            row("claude-haiku", ("low", "medium", "high")),
+        ],
+        "chatgpt": [
+            row("gpt-6.2-astra", ("low", "medium", "high", "xhigh", "max")),
+            row("gpt-6.2-sol", ("low", "medium", "high", "xhigh")),
+            row("gpt-6.1-terra", ("low", "medium", "high")),
+            row("gpt-6-luna", ("low", "medium", "high")),
+        ],
+    }
+
+    def test_default_cascade_switches_at_35_percent_remaining(self):
+        cfg = UnifiedConfig.default()
+        # Start: Gemini above 35% -> Gemini 4 Neon (xhigh)
+        first = select_architect(self.LIVE_CATALOGS, {"agy:gemini": 76, "claude": 90, "chatgpt": 95}, cfg)
+        self.assertEqual((first.provider, first.model, first.effort), ("agy", "gemini-4-neon-xhigh", ""))
+
+        # Gemini drops to 35% -> switches to Claude Opus 5.5 (xhigh)
+        second = select_architect(self.LIVE_CATALOGS, {"agy:gemini": 35, "claude": 80, "chatgpt": 95}, cfg)
+        self.assertEqual((second.provider, second.model, second.effort), ("claude", "claude-opus", "xhigh"))
+
+        # Claude also drops to 35% -> switches to GPT-6.2-Astra (high)
+        third = select_architect(self.LIVE_CATALOGS, {"agy:gemini": 35, "claude": 35, "chatgpt": 70}, cfg)
+        self.assertEqual((third.provider, third.model, third.effort), ("chatgpt", "gpt-6.2-astra", "high"))
+
+        # Last step stays active below 35% (above 5%) without ping-ponging back to Gemini
+        still_third = select_architect(self.LIVE_CATALOGS, {"agy:gemini": 35, "claude": 34, "chatgpt": 20}, cfg)
+        self.assertEqual((still_third.provider, still_third.model), ("chatgpt", "gpt-6.2-astra"))
+
+        # When last step drops <= 5%, emergency fallback picks highest remaining quota > 0
+        fallback = select_architect(self.LIVE_CATALOGS, {"agy:gemini": 35, "claude": 34, "chatgpt": 4}, cfg)
+        self.assertEqual((fallback.provider, fallback.model), ("agy", "gemini-4-neon-xhigh"))
+
+    def test_cascade_respects_custom_order_and_threshold(self):
+        cfg = UnifiedConfig(
+            quota_threshold=50,
+            architect_cascade=(
+                ArchitectStep("claude", "claude-opus", "max"),
+                ArchitectStep("chatgpt", "gpt-6.2-astra", "xhigh"),
+                ArchitectStep("agy", "gemini-4-neon-high", "high"),
+            ),
+        )
+        c1 = select_architect(self.LIVE_CATALOGS, {"claude": 60, "chatgpt": 90, "agy:gemini": 99}, cfg)
+        self.assertEqual((c1.provider, c1.model, c1.effort), ("claude", "claude-opus", "max"))
+        c2 = select_architect(self.LIVE_CATALOGS, {"claude": 50, "chatgpt": 55, "agy:gemini": 99}, cfg)
+        self.assertEqual((c2.provider, c2.model, c2.effort), ("chatgpt", "gpt-6.2-astra", "xhigh"))
+        c3 = select_architect(self.LIVE_CATALOGS, {"claude": 50, "chatgpt": 49, "agy:gemini": 80}, cfg)
+        self.assertEqual((c3.provider, c3.model), ("agy", "gemini-4-neon-high"))
+
+    def test_future_version_in_same_line_is_resolved(self):
+        future = {
+            "agy": [row("gemini-5-neon-xhigh")],
+            "claude": [row("claude-opus", ("high", "xhigh"))],
+            "chatgpt": [row("gpt-6.5-astra", ("high", "xhigh"))],
+        }
+        cfg = UnifiedConfig.default()
+        self.assertEqual(select_architect(future, {"agy:gemini": 80}, cfg).model, "gemini-5-neon-xhigh")
+        self.assertEqual(select_architect(future, {"agy:gemini": 30, "claude": 20, "chatgpt": 60}, cfg).model, "gpt-6.5-astra")
+
+    def test_two_dedicated_workers_balanced_defaults_and_overrides(self):
+        cfg = UnifiedConfig.default()
+        workers = build_configured_workers(self.LIVE_CATALOGS, cfg)
+        self.assertEqual(set(workers), {"chatgpt", "claude"})
+        self.assertEqual((workers["chatgpt"].model, workers["chatgpt"].effort), ("gpt-6.1-terra", "medium"))
+        self.assertEqual((workers["claude"].model, workers["claude"].effort), ("claude-sonnet", "medium"))
+
+        # Without terra, ChatGPT balanced worker cleanly falls back to sol
+        no_terra = {**self.LIVE_CATALOGS, "chatgpt": [row("gpt-6.2-sol", ("low", "medium", "high")), row("gpt-6-luna", ("medium",))]}
+        workers_no_terra = build_configured_workers(no_terra, cfg)
+        self.assertEqual((workers_no_terra["chatgpt"].model, workers_no_terra["chatgpt"].effort), ("gpt-6.2-sol", "medium"))
+
+        # Explicit model override via UI config
+        custom = UnifiedConfig(workers=(
+            WorkerSlotConfig("chatgpt", "chatgpt", "gpt-6.2-sol", "high", "strong"),
+            WorkerSlotConfig("claude", "claude", "claude-haiku", "low", "fast"),
+        ))
+        custom_workers = build_configured_workers(self.LIVE_CATALOGS, custom)
+        self.assertEqual((custom_workers["chatgpt"].model, custom_workers["chatgpt"].effort), ("gpt-6.2-sol", "high"))
+        self.assertEqual((custom_workers["claude"].model, custom_workers["claude"].effort), ("claude-haiku", "low"))
+
+    def test_rank_worker_slots_honors_preference_and_falls_back_when_empty(self):
+        workers = build_configured_workers(self.LIVE_CATALOGS, UnifiedConfig.default())
+        # Auto picks higher remaining quota
+        auto = rank_worker_slots(workers, {"chatgpt": 40, "claude": 85})
+        self.assertEqual([slot for slot, _ in auto], ["claude", "chatgpt"])
+        # Explicit preference wins even when lower quota (> 0)
+        explicit = rank_worker_slots(workers, {"chatgpt": 3, "claude": 85}, preferred_slot="chatgpt")
+        self.assertEqual([slot for slot, _ in explicit], ["chatgpt", "claude"])
+        # Explicit preference at 0% falls back to the other worker
+        empty = rank_worker_slots(workers, {"chatgpt": 0, "claude": 85}, preferred_slot="chatgpt")
+        self.assertEqual([slot for slot, _ in empty], ["claude", "chatgpt"])
 
 
 if __name__ == "__main__":

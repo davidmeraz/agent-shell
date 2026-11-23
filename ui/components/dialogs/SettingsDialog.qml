@@ -9,6 +9,7 @@ GlassDialog {
     id: dialog
     required property AgentBridge bridge
     signal limitsRequested()
+    signal unifiedRequested()
     signal shellRequested()
     signal accountRequested()
     signal usageRequested()
@@ -281,6 +282,18 @@ GlassDialog {
                     }
                 }
             }
+        }
+
+        SettingsRow {
+            objectName: "settingsUnifiedRow"
+            visible: dialog.bridge.agyAvailable || dialog.bridge.claudeAvailable
+            iconText: "⬡"
+            titleText: "Modo unificado y cascada"
+            subtitleText: "Arquitectos por cuota, umbral y 2 obreros (ChatGPT y Claude)"
+            badgeText: "≤ " + (typeof dialog.bridge.unifiedConfig.quota_threshold === "number"
+                ? dialog.bridge.unifiedConfig.quota_threshold : 35) + "%"
+            enabled: dialog.bridge.ready && !dialog.bridge.busy
+            onClicked: { dialog.close(); dialog.unifiedRequested(); }
         }
 
         SettingsRow {

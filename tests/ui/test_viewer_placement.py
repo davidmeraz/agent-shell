@@ -255,7 +255,7 @@ class ViewerPlacementTests(unittest.TestCase):
         self.assertIn('move({x=870, y=242, relative=false, window="address:0xabcd"})', code)
         self.assertNotIn("dead", code)
 
-    def test_agent_windows_stack_in_the_left_column_without_covering_the_chat(self):
+    def test_agent_windows_stack_in_the_right_column_without_covering_the_chat(self):
         for width, height in ((2560, 1440), (1920, 1080), (1366, 768)):
             with self.subTest(width=width):
                 monitor = {**self.monitor(), "width": width, "height": height}
@@ -263,15 +263,120 @@ class ViewerPlacementTests(unittest.TestCase):
                 slots = [placement.agent_geometry(monitor, slot) for slot in range(4)]
                 for x, y, w, h in slots:
                     self.assertGreaterEqual(x, 10)
-                    self.assertGreaterEqual(w, 340)
-                    self.assertGreaterEqual(h, 240)
+                    self.assertLessEqual(x + w, width - 10)
+                    self.assertGreaterEqual(w, 360)
+                    self.assertLessEqual(w, placement.AGENT_WIDTH_MAX)
+                    self.assertGreaterEqual(h, placement.AGENT_EXPANDED_MIN_HEIGHT)
                     self.assertTrue(60 <= y and y + h <= height - 10)
                 if width >= 1920:
-                    self.assertTrue(all(x + w <= chat[0] for x, _, w, _ in slots))
+                    self.assertTrue(all(x >= chat[0] + chat[2] for x, _, _, _ in slots))
                 self.assertEqual(len({rect[1] for rect in slots}), 4)
         big = [placement.agent_geometry(self.monitor(), slot) for slot in range(4)]
         self.assertTrue(all(a[1] + a[3] <= b[1] for a, b in zip(big, big[1:])))
-        self.assertGreaterEqual(big[0][2], 500)
+        self.assertEqual(big[0][2], placement.AGENT_WIDTH_MAX)
+
+    def test_agent_stack_handles_compact_expanded_and_fallback_positions(self):
+        # 1 solo agente expandido aprovecha 460 px; 3 compactos + 1 expandido no se solapan ni en 1080p.
+        for width, height in ((2560, 1440), (1920, 1080)):
+            monitor = {**self.monitor(), "width": width, "height": height}
+            side, solo = placement.agent_stack_geometry(monitor, [False])
+            self.assertEqual(side, "right")
+            self.assertEqual(solo[0][3], placement.AGENT_SOLO_EXPANDED_HEIGHT)
+            side, mixed = placement.agent_stack_geometry(monitor, [True, True, True, False])
+            self.assertEqual(side, "right")
+            self.assertEqual([r[3] for r in mixed[:3]], [placement.AGENT_COMPACT_HEIGHT] * 3)
+            self.assertEqual(mixed[3][3], placement.AGENT_EXPANDED_HEIGHT)
+            self.assertTrue(all(a[1] + a[3] < b[1] for a, b in zip(mixed, mixed[1:])))
+            self.assertLessEqual(mixed[-1][1] + mixed[-1][3], height - 10)
+
+        # Cuando Visor 1 ocupa la derecha y el Explorador está abierto, los agentes pasan debajo del Explorador.
+        monitor = self.monitor()
+        explorer = placement.geometry(monitor, 0)
+        chat = placement.geometry(monitor, 3)
+        side, below = placement.agent_stack_geometry(monitor, [True, False], right_occupied=True, explorer_open=True)
+        self.assertEqual(side, "left")
+        for x, y, w, h in below:
+            self.assertLessEqual(x + w, chat[0])
+            self.assertGreaterEqual(y, explorer[1] + explorer[3])
+            self.assertLessEqual(y + h, monitor["height"] - 10)
+        self.assertLess(below[0][1] + below[0][3], below[1][1])
+
+        # Si Visor 1 está abierto pero el Explorador no, usan toda la columna izquierda.
+        side, full_left = placement.agent_stack_geometry(monitor, [False], right_occupied=True, explorer_open=False)
+        self.assertEqual(side, "left")
+        self.assertEqual(full_left[0][1], explorer[1])
+        self.assertLessEqual(full_left[0][0] + full_left[0][2], chat[0])
+
+    @patch.object(placement, "hyprctl")
+    def test_place_agents_stacks_group_detects_visor_and_validates_inputs(self, ctl):
+        import json
+        specs = [
+            {"title": "Agent Shell · Agente · Explorador", "compact": True},
+            {"title": "Agent Shell · Agente · Constructor", "compact": False},
+        ]
+        # Sin Visor 1: columna derecha en Lua.
+        ctl.side_effect = [json.dumps([
+            dict(pid=999, title="Agent Shell · Agente · Explorador", address="0xdead", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Explorador · app", address="0x1111", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Explorador", address="0xcafe", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Constructor", address="0xbeef", monitor=0, workspace={"id": 5}),
+        ]), json.dumps([self.monitor()]), '{"version":"0.57.2"}', "ok\n"]
+        self.assertEqual(placement.place_agents(123, "Chat", specs), "right")
+        code = ctl.call_args.args[1]
+        _, rects = placement.agent_stack_geometry(self.monitor(), [True, False])
+        self.assertIn(f'resize({{x={rects[0][2]}, y={rects[0][3]}, relative=false, window="address:0xcafe"}})', code)
+        self.assertIn(f'move({{x={rects[0][0]}, y={rects[0][1]}, relative=false, window="address:0xcafe"}})', code)
+        self.assertIn('workspace="2", follow=false, window="address:0xbeef"', code)
+        self.assertIn(f'move({{x={rects[1][0]}, y={rects[1][1]}, relative=false, window="address:0xbeef"}})', code)
+        self.assertNotIn("dead", code)
+        self.assertNotIn("abcd", code)
+
+        # Con Visor 1 y Explorador en el mismo escritorio: respaldo abajo a la izquierda en modo legado.
+        ctl.reset_mock(side_effect=True)
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Explorador · app", address="0x1111", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Visor 1 · main.py", address="0x2222", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Explorador", address="0xcafe", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Constructor", address="0xbeef", monitor=0, workspace={"id": 2}),
+        ]), json.dumps([self.monitor()]), '{"version":"0.54.3"}', "ok\nok\nok\nok\nok\nok\n"]
+        self.assertEqual(placement.place_agents(123, "Chat", specs), "left")
+        command, batch = ctl.call_args.args
+        self.assertEqual(command, "--batch")
+        _, left_rects = placement.agent_stack_geometry(self.monitor(), [True, False], right_occupied=True, explorer_open=True)
+        self.assertIn(f"movewindowpixel exact {left_rects[0][0]} {left_rects[0][1]},address:0xcafe", batch)
+        self.assertIn(f"resizewindowpixel exact {left_rects[1][2]} {left_rects[1][3]},address:0xbeef", batch)
+
+        # Rechaza títulos ajenos o direcciones inválidas.
+        with self.assertRaises(ValueError):
+            placement.place_agents(123, "Chat", [{"title": "Otro título", "compact": False}])
+        ctl.reset_mock(side_effect=True)
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Explorador", address="0xcafe;evil", monitor=0, workspace={"id": 2}),
+        ]), json.dumps([self.monitor()])]
+        with self.assertRaises(ValueError):
+            placement.place_agents(123, "Chat", [{"title": "Agent Shell · Agente · Explorador", "compact": True}])
+
+    @patch.object(placement, "hyprctl")
+    def test_opening_right_viewer_relocates_open_agents_below_explorer(self, ctl):
+        import json
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Explorador · app", address="0x1111", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Visor 1 · app.py", address="0x2222", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Explorador", address="0xcafe", monitor=0, workspace={"id": 2},
+                 at=[1710, 80], size=[480, 126]),
+            dict(pid=123, title="Agent Shell · Agente · Constructor", address="0xbeef", monitor=0, workspace={"id": 2},
+                 at=[1710, 218], size=[480, 420]),
+        ]), json.dumps([self.monitor()]), '{"version":"0.57.2"}', "ok\n"]
+        self.assertTrue(placement.place(123, "Visor 1 · app.py", 1, "Chat"))
+        code = ctl.call_args.args[1]
+        _, left_rects = placement.agent_stack_geometry(self.monitor(), [True, False], right_occupied=True, explorer_open=True)
+        self.assertIn('window="address:0x2222"', code)
+        self.assertIn(f'move({{x={left_rects[0][0]}, y={left_rects[0][1]}, relative=false, window="address:0xcafe"}})', code)
+        self.assertIn(f'move({{x={left_rects[1][0]}, y={left_rects[1][1]}, relative=false, window="address:0xbeef"}})', code)
 
     @patch.object(placement, "hyprctl")
     def test_placing_an_agent_moves_only_that_window(self, ctl):

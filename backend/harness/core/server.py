@@ -48,7 +48,12 @@ from ..tools.files import (
 from ..tools.patch import APPLY_PATCH_TOOL, execute_apply_patch, summarize_patch_command
 from ..tools.shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
 from ..work.quota_router import QuotaAwareRouter
-from ..work.roster import Candidate, EFFORT_SUFFIX_RE, ROLE_TIERS, architect_candidate, build_roster, quota_bucket, vendor
+from ..work.roster import (
+    Candidate, EFFORT_SUFFIX_RE, LOW_QUOTA_PERCENT, bucket_remaining,
+    build_configured_workers, quota_bucket, rank_worker_slots, resolve_model_candidate,
+    select_architect,
+)
+from ..work.unified_config import UnifiedConfig, UnifiedConfigStore
 from ..work.worker import (
     ARCHITECT_INSTRUCTIONS, CLI_ARCHITECT_INSTRUCTIONS, DELEGATE_TOOL, MAX_DELEGATIONS_PER_ROUND,
     WorkerRouter, extract_delegations, is_quota_error, parse_delegate_arguments,
@@ -107,6 +112,8 @@ class HarnessServer:
         self.profile = self.profile_store.load()
         self.provider_store = ProviderStore(config_dir)
         saved_provider = self.provider_store.load()
+        self.unified_config_store = UnifiedConfigStore(config_dir)
+        self.unified_config = self.unified_config_store.load()
         self.agy_client = agy_client
         self.agy_available = bool(self.agy_client is not None and self.agy_client.is_available())
         self.claude_client = claude_client
@@ -248,6 +255,9 @@ class HarnessServer:
             unified_mode=self.unified_mode,
             unified_team=self._unified_team() if self.unified_mode else [],
             unified_architect=self._architect_info() if self.unified_mode else {},
+            unified_cascade=self._architect_cascade_info() if self.unified_mode else [],
+            unified_config=self.unified_config.to_dict(),
+            provider_catalogs=self._known_catalogs(),
             resolved_models=self._resolved_names(),
         )
 
@@ -255,6 +265,46 @@ class HarnessServer:
         catalogs, remaining = self._known_catalogs(), self._remaining_quota()
         candidate = self._active_architect or self._pick_architect()
         return self._worker_info(candidate, catalogs, remaining) if candidate else {}
+
+    def _architect_cascade_info(self) -> list[dict]:
+        catalogs, remaining = self._known_catalogs(), self._remaining_quota()
+        exhausted = self.worker_router.exhausted_buckets()
+        active = self._active_architect or self._pick_architect()
+        threshold = float(self.unified_config.quota_threshold)
+        total = len(self.unified_config.architect_cascade)
+        steps = []
+        for index, step in enumerate(self.unified_config.architect_cascade):
+            candidate = resolve_model_candidate(step.provider, step.model, step.effort, catalogs, role="architect")
+            if candidate is not None:
+                info = self._worker_info(candidate, catalogs, remaining)
+                left = bucket_remaining(candidate.bucket, remaining)
+                is_exhausted = candidate.bucket in exhausted
+                step_limit = LOW_QUOTA_PERCENT if index == total - 1 else threshold
+                below = is_exhausted or (left is not None and left <= step_limit)
+                is_active = bool(
+                    active and active.provider == candidate.provider
+                    and active.model == candidate.model and active.effort == candidate.effort
+                )
+                steps.append({
+                    **info,
+                    "available": True,
+                    "active": is_active,
+                    "below_threshold": below,
+                    "exhausted": is_exhausted,
+                })
+            else:
+                steps.append({
+                    "provider": step.provider,
+                    "model": step.model,
+                    "name": step.model or step.provider,
+                    "effort": step.effort,
+                    "remaining": None,
+                    "available": False,
+                    "active": False,
+                    "below_threshold": False,
+                    "exhausted": False,
+                })
+        return steps
 
     def _resolved_names(self) -> dict[str, str]:
         """Versión concreta que el CLI informó para cada alias de Claude ya usado."""
@@ -269,28 +319,61 @@ class HarnessServer:
             name = self._resolved_names().get(candidate.model, name)
         elif suffix:
             name = re.sub(r"\s*\(" + suffix[1] + r"\)$", "", name, flags=re.IGNORECASE)
-        left = remaining.get(candidate.bucket)
+        left = bucket_remaining(candidate.bucket, remaining)
         return {"provider": candidate.provider, "model": candidate.model, "name": name,
                 "effort": candidate.effort or (suffix[1] if suffix else ""),
                 "remaining": None if left is None else max(0, round(left))}
 
     def _unified_team(self) -> list[dict]:
-        """Subagentes por rol en el orden en que se usarían con la cuota conocida."""
+        """Obreros dedicados configurados (por defecto ChatGPT y Claude) con su cuota conocida."""
         catalogs = self._known_catalogs()
-        roster = build_roster(catalogs)
         remaining = self._remaining_quota()
-        context = self._team_context()
-        if not context["builder_vendor"]:
-            builders = self.worker_router.candidates(roster, "builder", remaining)
-            context["builder_vendor"] = vendor(builders[0].model) if builders else ""
-        return [{"role": role, "workers": [
-            self._worker_info(candidate, catalogs, remaining)
-            for candidate in self.worker_router.candidates(roster, role, remaining, **context)]}
-            for role in ROLE_TIERS]
+        exhausted = self.worker_router.exhausted_buckets()
+        resolved = build_configured_workers(catalogs, self.unified_config)
+        rows = []
+        for slot_cfg in self.unified_config.workers:
+            candidate = resolved.get(slot_cfg.slot)
+            workers = []
+            if candidate is not None and candidate.bucket not in exhausted:
+                workers.append(self._worker_info(candidate, catalogs, remaining))
+            rows.append({
+                "role": slot_cfg.slot,
+                "slot": slot_cfg.slot,
+                "provider": slot_cfg.provider,
+                "workers": workers,
+            })
+        return rows
 
     def _pick_architect(self) -> Candidate | None:
-        spent = dict.fromkeys(self.worker_router.exhausted_buckets(), 0.0)
-        return architect_candidate(self._known_catalogs(), {**self._remaining_quota(), **spent}, self.provider)
+        return select_architect(
+            self._known_catalogs(),
+            self._remaining_quota(),
+            self.unified_config,
+            self.worker_router.exhausted_buckets(),
+        )
+
+    def _configure_unified(self, request: dict) -> None:
+        if self.busy:
+            self._emit("unified.config.rejected",
+                       message="Espera a que termine el turno actual antes de cambiar el equipo unificado.")
+            return
+        try:
+            if request.get("reset") is True:
+                unknown = set(request) - {"type", "reset"}
+                if unknown:
+                    raise ValueError("Solicitud de reinicio con campos desconocidos.")
+                updated = UnifiedConfig.default()
+            else:
+                payload = {k: v for k, v in request.items() if k != "type"}
+                updated = UnifiedConfig.from_dict(payload, base=self.unified_config)
+            self.unified_config_store.save(updated)
+            self.unified_config = updated
+        except (ValueError, OSError, TypeError) as error:
+            self._emit("unified.config.rejected", message=str(error) if isinstance(error, ValueError) else
+                       "No se pudo guardar la configuración del modo unificado.")
+            return
+        self._emit("unified.config.state", config=self.unified_config.to_dict())
+        self._publish_provider()
 
     def _replace_architect(self, error: Exception, control: StreamControl, generation: int,
                            round_index: int = 0) -> bool:
@@ -369,7 +452,8 @@ class HarnessServer:
         with self._lock:
             need_agy = self.agy_available and not self._agy_models
             need_chatgpt = self.authenticated and not self._chatgpt_models
-        agy_models = chatgpt_models = None
+            need_claude = self.claude_client is not None and self.claude_available and not self.claude_authenticated
+        agy_models = chatgpt_models = claude_status = None
         if need_agy:
             try:
                 agy_models = self.agy_client.models()
@@ -380,11 +464,20 @@ class HarnessServer:
                 chatgpt_models = self.client.models()
             except (ServiceError, OSError):
                 pass
+        if need_claude:
+            try:
+                claude_status = self.claude_client.auth_status()
+            except (ServiceError, OSError):
+                pass
         with self._lock:
             if agy_models:
                 self._agy_models = agy_models
             if chatgpt_models:
                 self._chatgpt_models = chatgpt_models
+            if isinstance(claude_status, dict):
+                self.claude_authenticated = bool(claude_status.get("authenticated"))
+                self.claude_email = claude_status.get("email", "")
+                self.claude_plan = claude_status.get("plan", "")
             self._publish_provider()
 
     def _worker_quota(self) -> dict[str, float]:
@@ -960,6 +1053,8 @@ class HarnessServer:
                 delta_weekly = self._quota_delta(before, after, "weekly")
                 if self._usage_identity() == identity and not self.usage_pending:
                     self._emit("usage.state", request_id="", auto=True, **result)
+                if self.unified_mode:
+                    self._publish_provider()
 
             try:
                 if self.conversation is not None and self.conversation["chat_id"] == chat_id:
@@ -1405,7 +1500,9 @@ class HarnessServer:
                 return summarize_file_tool_command(name, arguments), ""
             if name == "delegate":
                 args = parse_delegate_arguments(arguments)
-                return f"delegate {args['role']}: {args['task'][:160]}", ""
+                target = args["worker"] or "auto"
+                suffix = " (solo lectura)" if args["read_only"] else ""
+                return f"delegate {target}{suffix}: {args['task'][:160]}", ""
             raise ValueError("Herramienta desconocida; no se ejecutó ningún comando")
         except (ValueError, TypeError) as invalid:
             return "", str(invalid)
@@ -1426,14 +1523,85 @@ class HarnessServer:
         result["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
         return result
 
-    def _run_delegate(self, call: dict, arguments: str, workspace: Path,
-                      control: StreamControl, generation: int) -> dict:
+    def _assign_delegate_slots(
+        self,
+        parsed_list: list[dict | None],
+        catalogs: dict[str, list[dict]],
+        remaining: dict[str, float],
+    ) -> list[str]:
+        """Asigna ranura de obrero (chatgpt/claude) a cada delegación repartiendo tareas automáticas."""
+        configured = [worker.slot for worker in self.unified_config.workers]
+        resolved = build_configured_workers(catalogs, self.unified_config)
+        exhausted = self.worker_router.exhausted_buckets()
+        available = [
+            slot for slot in configured
+            if resolved.get(slot) is not None and resolved[slot].bucket not in exhausted
+        ]
+        load = {slot: 0 for slot in available}
+        assigned: list[str] = []
+        for args in parsed_list:
+            if args is None:
+                assigned.append("")
+                continue
+            requested = args["worker"]
+            if requested and requested in configured:
+                if requested in load:
+                    load[requested] += 1
+                assigned.append(requested)
+                continue
+            if available:
+                chosen = min(
+                    available,
+                    key=lambda slot: (
+                        load[slot],
+                        (bucket_remaining(resolved[slot].bucket, remaining) or 50.0) < LOW_QUOTA_PERCENT,
+                        -(bucket_remaining(resolved[slot].bucket, remaining) or 50.0),
+                    ),
+                )
+                load[chosen] += 1
+                assigned.append(chosen)
+            else:
+                assigned.append(requested or (configured[0] if configured else "chatgpt"))
+        return assigned
+
+    def _run_delegate(
+        self,
+        call: dict,
+        arguments: str,
+        workspace: Path,
+        control: StreamControl,
+        generation: int,
+        *,
+        assigned_slot: str = "",
+        catalogs: dict[str, list[dict]] | None = None,
+        remaining: dict[str, float] | None = None,
+    ) -> dict:
         started = time.monotonic()
         args = parse_delegate_arguments(arguments)
-        role = args["role"]
-        agent = {"id": call["id"], "turn_id": call["turn_id"], "role": role, "task": args["task"][:1200],
-                 "status": "running", "worker": {}, "lines": [], "tool_calls": 0, "files_changed": [],
-                 "tokens_used": 0, "summary": "", "error": "", "started_at": time.time(), "duration_ms": 0}
+        exec_role = args["role"]
+        preferred_slot = assigned_slot or args["worker"]
+
+        if catalogs is None:
+            self._prepare_workers()
+            with self._lock:
+                catalogs = self._known_catalogs()
+        if remaining is None:
+            remaining = self._worker_quota()
+
+        resolved_workers = build_configured_workers(catalogs, self.unified_config)
+        ranked_pairs = rank_worker_slots(
+            resolved_workers, remaining, preferred_slot=preferred_slot, read_only=args["read_only"],
+        )
+        candidate_to_slot = {candidate: slot for slot, candidate in ranked_pairs}
+        candidates = [candidate for _, candidate in ranked_pairs]
+        initial_slot = ranked_pairs[0][0] if ranked_pairs else (preferred_slot or "chatgpt")
+
+        agent = {
+            "id": call["id"], "turn_id": call["turn_id"], "role": initial_slot, "task": args["task"][:1200],
+            "status": "running", "worker": {}, "lines": [], "tool_calls": 0, "files_changed": [],
+            "tokens_used": 0, "summary": "", "error": "", "started_at": time.time(), "duration_ms": 0,
+            "read_only": args["read_only"],
+        }
 
         def progress(line: str) -> None:
             agent["lines"] = [*agent["lines"], line][-40:]
@@ -1442,30 +1610,26 @@ class HarnessServer:
             self._tool_output(call, "\n".join(agent["lines"]), generation)
 
         def on_start(candidate) -> None:
+            slot = candidate_to_slot.get(candidate, candidate.provider)
             with self._lock:
-                call["command"] = f"delegate {role} {candidate.label}: {args['task'][:160]}"
+                agent["role"] = slot
+                suffix = " [lectura]" if args["read_only"] else ""
+                call["command"] = f"delegate {slot}{suffix} {candidate.label}: {args['task'][:160]}"
                 agent["worker"] = self._worker_info(candidate, catalogs, remaining)
             agent["tool_calls"] = 0
             self._emit("unified.agent", **agent)
 
-        self._prepare_workers()
-        with self._lock:
-            catalogs = self._known_catalogs()
-        remaining = self._worker_quota()
-        worker = self.worker_router.router
-        worker.workspace = workspace
-        worker.shell_timeout = self.limits.shell_timeout
-        worker.context_output_chars = self.limits.context_output_chars
         try:
-            result = self.worker_router.run(
-                args["task"], control, build_roster(catalogs), remaining, role=role,
+            result = self.worker_router.run_candidates(
+                args["task"], control, candidates, role=exec_role,
                 max_steps=self.limits.max_steps, on_start=on_start, progress=progress,
-                provider=args["provider"], **self._team_context(),
+                workspace=workspace, shell_timeout=self.limits.shell_timeout,
+                context_output_chars=self.limits.context_output_chars,
             )
-            agent.update(status=result.status, tool_calls=result.tool_calls, files_changed=result.files_changed,
-                         tokens_used=result.tokens_used, summary=result.summary[:6000], error=result.error[:1000])
-            if role in ("builder", "specialist") and result.model:
-                self._builder_vendor = vendor(result.model)
+            agent.update(
+                status=result.status, tool_calls=result.tool_calls, files_changed=result.files_changed,
+                tokens_used=result.tokens_used, summary=result.summary[:6000], error=result.error[:1000],
+            )
         finally:
             if agent["status"] == "running":
                 agent["status"] = "interrupted"
@@ -1479,13 +1643,118 @@ class HarnessServer:
                 "exit_code": 0 if completed else 1, "truncated": False,
                 "duration_ms": round((time.monotonic() - started) * 1000, 3)}
 
+    def _run_delegate_batch(self, calls: list[dict], control: StreamControl, generation: int) -> list[dict]:
+        """Ejecuta delegaciones a distintos obreros en paralelo; mismo obrero va en serie."""
+        if len(calls) <= 1 or not self.unified_config.parallel_workers:
+            return [self._run_tool(item, control, generation) for item in calls]
+
+        self._prepare_workers()
+        with self._lock:
+            catalogs = self._known_catalogs()
+        remaining = self._worker_quota()
+
+        parsed: list[dict | None] = []
+        descriptions: list[tuple[str, str]] = []
+        for item in calls:
+            command, error = self._describe_tool(item)
+            descriptions.append((command, error))
+            if error:
+                parsed.append(None)
+            else:
+                try:
+                    parsed.append(parse_delegate_arguments(item.get("arguments", "")))
+                except (ValueError, TypeError):
+                    parsed.append(None)
+
+        slots = self._assign_delegate_slots(parsed, catalogs, remaining)
+        valid_lanes = {slot for args, slot in zip(parsed, slots) if args is not None and slot}
+        if len(valid_lanes) <= 1:
+            return [self._run_tool(item, control, generation) for item in calls]
+
+        records: list[tuple[int, dict, dict, str]] = []
+        with self._lock:
+            if not self._current_turn(generation):
+                raise Cancelled()
+            workspace = self.workspace
+            project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
+            observe_work = bool(project_id)
+            for idx, (item, (command, error), slot) in enumerate(zip(calls, descriptions, slots)):
+                call = {
+                    "id": uuid.uuid4().hex, "call_id": item["call_id"],
+                    "turn_id": self._performance.turn_id, "command": command,
+                    "workdir": str(workspace), "status": "error" if error else "running",
+                    "output": error, "exit_code": None, "truncated": False,
+                    "message_index": len(self.conversation["messages"]),
+                }
+                self.conversation.setdefault("tool_calls", []).append(call)
+                self._performance.tool_calls += 1
+                self._emit("tool.updated", call=call)
+                if observe_work and not error:
+                    self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                               turn_id=call["turn_id"], status="running")
+                records.append((idx, item, call, slot))
+            self.history.save(self.conversation)
+
+        control.check()
+        results: list[dict | None] = [None] * len(records)
+        lanes: dict[str, list[tuple[int, dict, dict, str]]] = {}
+        for entry in records:
+            idx, item, call, slot = entry
+            if call["status"] == "error":
+                results[idx] = {"status": "error", "output": call["output"]}
+            else:
+                lanes.setdefault(slot, []).append(entry)
+
+        cancelled_error: list[BaseException] = []
+
+        def _run_lane(lane_entries: list[tuple[int, dict, dict, str]]) -> None:
+            for idx, item, call, slot in lane_entries:
+                try:
+                    control.check()
+                    outcome = self._run_delegate(
+                        call, item["arguments"], workspace, control, generation,
+                        assigned_slot=slot, catalogs=catalogs, remaining=remaining,
+                    )
+                    results[idx] = outcome
+                    with self._lock:
+                        if self._current_turn(generation):
+                            call.update({k: v for k, v in outcome.items() if k != "files"})
+                            self._performance.tool_ms += outcome.get("duration_ms", 0)
+                            self._emit("tool.updated", call=call)
+                            if observe_work:
+                                self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                                           turn_id=call["turn_id"], status=outcome["status"])
+                except Cancelled as exc:
+                    cancelled_error.append(exc)
+                    return
+
+        first_call = records[0][2]
+        observer = ProjectActivity(
+            workspace,
+            lambda change: self._work_changed(change, project_id, first_call, generation),
+            ignored=(self.history.root,),
+        ) if observe_work else nullcontext()
+
+        with observer:
+            with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+                futures = [pool.submit(_run_lane, entries) for entries in lanes.values()]
+                for future in futures:
+                    future.result()
+
+        if cancelled_error:
+            raise Cancelled()
+        control.check()
+        return [res if res is not None else {"status": "error", "output": "Delegación interrumpida."} for res in results]
+
     def _run_cli_delegations(self, blocks: list[str], control: StreamControl, generation: int) -> str:
-        """Ejecuta los bloques de un arquitecto CLI y arma el mensaje con el que continúa su sesión."""
+        """Ejecuta los bloques de un arquitecto CLI (en paralelo si van a obreros distintos)."""
+        items = [
+            {"name": "delegate", "arguments": arguments, "call_id": "delegate-" + uuid.uuid4().hex}
+            for arguments in blocks[:MAX_DELEGATIONS_PER_ROUND]
+        ]
+        results = self._run_delegate_batch(items, control, generation)
         reports = []
-        for index, arguments in enumerate(blocks[:MAX_DELEGATIONS_PER_ROUND], 1):
-            control.check()
-            item = {"name": "delegate", "arguments": arguments, "call_id": "delegate-" + uuid.uuid4().hex}
-            result = self._run_tool(item, control, generation)
+        for index, result in enumerate(results, 1):
             output = result["output"][:self.limits.context_output_chars]
             reports.append(f"Worker result {index}:\n{output}")
         skipped = len(blocks) - MAX_DELEGATIONS_PER_ROUND
@@ -1920,6 +2189,20 @@ class HarnessServer:
                         self.history.save(self.conversation)
                 if len(calls) > 1 and all(item.get("name") in READ_ONLY_TOOLS for item in calls):
                     results = self._run_read_only_batch(calls, control, generation)
+                    with self._lock:
+                        if not self._current_turn(generation):
+                            return
+                        for item, result in zip(calls, results):
+                            append_result(self.conversation, item["call_id"], result,
+                                          self.limits.context_output_chars)
+                        self.history.save(self.conversation)
+                        for item, result in zip(calls, results):
+                            if failures.observe(item, result):
+                                raise ServiceError("El mismo comando falló repetidamente con el mismo resultado. "
+                                                   "Se detuvo el turno para evitar gastar cuota sin progreso; "
+                                                   "revisa el último error antes de continuar.")
+                elif len(calls) > 1 and all(item.get("name") == "delegate" for item in calls):
+                    results = self._run_delegate_batch(calls, control, generation)
                     with self._lock:
                         if not self._current_turn(generation):
                             return
@@ -2570,6 +2853,12 @@ class HarnessServer:
             if action == "unified.usage":
                 self._spawn(self._read_team_usage)
                 return
+            if action == "unified.prepare":
+                self._spawn(self._prepare_workers)
+                return
+            if action == "unified.configure":
+                self._configure_unified(request)
+                return
             if action == "unified.toggle":
                 if self.busy:
                     self._emit("provider.rejected", message="Espera a que termine el turno actual antes de cambiar el modo unificado.")
@@ -2809,11 +3098,26 @@ class HarnessServer:
                     messages = [{"role": row["role"], "content": user_content(row["text"], row.get("image", ""))}
                                 for row in self.conversation["messages"] if row["text"] or row.get("image")]
                     previous_provider = self.conversation.get("provider")
+                    previous_model = self.conversation.get("model")
+                    threshold_notice = ""
                     if previous_provider and (previous_provider != provider
-                                              or (architect and self.conversation.get("model") != model)):
+                                              or (architect and previous_model != model)):
                         self.conversation.pop("agy_conversation_id", None)
                         self.conversation.pop("claude_session_id", None)
                         self._turn_states.pop("chat-" + self.conversation["chat_id"], None)
+                        if architect:
+                            prev_bucket = quota_bucket(previous_provider, previous_model or "")
+                            remaining = self._remaining_quota()
+                            prev_left = bucket_remaining(prev_bucket, remaining)
+                            if (prev_bucket in self.worker_router.exhausted_buckets()
+                                    or (prev_left is not None and prev_left <= self.unified_config.quota_threshold)):
+                                next_info = self._worker_info(architect, self._known_catalogs(), remaining)
+                                pct_text = f"{round(prev_left)}%" if prev_left is not None else "0%"
+                                effort_text = f" ({next_info['effort']})" if next_info.get("effort") else ""
+                                threshold_notice = (
+                                    f"Cuota en {pct_text} (≤ {self.unified_config.quota_threshold}%): "
+                                    f"cambiando arquitecto a {next_info['name']}{effort_text}."
+                                )
                     turn_performance = TurnPerformance(turn_id, model, received)
                     turn_performance.input_characters = sum(len(row["text"]) for row in self.conversation["messages"])
                     turn_performance.context_messages = len(messages)
@@ -2854,6 +3158,8 @@ class HarnessServer:
                 self._emit("chat.busy", turn_id=turn_id)
                 if architect:
                     self._publish_provider()
+                    if threshold_notice:
+                        self._emit("chat.notice", message=threshold_notice)
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)

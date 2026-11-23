@@ -20,7 +20,7 @@ NativeWindow {
     readonly property var usage: bridge.providerUsage[providerId] || null
     readonly property bool hasData: !!usage && !!usage.checked_at
     readonly property bool architect: bridge.unifiedArchitect.provider === providerId
-    readonly property bool working: !!bridge.activeAgent && bridge.activeAgent.worker.provider === providerId
+    readonly property bool working: bridge.activeAgents.some(agent => agent.worker && agent.worker.provider === providerId)
     readonly property var limits: {
         const rows = hasData ? usage.limits || [] : [];
         if (providerId !== "agy") return rows;
