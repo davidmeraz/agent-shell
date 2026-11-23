@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Agent Shell
+GenericName=AI Coding Shell
+Comment=Cliente nativo de ChatGPT con ejecución local de shell y proyectos Work
+Exec=/usr/bin/agent-shell
+Icon=agent-shell
+Terminal=false
+Categories=Development;
+Keywords=ai;chatgpt;shell;terminal;coding;quickshell;
+StartupNotify=false
+StartupWMClass=agent-shell

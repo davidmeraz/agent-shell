@@ -20,6 +20,16 @@ ShellRoot {
     AgentBridge { id: agent }
     ChatWindow { id: chat; bridge: agent; implicitWidth: 560; implicitHeight: 560; title: "Agent Shell · Commands Test" }
     TestCase { id: inspector; parent: chat.contentItem; when: false }
+    // En QT_QPA_PLATFORM=offscreen el puntero inicial arranca en (8,8), sobre el borde izquierdo.
+    Timer {
+        interval: 20
+        running: true
+        repeat: false
+        onTriggered: {
+            if (chat.contentItem && chat.contentItem.Window.window)
+                inspector.mouseMove(chat.contentItem, chat.width / 2, chat.height / 2);
+        }
+    }
 
     function check(value, message) {
         if (value) return true;

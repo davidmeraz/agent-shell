@@ -60,6 +60,7 @@ class ProjectRunTests(unittest.TestCase):
     def test_inspects_real_files_and_runs_without_chat_history_or_metrics(self):
         self.server.handle({"type": "chat.send", "prompt": "Hola"})
         self.output.wait_for("chat.finished")
+        self.output.wait_for("history.list")
         original = copy.deepcopy(self.server.conversation)
         with self.server.history.db.read() as conn:
             saved = conn.execute("SELECT payload_json FROM chats WHERE chat_id = ?", (original["chat_id"],)).fetchone()[0]

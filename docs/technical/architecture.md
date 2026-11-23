@@ -68,6 +68,7 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
   de chat. Mantiene control HTTP/shell independiente del turno conversacional.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `core/limits.py`: presupuestos configurables por turno (incluyendo umbral de compactación, límite de compactaciones y fusible de tokens facturables), perfiles (`ahorro`, `equilibrado`, `grande`), persistencia atómica privada (`LimitsStore` en `config/limits.json`) y detección de fallos idénticos consecutivos.
+- `core/paths.py`: resolución de directorios XDG (`XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`) con precedencia de CLI/variables `AGENT_SHELL_*` y migración automática no destructiva e idempotente desde `.runtime/`.
 - `tools/output.py`: captura limitada con inicio/final y vista reducida de resultados para el modelo.
 - `core/storage.py`: motor local `StorageDB` en SQLite (modo WAL, permisos `0600`, transacciones ACID) y `BlobStore` content-addressed por SHA-256 (`blobs/`) con verificación de integridad y limpieza de huérfanos.
 - `HistoryStore`: conversaciones, índices de listado/métricas (`turn_performance`) y blobs de imágenes sobre SQLite (WAL), con migración automática no destructiva de JSON heredados (respaldo en `.migrated-json/`) preservando archivos dañados y enlaces simbólicos.

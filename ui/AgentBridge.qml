@@ -630,7 +630,7 @@ QtObject {
     readonly property Process backend: Process {
         command: [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python", "-u",
                   Quickshell.env("AGENT_SHELL_BACKEND_ENTRY") || Quickshell.shellDir + "/backend/main.py"]
-        workingDirectory: Quickshell.shellDir
+        workingDirectory: Quickshell.env("AGENT_SHELL_WORKSPACE") || Quickshell.shellDir
         stdinEnabled: true
         running: true
         stdout: SplitParser { onRead: data => bridge.receive(data) }

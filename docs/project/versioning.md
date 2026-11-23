@@ -5,7 +5,13 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.20.0` migra el almacenamiento de conversaciones, métricas y proyectos
+La versión `0.21.0` añade integración nativa en Arch Linux y rutas estándar XDG
+(`XDG_DATA_HOME`, `XDG_CONFIG_HOME` y `XDG_STATE_HOME` para la sesión privada),
+migración automática no destructiva desde `.runtime/`, `PKGBUILD`, entrada
+`.desktop`, ícono SVG, unidad `systemd --user` e instalador local de usuario
+(`scripts/install-user.sh`). Conserva NDJSON v2 y el esquema lógico 1; incrementa
+MENOR por las nuevas capacidades de integración con el escritorio y empaquetado.
+La versión anterior `0.20.0` migra el almacenamiento de conversaciones, métricas y proyectos
 a SQLite en modo WAL (`agent-shell.db`, permisos `0600`) con blobs binarios
 deduplicados por SHA-256 (`blobs/`), consultas indexadas para listados y rendimiento,
 borrado de proyectos en una sola transacción ACID y migración automática no

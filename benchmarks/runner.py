@@ -790,7 +790,11 @@ def run_benchmark(
     git = git_metadata(PROJECT_ROOT)
 
     if live:
-        s_root = session_root or (PROJECT_ROOT / ".runtime" / "session")
+        from harness.core.paths import default_session_root
+        xdg_session = default_session_root()
+        s_root = session_root or (
+            xdg_session if (xdg_session / "session.json").exists() else (PROJECT_ROOT / ".runtime" / "session")
+        )
         session = ChatGPTSession(s_root)
         account = session.account()
         if not account.get("authenticated"):

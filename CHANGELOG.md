@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.21.0] — 2026-11-22
+
+Esta versión añade integración nativa para Arch Linux y el estándar XDG Base Directory, con migración automática no destructiva desde `.runtime/`, empaquetado oficial (`PKGBUILD`), lanzador de escritorio y servicio `systemd --user`.
+
+- Nuevo módulo `backend/harness/core/paths.py`: separa datos (`$XDG_DATA_HOME/agent-shell`), configuración (`$XDG_CONFIG_HOME/agent-shell/limits.json`, segura para dotfiles) y sesión privada OAuth (`$XDG_STATE_HOME/agent-shell/session`, `0700`/`0600`), conservando precedencia total de flags CLI y variables `AGENT_SHELL_*`.
+- Migración automática, atómica e idempotente (`.migrated-from-runtime`) desde `.runtime/` usando `sqlite3.backup()` para WAL y copias `0600` sin seguir enlaces simbólicos, preservando `.runtime/` como respaldo.
+- `get_version()` soporta lectura desde metadatos del paquete instalado (`importlib.metadata`) además de `pyproject.toml`; `pyproject.toml` amplía compatibilidad a `Pillow>=11,<14` (Arch Linux `python-pillow 13.0`); `AgentBridge.qml` y `run.sh` respetan `AGENT_SHELL_WORKSPACE`.
+- Empaquetado Arch Linux en `packaging/arch/` (`PKGBUILD`, `/usr/bin/agent-shell`, `agent-shell.desktop`, `agent-shell.svg`, `agent-shell.service`), instalador de usuario sin `root` (`scripts/install-user.sh`) y guía `docs/guides/arch-linux.md`.
+- Verificación con `desktop-file-validate`, `systemd-analyze --user verify`, 292 pruebas Python, `qmllint` y 12 escenarios Qt/Quickshell.
+
 ## [0.20.0] — 2026-11-22
 
 Esta versión migra el almacenamiento local de conversaciones, métricas y proyectos a SQLite en modo WAL con un almacén de blobs binarios deduplicados por SHA-256, eliminando lecturas completas de historial en listados y métricas y convirtiendo el borrado de proyectos en una sola transacción ACID.

@@ -26,7 +26,12 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
-    root = args.history_root or (PROJECT_ROOT / ".runtime" / "chats")
+    if args.history_root is not None:
+        root = args.history_root
+    else:
+        from harness.core.paths import default_history_root
+        xdg_root = default_history_root()
+        root = xdg_root if (xdg_root / "agent-shell.db").exists() else (PROJECT_ROOT / ".runtime" / "chats")
     report = audit_history(root)
     if args.save:
         saved = save_report({**report, "mode": "audit", "label": args.label or "audit"}, args.output)

@@ -3,6 +3,7 @@
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export AGENT_SHELL_PYTHON="${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}"
+export AGENT_SHELL_WORKSPACE="${AGENT_SHELL_WORKSPACE:-$PWD}"
 if [[ ! -x "$AGENT_SHELL_PYTHON" ]]; then
     echo 'Prepara Python con ./scripts/setup.sh antes de iniciar Agent Shell.' >&2
     exit 1

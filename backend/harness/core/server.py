@@ -80,10 +80,10 @@ class HarnessServer:
 
     def __init__(self, history_root: Path, output: TextIO, session, client,
                  model: str = "", workspace: Path | None = None, usage_reader=None,
-                 limits: AgentLimits | None = None) -> None:
+                 limits: AgentLimits | None = None, config_root: Path | None = None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
-        self.limits_store = LimitsStore(self.history.root / "config")
+        self.limits_store = LimitsStore(config_root if config_root is not None else self.history.root / "config")
         self.limits = limits if limits is not None else AgentLimits.from_environment(base=self.limits_store.load())
         self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
         self.active_area = "chat"

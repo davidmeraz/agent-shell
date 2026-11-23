@@ -21,6 +21,7 @@ Este índice reúne el diseño del proyecto, sus contratos y las guías de funci
 - [Terminal](guides/terminal.md): ejecución de comandos, proyectos, entorno y límites.
 - [Rendimiento](guides/performance.md): tiempos de respuesta, contexto y velocidad en tokens.
 - [Prácticas para aprovechar los LLM](guides/llm-practices.md): objetivos verificables, ahorro de contexto, continuidad y presupuestos configurables.
+- [Integración nativa en Arch Linux](guides/arch-linux.md): rutas XDG, migración desde `.runtime/`, `PKGBUILD`, lanzador `.desktop` y `systemd --user`.
 - [Integración LLM y terminal](guides/GUIA-LLM-TERMINAL.md): guía de aprendizaje basada en OpenCode, con ejemplos en JavaScript y Node.js.
 
 Guarda los documentos sobre objetivos y versiones en `project/`, los diseños y
