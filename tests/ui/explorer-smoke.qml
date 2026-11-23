@@ -48,6 +48,7 @@ ShellRoot {
                 if (!scenario.check(!!surface && surface.waterReflection && surface.radius === 20
                     && surface.topColor.a < 1 && surface.bottomColor.a < 1
                     && scenario.explorer.color.a === 0, "fondo no es vidrio mate translúcido")) return;
+                if (!scenario.check(scenario.explorer.viewMode === "icons", "la vista predeterminada no es iconos grandes")) return;
                 scenario.stage = 3;
             } else if (scenario.stage === 3) {
                 if (!scenario.explorer.rows.length) return;
@@ -83,9 +84,10 @@ ShellRoot {
                 if (agent.busy || !scenario.row("src/renamed.txt") || scenario.row("src/new.txt") || scenario.row("src/existing.txt")) return;
                 scenario.viewer.visible = false;
                 scenario.explorer.select(scenario.row("src/renamed.txt"));
-                const tree = inspector.findChild(scenario.explorer, "projectExplorerTree");
-                tree.forceActiveFocus();
-                tree.Window.window.requestActivate();
+                const activeView = inspector.findChild(scenario.explorer,
+                    scenario.explorer.viewMode === "icons" ? "projectExplorerIconGrid" : "projectExplorerTree");
+                activeView.forceActiveFocus();
+                activeView.Window.window.requestActivate();
                 inspector.wait(20);
                 inspector.keyClick(Qt.Key_Escape);
                 if (!scenario.check(Object.keys(scenario.explorer.pending).length === 0

@@ -3,6 +3,14 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.26.0] — 2026-11-22
+
+Esta versión incorpora la vista de iconos grandes como modo predeterminado del explorador de archivos junto al selector rápido para alternar entre iconos grandes y vista en árbol.
+
+- Nuevo componente `ui/components/windows/ExplorerIconCard.qml`: tarjetas interactivas de vidrio mate armonizadas con `GemaTheme`, con iconos vectoriales grandes de carpeta (pestaña, hojas interiores con micro-animación al pasar el cursor y brillo especular), iconos grandes de archivo con esquina doblada, líneas estilizadas e insignia de lenguaje, número de visor abierto (`#1`/`#2`) y píldoras de cambio (`Creado`, `Nuevo`, `Mod.`).
+- Selector de vista dual en `ui/components/windows/ProjectExplorerWindow.qml`: vista de iconos grandes (`⊞`, predeterminada, `Ctrl+1`) con cuadrícula adaptable, barra de navegación por ruta (*breadcrumbs*), botón `←` / tecla Retroceso y seguimiento automático de la carpeta afectada durante actividad de la IA, más vista en árbol compacta (`≡`, `Ctrl+2`).
+- Pruebas UI actualizadas en `tests/ui/explorer-smoke.qml` y `tests/ui/activity-smoke.qml` para validar la vista predeterminada de iconos grandes, cierre con `Esc`, animaciones de entrada y estabilidad de delegados, verificadas con `qmllint` y `./scripts/smoke.sh`.
+
 ## [0.25.0] — 2026-11-22
 
 Esta versión renueva las ventanas de código (`ProjectFileWindow.qml`) y carpetas (`ProjectExplorerWindow.qml`) con resaltado de sintaxis multi-lenguaje adaptado dinámicamente al tema principal Gema y una animación fluida de generación de código en vivo.

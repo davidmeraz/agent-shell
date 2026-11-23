@@ -53,11 +53,12 @@ ShellRoot {
                 agent.submit("shell-live");
                 scenario.stage = 2;
             } else if (scenario.stage === 2) {
-                const tree = inspector.findChild(scenario.explorer, "projectExplorerTree");
+                const view = inspector.findChild(scenario.explorer,
+                    scenario.explorer.viewMode === "icons" ? "projectExplorerIconGrid" : "projectExplorerTree");
                 const motion = inspector.findChild(scenario.explorer, "projectViewerMotion");
                 if (motion.progress > 0 && motion.progress < 1) scenario.sawWindowEntrance = true;
-                for (let i = 0; i < tree.count; ++i) {
-                    const row = tree.itemAtIndex(i);
+                for (let i = 0; i < view.count; ++i) {
+                    const row = view.itemAtIndex(i);
                     if (!row) continue;
                     if (row.opacity > 0 && row.opacity < 1) scenario.sawEntryEntrance = true;
                     if (row.path === "src/a.txt" && windows[0].preview === "uno\n" && !scenario.originalRow)
