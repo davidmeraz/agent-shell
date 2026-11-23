@@ -1,0 +1,11 @@
+singleton GemaTheme 1.0 GemaTheme.qml
+ActionButton 1.0 ActionButton.qml
+FileWriteReveal 1.0 FileWriteReveal.qml
+GlassComboBox 1.0 GlassComboBox.qml
+GlassDialog 1.0 GlassDialog.qml
+GlassPanel 1.0 GlassPanel.qml
+MattePanel 1.0 MattePanel.qml
+UsageLimit 1.0 UsageLimit.qml
+ViewerMotion 1.0 ViewerMotion.qml
+WaterReflection 1.0 WaterReflection.qml
+WorkStatusNote 1.0 WorkStatusNote.qml

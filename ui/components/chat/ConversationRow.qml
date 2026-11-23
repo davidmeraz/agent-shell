@@ -23,15 +23,20 @@ ItemDelegate {
                 text: row.title
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                color: row.selected ? "#ffffff" : "#e8e8e8"
+                color: row.selected ? "#ffffff" : GemaTheme.textColor
                 font.pixelSize: row.font.pixelSize
+                font.weight: row.selected ? Font.DemiBold : Font.Medium
+                style: Text.Raised
+                styleColor: GemaTheme.textShadow
             }
             Text {
                 Layout.fillWidth: true
                 text: new Date(row.updatedAt).toLocaleDateString()
                 elide: Text.ElideRight
-                color: "#aaaaaa"
+                color: GemaTheme.subtleColor
                 font.pixelSize: 10
+                style: Text.Raised
+                styleColor: GemaTheme.textShadow
             }
         }
         ActionButton {
@@ -75,9 +80,13 @@ ItemDelegate {
     background: GlassPanel {
         radius: 9
         visible: row.selected || row.hovered || row.activeFocus
-        highlighted: row.activeFocus
-        topColor: row.selected ? "#30707070" : "#24555555"
-        bottomColor: "#182c2c2c"
-        edgeColor: row.selected ? "#50ffffff" : "#24ffffff"
+        highlighted: row.activeFocus || row.selected
+        topColor: row.selected
+                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2affffff")
+                  : (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#20ffffff")
+        bottomColor: "#22060a10"
+        edgeColor: row.selected
+                   ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#58ffffff")
+                   : "#3cffffff"
     }
 }

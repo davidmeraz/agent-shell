@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.24.0] — 2026-11-22
+
+Esta versión sincroniza en tiempo real el diseño Matte Transparent Glassmorphism de Agent Shell y del generador Gema UI Kit (`App`) con el tema Gema de Hyprland (`~/.config/gema/preferences.json`), unificando superficies translúcidas, reflejos de agua, tipografía en relieve y micro-interacciones.
+
+- Nuevo singleton `ui/components/shared/GemaTheme.qml` (y módulo `qmldir`): observa en vivo `~/.config/gema/preferences.json` (`FileView` con `watchChanges: true`) y sincroniza el acento (`accent`), nombre y símbolo de la gema activa (`gemName`, `gemSymbol`), colores de texto y sombras sin reiniciar la aplicación.
+- Acabado Matte Transparent Glassmorphism unificado (`MattePanel.qml`, `GlassPanel.qml`, `WaterReflection.qml`, `ActionButton.qml`, `GlassComboBox.qml`, `GlassDialog.qml`): película de vidrio translúcido (`#54141c26` → `#680c121a`) con resplandor radial central teñido por la gema activa, bisel interior luminoso (*Hairline Frosted Rim*), cápsulas 3D en botones y tarjetas, y desenfoque de fondo con color vivo (`saturation: -0.35`, `blurMax: 36`).
+- Interfaz interactiva y tipografía con relieve (`Text.Raised`): pestañas con iconos facetados (`◈ Chat`, `❖ Work`, `▲ App`), insignia de la gema activa, tarjetas de sugerencia interactivas en `ConversationPane.qml`, encabezados enriquecidos en `WorkProjects.qml` y `ChatSidebar.qml`, y actualización de las plantillas generadas en `backend/harness/work/gema_kit.py`.
+- Verificación completa con 296 pruebas Python, `qmllint` y los 12 escenarios reales de Qt/Quickshell (`./scripts/smoke.sh`).
+
 ## [0.23.0] — 2026-11-22
 
 Esta versión refuerza la protección de salidas de herramientas con fusibles en vivo contra inundaciones y volcados binarios, limpieza de barras de progreso, deduplicación de líneas repetidas y rescate inteligente de diagnósticos en el centro omitido.

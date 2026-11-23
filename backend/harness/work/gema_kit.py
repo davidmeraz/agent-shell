@@ -14,35 +14,123 @@ GEMA_UI_INSTRUCTIONS = (
     "You are in App, the Gema UI Kit application builder workspace. "
     "Build and evolve a native Wayland/Hyprland desktop application using the Gema UI Kit technology stack:\n"
     "1. Frontend: Quickshell (`qs`) + QtQuick 6 QML (`shell.qml`, `ui/AppBridge.qml`, `ui/AppWindow.qml`).\n"
-    "2. Visual Design (Gema UI Kit Dark Glassmorphism): Always use the Gema UI Kit components in `ui/components/` "
-    "(`GlassPanel`, `MattePanel`, `WaterReflection`, `ActionButton`, `GlassComboBox`, `GlassDialog`). "
+    "2. Visual Design (Gema UI Kit Matte Transparent Glassmorphism): Always use the Gema UI Kit components in `ui/components/` "
+    "(`GlassPanel`, `MattePanel`, `WaterReflection`, `ActionButton`, `GlassComboBox`, `GlassDialog`, `GemaTheme`). "
     "Keep windows translucent (`color: \"transparent\"`), enable Wayland blur with "
     "`BackgroundEffect.blurRegion: Region { item: glassSurface; radius: glassSurface.radius }`, "
-    "use frosted matte dark gradients (`topColor: \"#701c1c1c\"`, `bottomColor: \"#7a101010\"`), "
-    "subtle specular top highlights and thin luminous borders (`edgeColor: \"#50ffffff\"`).\n"
+    "use frosted matte transparent white-reflection gradients (`topColor: \"#18ffffff\"`, `bottomColor: \"#10ffffff\"` "
+    "without dark or black backing layers), subtle specular top highlights and thin luminous borders (`edgeColor: \"#48ffffff\"`).\n"
     "3. IPC Bridge: `ui/AppBridge.qml` launches the backend via Quickshell `Process` (`stdinEnabled: true`) "
     "and exchanges JSON Lines v2 (`{\"version\": 2, \"type\": \"...\", \"data\": {...}}`) over stdin/stdout.\n"
     "4. Verification & Launching: Run `./scripts/check.sh` (or button 'Probar') to validate QML syntax with "
     "`qmllint` and backend checks, and `./scripts/run.sh` (or button 'Iniciar') to launch the app window.\n"
 )
 
+_GEMA_THEME_QML = """pragma Singleton
+import QtQuick
+import Quickshell
+import Quickshell.Io
+
+// Sincronización en vivo con el tema Gema de Hyprland (~/.config/gema/preferences.json).
+QtObject {
+    id: gemaTheme
+    property color accent: "#c4dcff"
+    property int rounding: 18
+    property bool blur: true
+    property bool animations: true
+    property bool darkText: false
+    property int gemShape: 7
+    property bool synced: false
+
+    readonly property string preferencesPath: Quickshell.env("GEMA_SETTINGS_PATH")
+        || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/gema/preferences.json")
+
+    function tintColor(baseColor, alphaMix) {
+        const c = Qt.color(baseColor);
+        const a = Qt.color(accent);
+        return Qt.rgba(
+            c.r * (1 - alphaMix) + a.r * alphaMix,
+            c.g * (1 - alphaMix) + a.g * alphaMix,
+            c.b * (1 - alphaMix) + a.b * alphaMix,
+            c.a
+        );
+    }
+
+    function accentAlpha(alpha) {
+        const a = Qt.color(accent);
+        return Qt.rgba(a.r, a.g, a.b, alpha);
+    }
+
+    function load() {
+        try {
+            const raw = prefsFile.text();
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (typeof data.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(data.accent))
+                accent = data.accent.toLowerCase();
+            if (typeof data.rounding === "number" && isFinite(data.rounding))
+                rounding = Math.max(8, Math.min(28, Math.round(data.rounding)));
+            if (typeof data.blur === "boolean")
+                blur = data.blur;
+            if (typeof data.animations === "boolean")
+                animations = data.animations;
+            if (typeof data.darkText === "boolean")
+                darkText = data.darkText;
+            if (typeof data.gemShape === "number")
+                gemShape = data.gemShape;
+            synced = true;
+        } catch (e) {}
+    }
+
+    readonly property FileView prefsFile: FileView {
+        path: gemaTheme.preferencesPath
+        blockLoading: true
+        printErrors: false
+        watchChanges: true
+        onLoaded: gemaTheme.load()
+        onFileChanged: {
+            reload();
+            gemaTheme.load();
+        }
+    }
+
+    Component.onCompleted: load()
+}
+"""
+
+_QMLDIR_COMPONENTS = """singleton GemaTheme 1.0 GemaTheme.qml
+ActionButton 1.0 ActionButton.qml
+GlassComboBox 1.0 GlassComboBox.qml
+GlassDialog 1.0 GlassDialog.qml
+GlassPanel 1.0 GlassPanel.qml
+MattePanel 1.0 MattePanel.qml
+WaterReflection 1.0 WaterReflection.qml
+"""
+
 _GLASS_PANEL_QML = """import QtQuick
 
-// Capas estáticas de vidrio Gema UI Kit; el desenfoque lo realiza el compositor Wayland/Hyprland.
+// Cristal facetado Gema UI Kit sincronizado con el tema Gema de Hyprland.
 Rectangle {
     id: panel
-    property color topColor: "#243b3b3b"
-    property color bottomColor: "#181c1c1c"
-    property color edgeColor: "#38ffffff"
+    property color topColor: "#16ffffff"
+    property color bottomColor: "#14080c12"
+    property color edgeColor: "#42ffffff"
     property bool highlighted: false
     property bool reflective: true
+    readonly property color effectiveTopColor: GemaTheme.synced ? GemaTheme.tintColor(topColor, 0.16) : topColor
+    readonly property color effectiveBottomColor: GemaTheme.synced ? GemaTheme.tintColor(bottomColor, 0.12) : bottomColor
+    readonly property color effectiveEdgeColor: GemaTheme.synced ? GemaTheme.tintColor(edgeColor, 0.38) : edgeColor
+    readonly property color highlightBorderColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.82) : "#a8ffffff"
 
     radius: 12
     border.width: 1
-    border.color: highlighted ? "#99ffffff" : edgeColor
+    border.color: highlighted ? highlightBorderColor : effectiveEdgeColor
+    Behavior on border.color { ColorAnimation { duration: GemaTheme.animations ? 220 : 0 } }
+    Behavior on topColor { ColorAnimation { duration: GemaTheme.animations ? 220 : 0 } }
+    Behavior on bottomColor { ColorAnimation { duration: GemaTheme.animations ? 220 : 0 } }
     gradient: Gradient {
-        GradientStop { position: 0; color: panel.topColor }
-        GradientStop { position: 1; color: panel.bottomColor }
+        GradientStop { position: 0; color: panel.effectiveTopColor }
+        GradientStop { position: 1; color: panel.effectiveBottomColor }
     }
 
     Rectangle {
@@ -52,7 +140,9 @@ Rectangle {
         radius: Math.max(0, panel.radius - 1)
         color: "transparent"
         border.width: 1
-        border.color: "#09ffffff"
+        border.color: panel.highlighted
+                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#28ffffff")
+                      : (GemaTheme.synced ? GemaTheme.accentAlpha(0.12) : "#16ffffff")
     }
     Rectangle {
         visible: panel.reflective
@@ -66,7 +156,8 @@ Rectangle {
         gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0; color: "#00ffffff" }
-            GradientStop { position: 0.35; color: "#52ffffff" }
+            GradientStop { position: 0.28; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#68ffffff" }
+            GradientStop { position: 0.65; color: "#32ffffff" }
             GradientStop { position: 1; color: "#00ffffff" }
         }
     }
@@ -135,21 +226,21 @@ Canvas {
 
 _MATTE_PANEL_QML = """import QtQuick
 
-// Vidrio esmerilado oscuro de Gema UI Kit con reflejos de agua.
+// Vidrio esmerilado translúcido de Gema UI Kit con reflejos de agua y bisel luminoso.
 GlassPanel {
     id: matte
     property bool overlay: false
     property bool waterReflection: true
-    reflective: false
-    topColor: overlay ? "#943a3a3a" : "#50414141"
-    bottomColor: overlay ? "#a0303030" : "#60303030"
-    edgeColor: "#34ffffff"
+    reflective: true
+    topColor: "#54141c26"
+    bottomColor: "#680c121a"
+    edgeColor: overlay ? "#58ffffff" : "#4cffffff"
     radius: 16
     WaterReflection {
         anchors.fill: parent
         visible: matte.waterReflection
         cornerRadius: matte.radius
-        strength: matte.overlay ? 1 : 0.65
+        strength: 0.85
     }
 }
 """
@@ -157,7 +248,7 @@ GlassPanel {
 _ACTION_BUTTON_QML = """import QtQuick
 import QtQuick.Controls
 
-// Botón Glassmorphism de Gema UI Kit.
+// Botón Matte Transparent Glassmorphism de Gema UI Kit con cápsula 3D de luz y sombra.
 Button {
     id: control
     property bool accent: false
@@ -169,18 +260,23 @@ Button {
         text: control.text
         font: control.font
         color: control.enabled ? (control.accent ? "#ffffff" : "#f5f5f5") : "#888888"
+        style: Text.Raised
+        styleColor: "#b8000000"
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
     background: GlassPanel {
         radius: 10
-        topColor: control.down ? "#80555555"
-                  : control.accent && control.enabled ? "#70707070"
-                  : control.hovered && control.enabled ? "#70555555" : "#443c3c3c"
-        bottomColor: control.accent && control.enabled ? "#504d4d4d" : "#30202020"
-        edgeColor: control.accent && control.enabled ? "#70ffffff" : "#38ffffff"
-        highlighted: control.activeFocus
+        topColor: control.down ? "#36ffffff"
+                  : control.accent && control.enabled ? (GemaTheme.synced ? GemaTheme.accentAlpha(control.hovered ? 0.42 : 0.30) : "#30ffffff")
+                  : control.hovered && control.enabled ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#28ffffff") : "#1cffffff"
+        bottomColor: control.accent && control.enabled
+                     ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1cffffff")
+                     : "#22060a10"
+        edgeColor: control.accent && control.enabled ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.85) : "#80ffffff")
+                   : control.hovered && control.enabled ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#68ffffff") : "#48ffffff"
+        highlighted: control.activeFocus || (control.hovered && control.accent)
         opacity: control.enabled ? 1 : 0.55
     }
 }
@@ -189,7 +285,7 @@ Button {
 _GLASS_DIALOG_QML = """import QtQuick
 import QtQuick.Controls
 
-// Diálogo modal Glassmorphism de Gema UI Kit.
+// Diálogo modal Matte Transparent Glassmorphism de Gema UI Kit.
 Dialog {
     id: control
     padding: 20
@@ -213,14 +309,14 @@ Dialog {
         background: null
         delegate: ActionButton {}
     }
-    Overlay.modal: Rectangle { color: "#66000000" }
+    Overlay.modal: Rectangle { color: "#28000000" }
 }
 """
 
 _GLASS_COMBOBOX_QML = """import QtQuick
 import QtQuick.Controls
 
-// Selector desplegable Glassmorphism de Gema UI Kit.
+// Selector desplegable Matte Transparent Glassmorphism de Gema UI Kit.
 ComboBox {
     id: control
     property bool opensAbove: false
@@ -251,8 +347,8 @@ ComboBox {
         implicitHeight: 40
         radius: 10
         highlighted: control.activeFocus || control.popup.visible
-        topColor: control.hovered ? "#70555555" : "#443c3c3c"
-        bottomColor: "#30202020"
+        topColor: control.hovered ? "#22ffffff" : "#14ffffff"
+        bottomColor: "#0cffffff"
         opacity: control.enabled ? 1 : 0.55
     }
 }
@@ -352,26 +448,27 @@ import Quickshell
 import Quickshell.Wayland
 import "components"
 
-// Ventana principal con estética Dark Glassmorphism de Gema UI Kit.
+// Ventana principal interactiva con estética Matte Transparent Glassmorphism de Gema UI Kit.
 FloatingWindow {{
     id: window
     required property AppBridge bridge
     title: {escaped_name}
-    implicitWidth: 620
-    implicitHeight: 520
-    minimumSize: Qt.size(440, 360)
+    implicitWidth: 680
+    implicitHeight: 560
+    minimumSize: Qt.size(480, 400)
     color: "transparent"
     visible: true
     BackgroundEffect.blurRegion: Region {{ item: glassSurface; radius: glassSurface.radius }}
+    property string activeSection: "inicio"
 
     MattePanel {{
         id: glassSurface
         anchors.fill: parent
         anchors.margins: 1
         radius: 20
-        topColor: "#701c1c1c"
-        bottomColor: "#7a101010"
-        edgeColor: "#50ffffff"
+        topColor: "#54141c26"
+        bottomColor: "#680c121a"
+        edgeColor: "#4cffffff"
     }}
 
     ColumnLayout {{
@@ -381,78 +478,199 @@ FloatingWindow {{
 
         RowLayout {{
             Layout.fillWidth: true
-            spacing: 12
+            spacing: 14
+            GlassPanel {{
+                implicitWidth: 42
+                implicitHeight: 42
+                radius: 12
+                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#24ffffff"
+                bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.10) : "#10ffffff"
+                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#48ffffff"
+                Text {{
+                    anchors.centerIn: parent
+                    text: "◈"
+                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                    font.pixelSize: 18
+                    style: Text.Raised
+                    styleColor: "#b0000000"
+                }}
+            }}
             ColumnLayout {{
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: 3
                 Text {{
                     text: {escaped_name}
-                    color: "#f5f5f5"
+                    color: "#f3f5f8"
                     font.pixelSize: 22
                     font.bold: true
+                    font.letterSpacing: -0.3
+                    style: Text.Raised
+                    styleColor: "#b0000000"
                     elide: Text.ElideRight
                 }}
                 Text {{
-                    text: "Gema UI Kit · Glassmorphism · Motor {engine_label}"
-                    color: "#aaaaaa"
+                    text: "Gema UI Kit · Matte Transparent Glass · Motor {engine_label}"
+                    color: "#dce2eb"
                     font.pixelSize: 12
+                    style: Text.Raised
+                    styleColor: "#b0000000"
                 }}
             }}
             GlassPanel {{
-                implicitWidth: badgeText.implicitWidth + 20
-                implicitHeight: 28
-                radius: 9
-                topColor: "#28484848"
-                bottomColor: "#1c222222"
-                Text {{
-                    id: badgeText
+                implicitWidth: badgeRow.implicitWidth + 20
+                implicitHeight: 30
+                radius: 10
+                topColor: window.bridge.ready
+                          ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#22ffffff")
+                          : "#14ffffff"
+                bottomColor: "#0cffffff"
+                RowLayout {{
+                    id: badgeRow
                     anchors.centerIn: parent
-                    text: window.bridge.ready ? "● Activo" : "○ Iniciando"
-                    color: window.bridge.ready ? "#f5f5f5" : "#888888"
-                    font.pixelSize: 11
+                    spacing: 6
+                    Rectangle {{
+                        implicitWidth: 7
+                        implicitHeight: 7
+                        radius: 3.5
+                        color: window.bridge.ready ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : "#888888"
+                    }}
+                    Text {{
+                        text: window.bridge.ready ? "Motor Activo" : "Iniciando"
+                        color: "#f3f5f8"
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        style: Text.Raised
+                        styleColor: "#b0000000"
+                    }}
                 }}
             }}
         }}
 
-        Rectangle {{ Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }}
+        RowLayout {{
+            Layout.fillWidth: true
+            spacing: 8
+            Repeater {{
+                model: [
+                    {{ id: "inicio", label: "◈  Panel Principal" }},
+                    {{ id: "estado", label: "⚡  Estado IPC" }}
+                ]
+                delegate: ActionButton {{
+                    required property var modelData
+                    text: modelData.label
+                    accent: window.activeSection === modelData.id
+                    font.pixelSize: 12
+                    verticalPadding: 7
+                    onClicked: window.activeSection = modelData.id
+                }}
+            }}
+            Item {{ Layout.fillWidth: true }}
+            ActionButton {{
+                text: "Enviar pulso IPC (" + window.bridge.pingCount + ")"
+                accent: true
+                font.pixelSize: 12
+                verticalPadding: 7
+                enabled: window.bridge.ready
+                onClicked: window.bridge.ping("Pulso interactivo desde Gema UI Kit")
+            }}
+        }}
+
+        Rectangle {{ Layout.fillWidth: true; implicitHeight: 1; color: "#20ffffff" }}
 
         GlassPanel {{
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: 16
-            topColor: "#14292929"
-            bottomColor: "#24171717"
-            edgeColor: "#20ffffff"
+            topColor: "#12ffffff"
+            bottomColor: "#08ffffff"
+            edgeColor: "#28ffffff"
 
             ColumnLayout {{
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 48, 460)
-                spacing: 14
+                anchors.fill: parent
+                anchors.margins: 22
+                spacing: 16
 
-                Text {{
+                ColumnLayout {{
                     Layout.fillWidth: true
-                    text: "Tu aplicación Gema UI Kit está lista"
-                    color: "#f5f5f5"
-                    font.pixelSize: 18
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
+                    spacing: 6
+                    Text {{
+                        Layout.fillWidth: true
+                        text: window.activeSection === "inicio"
+                              ? "Espacio interactivo Gema UI Kit"
+                              : "Diagnóstico en vivo del puente JSON-Lines"
+                        color: "#f3f5f8"
+                        font.pixelSize: 19
+                        font.bold: true
+                        style: Text.Raised
+                        styleColor: "#b0000000"
+                        wrapMode: Text.Wrap
+                    }}
+                    Text {{
+                        Layout.fillWidth: true
+                        text: window.bridge.status
+                        color: "#dce2eb"
+                        font.pixelSize: 13
+                        style: Text.Raised
+                        styleColor: "#b0000000"
+                        wrapMode: Text.Wrap
+                    }}
                 }}
-                Text {{
+
+                RowLayout {{
                     Layout.fillWidth: true
-                    text: window.bridge.status
-                    color: "#bbbbbb"
-                    font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
+                    spacing: 12
+                    Repeater {{
+                        model: [
+                            {{ title: "Estilo Visual", value: "Matte Glass", detail: "Blur nativo de Hyprland + reflejo de agua" }},
+                            {{ title: "Motor Backend", value: "{engine_label}", detail: "Comunicación stdio JSON-Lines v2" }},
+                            {{ title: "Eventos IPC", value: String(window.bridge.pingCount), detail: "Pulsos procesados en tiempo real" }}
+                        ]
+                        delegate: GlassPanel {{
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: metricCol.implicitHeight + 24
+                            radius: 12
+                            topColor: cardHover.hovered ? "#22ffffff" : "#14ffffff"
+                            bottomColor: "#0affffff"
+                            edgeColor: cardHover.hovered
+                                       ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#48ffffff")
+                                       : "#24ffffff"
+                            HoverHandler {{ id: cardHover }}
+                            ColumnLayout {{
+                                id: metricCol
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 4
+                                Text {{
+                                    text: modelData.title
+                                    color: "#b8c4d4"
+                                    font.pixelSize: 11
+                                    font.weight: Font.Medium
+                                    style: Text.Raised
+                                    styleColor: "#b0000000"
+                                }}
+                                Text {{
+                                    text: modelData.value
+                                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                    style: Text.Raised
+                                    styleColor: "#b0000000"
+                                }}
+                                Text {{
+                                    Layout.fillWidth: true
+                                    text: modelData.detail
+                                    color: "#dce2eb"
+                                    font.pixelSize: 10
+                                    style: Text.Raised
+                                    styleColor: "#b0000000"
+                                    wrapMode: Text.Wrap
+                                }}
+                            }}
+                        }}
+                    }}
                 }}
-                ActionButton {{
-                    Layout.alignment: Qt.AlignHCenter
-                    text: "Probar conexión con el motor (" + window.bridge.pingCount + ")"
-                    accent: true
-                    enabled: window.bridge.ready
-                    onClicked: window.bridge.ping("Pulso desde la interfaz QML")
-                }}
+
+                Item {{ Layout.fillHeight: true }}
             }}
         }}
     }}
@@ -640,7 +858,7 @@ def _agents_md(name: str, engine: str) -> str:
 
 Aplicación de escritorio nativa para **Hyprland / Wayland** construida con el stack **Gema UI Kit**:
 
-- **Estilo visual:** Dark Glassmorphism (`MattePanel`, `GlassPanel`, `WaterReflection`, `ActionButton`, `GlassDialog`, `GlassComboBox`) en `ui/components/`, con fondo translúcido y desenfoque real del compositor (`BackgroundEffect.blurRegion`).
+- **Estilo visual:** Matte Transparent Glassmorphism (`MattePanel`, `GlassPanel`, `WaterReflection`, `ActionButton`, `GlassDialog`, `GlassComboBox`, `GemaTheme`) en `ui/components/`, con vidrio mate transparente sin capa oscura y desenfoque real del compositor (`BackgroundEffect.blurRegion`).
 - **Frontend:** Quickshell + QtQuick 6 QML (`shell.qml`, `ui/AppWindow.qml`, `ui/AppBridge.qml`).
 - **Motor Backend:** {engine_label} conectado por `stdin`/`stdout` mediante JSON-Lines v2 (`{{"version": 2, "type": "...", "data": {{...}}}}`).
 - **Probar aplicación:** `./scripts/check.sh`
@@ -672,6 +890,8 @@ def scaffold_gema_app(workdir: str | Path, name: str, engine: str = "python") ->
     _write_if_missing(folder / "ui" / "AppWindow.qml", _app_window_qml(name, engine))
 
     components = folder / "ui" / "components"
+    _write_if_missing(components / "qmldir", _QMLDIR_COMPONENTS)
+    _write_if_missing(components / "GemaTheme.qml", _GEMA_THEME_QML)
     _write_if_missing(components / "GlassPanel.qml", _GLASS_PANEL_QML)
     _write_if_missing(components / "WaterReflection.qml", _WATER_REFLECTION_QML)
     _write_if_missing(components / "MattePanel.qml", _MATTE_PANEL_QML)

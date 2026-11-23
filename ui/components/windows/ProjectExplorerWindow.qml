@@ -300,9 +300,9 @@ FloatingWindow {
             anchors.fill: parent
             anchors.margins: 1
             radius: 20
-            topColor: "#90303030"
-            bottomColor: "#a01c1c1c"
-            edgeColor: "#50ffffff"
+            topColor: "#54141c26"
+            bottomColor: "#680c121a"
+            edgeColor: "#4cffffff"
         }
         ColumnLayout {
             focus: true
@@ -408,8 +408,8 @@ FloatingWindow {
                         radius: 6
                         reflective: false
                         highlighted: row.activeFocus
-                        topColor: row.hovered || explorer.openPaths.includes(row.modelData.path) ? "#30555555" : "#00000000"
-                        bottomColor: row.hovered || explorer.openPaths.includes(row.modelData.path) ? "#24333333" : "#00000000"
+                        topColor: row.hovered || explorer.openPaths.includes(row.modelData.path) ? "#22ffffff" : "#00000000"
+                        bottomColor: row.hovered || explorer.openPaths.includes(row.modelData.path) ? "#12ffffff" : "#00000000"
                         edgeColor: explorer.openPaths.includes(row.modelData.path) ? "#40ffffff" : "#00000000"
                         Rectangle {
                             anchors.fill: parent

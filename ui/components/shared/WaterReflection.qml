@@ -6,11 +6,13 @@ Canvas {
     id: reflection
     property real cornerRadius: 16
     property real strength: 1
+    property color tint: GemaTheme.accent
     contextType: "2d"
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
     onCornerRadiusChanged: requestPaint()
     onStrengthChanged: requestPaint()
+    onTintChanged: requestPaint()
     onPaint: {
         if (width <= 2 || height <= 2) return;
         const ctx = getContext("2d");
@@ -22,21 +24,36 @@ Canvas {
         ctx.clip();
         ctx.globalAlpha = strength;
 
-        // Un reflejo ancho se desvanece hacia el centro del panel.
+        const c = Qt.color(tint);
+        const r = Math.round((c.r * 0.55 + 0.45) * 255);
+        const g = Math.round((c.g * 0.55 + 0.45) * 255);
+        const b = Math.round((c.b * 0.55 + 0.45) * 255);
+        const rgba = a => "rgba(" + r + "," + g + "," + b + "," + a + ")";
+
+        // Resplandor radial difuso en el centro (como la imagen de referencia) con viñeta suave.
+        const centerGlow = ctx.createRadialGradient(width * 0.48, height * 0.48, 0,
+                                                    width * 0.50, height * 0.50, Math.max(width, height) * 0.72);
+        centerGlow.addColorStop(0.0, rgba(0.14));
+        centerGlow.addColorStop(0.45, rgba(0.06));
+        centerGlow.addColorStop(1.0, "rgba(10, 14, 20, 0.24)");
+        ctx.fillStyle = centerGlow;
+        ctx.fillRect(0, 0, width, height);
+
+        // Un reflejo ancho superior se desvanece hacia el centro del panel.
         const sheen = ctx.createRadialGradient(width * 0.16, 0, 0,
                                                width * 0.16, 0, width * 0.85);
-        sheen.addColorStop(0, "#16ffffff");
-        sheen.addColorStop(0.45, "#07ffffff");
-        sheen.addColorStop(1, "#00ffffff");
+        sheen.addColorStop(0, rgba(0.09));
+        sheen.addColorStop(0.45, rgba(0.03));
+        sheen.addColorStop(1, rgba(0.0));
         ctx.fillStyle = sheen;
         ctx.fillRect(0, 0, width, height);
 
         const light = ctx.createLinearGradient(0, 0, width, 0);
-        light.addColorStop(0, "#00ffffff");
-        light.addColorStop(0.18, "#24ffffff");
-        light.addColorStop(0.5, "#08ffffff");
-        light.addColorStop(0.8, "#1cffffff");
-        light.addColorStop(1, "#00ffffff");
+        light.addColorStop(0, rgba(0.0));
+        light.addColorStop(0.18, rgba(0.14));
+        light.addColorStop(0.5, rgba(0.035));
+        light.addColorStop(0.8, rgba(0.11));
+        light.addColorStop(1, rgba(0.0));
         ctx.strokeStyle = light;
         const band = Math.min(height * 0.14, 65);
         for (let i = 0; i < 3; ++i) {

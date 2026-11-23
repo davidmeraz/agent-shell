@@ -416,7 +416,7 @@ class WorkspaceTests(unittest.TestCase):
         self.send("Añade un botón de notas")
         instructions = self.service.requests[-1]["body"]["instructions"]
         self.assertIn("Gema UI Kit", instructions)
-        self.assertIn("Dark Glassmorphism", instructions)
+        self.assertIn("Matte Transparent Glassmorphism", instructions)
         self.assertIn("Notas Gema", instructions)
 
         # Verifica el botón 'Probar' (app.test) que ejecuta scripts/check.sh

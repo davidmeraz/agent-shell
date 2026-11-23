@@ -119,10 +119,10 @@ FloatingWindow {
         anchors.fill: parent
         anchors.margins: 1
         radius: 20
-        // Mate más marcado (44–48 % de opacidad), conservando la transparencia.
-        topColor: "#701c1c1c"
-        bottomColor: "#7a101010"
-        edgeColor: "#50ffffff"
+        // Vidrio esmerilado translúcido Gema unificado con el sidebar y demás paneles.
+        topColor: "#54141c26"
+        bottomColor: "#680c121a"
+        edgeColor: "#4cffffff"
     }
 
     RowLayout {
@@ -135,9 +135,10 @@ FloatingWindow {
                        && GraphicsInfo.api !== GraphicsInfo.Unknown
         layer.effect: MultiEffect {
             blurEnabled: true
-            blurMax: 32
+            blurMax: 36
             blur: 1.0
-            saturation: -1.0
+            saturation: -0.35
+            brightness: -0.08
             autoPaddingEnabled: false
         }
 
@@ -204,8 +205,8 @@ FloatingWindow {
                             implicitWidth: gemaBadge.implicitWidth + 14
                             implicitHeight: 20
                             radius: 6
-                            topColor: "#28505050"
-                            bottomColor: "#1c262626"
+                            topColor: "#1cffffff"
+                            bottomColor: "#10ffffff"
                             Text {
                                 id: gemaBadge
                                 anchors.centerIn: parent
@@ -467,9 +468,10 @@ FloatingWindow {
             ChatSidebar {
                 objectName: "chatSidebar"
                 anchors.fill: parent
-                anchors.margins: 12
-                topColor: "#18333333"
-                bottomColor: "#20292929"
+                anchors.margins: 8
+                topColor: "#00000000"
+                bottomColor: "#00000000"
+                edgeColor: "#00000000"
                 waterReflection: false
                 bridge: window.bridge
                 onHistoryRequested: { narrowSidebar.close(); historyPanel.open(); }
@@ -867,7 +869,7 @@ FloatingWindow {
                     background: GlassPanel {
                         radius: 10
                         highlighted: measurementRow.activeFocus
-                        topColor: measurementRow.hovered ? "#70555555" : "#443c3c3c"
+                        topColor: measurementRow.hovered ? "#22ffffff" : "#12ffffff"
                     }
                 }
             }

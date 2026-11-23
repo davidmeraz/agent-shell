@@ -31,10 +31,10 @@ GlassPanel {
         && /sudo:.*(?:terminal is required|password is required)/i.test(rawOutput)
     implicitHeight: content.implicitHeight + 24
     radius: 12
-    topColor: "#1c3b3b3b"
-    bottomColor: "#101b1b1b"
-    edgeColor: "#20ffffff"
-    reflective: false
+    topColor: "#18ffffff"
+    bottomColor: "#24060a10"
+    edgeColor: "#38ffffff"
+    reflective: true
 
     ColumnLayout {
         id: content

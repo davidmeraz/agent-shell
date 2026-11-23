@@ -55,8 +55,9 @@ GlassPanel {
     }
     implicitHeight: editorLayout.implicitHeight + 24
     radius: 16
-    topColor: "#28393939"
-    bottomColor: "#201c1c1c"
+    topColor: "#1cffffff"
+    bottomColor: "#24060a10"
+    edgeColor: "#42ffffff"
     highlighted: prompt.activeFocus
 
     function prepare(text) {

@@ -98,9 +98,9 @@ FloatingWindow {
             anchors.fill: parent
             anchors.margins: 1
             radius: 20
-            topColor: "#90303030"
-            bottomColor: "#a01c1c1c"
-            edgeColor: "#50ffffff"
+            topColor: "#54141c26"
+            bottomColor: "#680c121a"
+            edgeColor: "#4cffffff"
         }
         Item {
             id: content

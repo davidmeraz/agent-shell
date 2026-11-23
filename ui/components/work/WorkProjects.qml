@@ -12,9 +12,10 @@ GlassPanel {
     signal newProjectRequested()
     signal deleteProjectRequested(string projectId, string name, string workdir)
     radius: 16
-    topColor: "#14292929"
-    bottomColor: "#24171717"
-    edgeColor: "#20ffffff"
+    topColor: "#00000000"
+    bottomColor: "#00000000"
+    edgeColor: "#00000000"
+    reflective: false
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
@@ -23,21 +24,36 @@ GlassPanel {
             Layout.fillWidth: true
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 5
-                Text {
-                    Layout.fillWidth: true
-                    text: panel.isAppArea ? "App · Gema UI Kit" : "Work"
-                    color: "#f5f5f5"
-                    font.pixelSize: 26
-                    font.bold: true
+                spacing: 6
+                RowLayout {
+                    spacing: 8
+                    Text {
+                        text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
+                        color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                        font.pixelSize: 20
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: panel.isAppArea ? "App · Gema UI Kit" : "Work · Proyectos"
+                        color: GemaTheme.textColor
+                        font.pixelSize: 26
+                        font.bold: true
+                        font.letterSpacing: -0.3
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
+                    }
                 }
                 Text {
                     Layout.fillWidth: true
                     text: panel.isAppArea
-                        ? "Crea aplicaciones del día a día con diseño Glassmorphism (Quickshell + Python/Rust)."
-                        : "Un espacio para construir."
-                    color: "#aaaaaa"
+                        ? "Crea aplicaciones del día a día con diseño Matte Transparent Glassmorphism (Quickshell + Python/Rust)."
+                        : "Un espacio para construir, explorar y ejecutar tus proyectos con la IA."
+                    color: GemaTheme.mutedColor
                     font.pixelSize: 13
+                    style: Text.Raised
+                    styleColor: GemaTheme.textShadow
                     wrapMode: Text.Wrap
                 }
             }
@@ -54,8 +70,8 @@ GlassPanel {
             visible: panel.isAppArea
             implicitHeight: kitInfo.implicitHeight + 24
             radius: 12
-            topColor: "#1e3d3d3d"
-            bottomColor: "#181e1e1e"
+            topColor: "#18ffffff"
+            bottomColor: "#0cffffff"
             edgeColor: "#30ffffff"
             ColumnLayout {
                 id: kitInfo
@@ -64,14 +80,14 @@ GlassPanel {
                 spacing: 4
                 Text {
                     Layout.fillWidth: true
-                    text: "Stack Gema UI Kit · Dark Glassmorphism"
+                    text: "Stack Gema UI Kit · Matte Transparent Glassmorphism"
                     color: "#f0f0f0"
                     font.pixelSize: 12
                     font.bold: true
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: "Genera automáticamente la ventana translúcida con blur de Hyprland (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC JSON-Lines sobre stdio y botones para Probar e Iniciar."
+                    text: "Genera automáticamente la ventana de vidrio mate transparente con blur de Hyprland (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC JSON-Lines sobre stdio y botones para Probar e Iniciar."
                     color: "#b8b8b8"
                     font.pixelSize: 11
                     wrapMode: Text.Wrap
@@ -115,10 +131,33 @@ GlassPanel {
                 objectName: "workProjectRow"
                 width: projectList.width
                 padding: 16
+                hoverEnabled: true
                 enabled: panel.bridge.canSelectArea
+                scale: projectRow.down ? 0.985 : (projectRow.hovered ? 1.01 : 1.0)
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
                 onClicked: panel.bridge.selectArea(panel.isAppArea ? "app" : "work", projectId)
                 contentItem: RowLayout {
-                    spacing: 12
+                    spacing: 14
+                    GlassPanel {
+                        implicitWidth: 38
+                        implicitHeight: 38
+                        radius: 10
+                        topColor: projectRow.hovered
+                                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#28ffffff")
+                                  : (GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#18ffffff")
+                        bottomColor: "#0cffffff"
+                        edgeColor: projectRow.hovered
+                                   ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#50ffffff")
+                                   : "#28ffffff"
+                        Text {
+                            anchors.centerIn: parent
+                            text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
+                            color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                            font.pixelSize: 16
+                            style: Text.Raised
+                            styleColor: GemaTheme.textShadow
+                        }
+                    }
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -130,9 +169,11 @@ GlassPanel {
                                 Layout.fillWidth: true
                                 text: projectRow.name
                                 textFormat: Text.PlainText
-                                color: "#f5f5f5"
+                                color: GemaTheme.textColor
                                 font.pixelSize: 15
                                 font.bold: true
+                                style: Text.Raised
+                                styleColor: GemaTheme.textShadow
                                 elide: Text.ElideRight
                             }
                             GlassPanel {
@@ -140,18 +181,30 @@ GlassPanel {
                                 implicitWidth: engineTag.implicitWidth + 14
                                 implicitHeight: 20
                                 radius: 6
-                                topColor: "#28505050"
-                                bottomColor: "#1c262626"
+                                topColor: "#1cffffff"
+                                bottomColor: "#10ffffff"
                                 Text {
                                     id: engineTag
                                     anchors.centerIn: parent
                                     text: "Gema UI · " + (projectRow.engine === "rust" ? "Rust" : "Python")
-                                    color: "#dddddd"
+                                    color: GemaTheme.mutedColor
                                     font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    style: Text.Raised
+                                    styleColor: GemaTheme.textShadow
                                 }
                             }
                         }
-                        Text { Layout.fillWidth: true; text: projectRow.workdir; textFormat: Text.PlainText; color: "#aaaaaa"; font.pixelSize: 11; elide: Text.ElideMiddle }
+                        Text {
+                            Layout.fillWidth: true
+                            text: projectRow.workdir
+                            textFormat: Text.PlainText
+                            color: GemaTheme.subtleColor
+                            font.pixelSize: 11
+                            style: Text.Raised
+                            styleColor: GemaTheme.textShadow
+                            elide: Text.ElideMiddle
+                        }
                     }
                     ActionButton {
                         id: deleteProjectButton
@@ -194,9 +247,14 @@ GlassPanel {
                 }
                 background: GlassPanel {
                     radius: 12
-                    highlighted: projectRow.activeFocus
-                    topColor: projectRow.hovered ? "#30555555" : "#183b3b3b"
-                    edgeColor: "#24ffffff"
+                    highlighted: projectRow.activeFocus || projectRow.hovered
+                    topColor: projectRow.hovered
+                              ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#26ffffff")
+                              : "#1cffffff"
+                    bottomColor: "#22060a10"
+                    edgeColor: projectRow.hovered
+                               ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#58ffffff")
+                               : "#3cffffff"
                 }
                 ToolTip.visible: hovered
                 ToolTip.delay: 650

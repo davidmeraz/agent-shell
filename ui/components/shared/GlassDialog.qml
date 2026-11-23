@@ -24,5 +24,5 @@ Dialog {
         background: null
         delegate: ActionButton {}
     }
-    Overlay.modal: Rectangle { color: "#66000000" }
+    Overlay.modal: Rectangle { color: "#28000000" }
 }

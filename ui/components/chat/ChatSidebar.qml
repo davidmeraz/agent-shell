@@ -20,17 +20,41 @@ MattePanel {
         anchors.margins: 16
         spacing: 12
         RowLayout {
-            spacing: 10
+            spacing: 12
             GlassPanel {
-                implicitWidth: 36
-                implicitHeight: 36
-                edgeColor: "#50ffffff"
-                Text { anchors.centerIn: parent; text: "AS"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
+                implicitWidth: 38
+                implicitHeight: 38
+                radius: 11
+                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
+                bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.10) : "#0cffffff"
+                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#50ffffff"
+                Text {
+                    anchors.centerIn: parent
+                    text: GemaTheme.gemSymbol
+                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                    font.pixelSize: 16
+                    font.bold: true
+                    style: Text.Raised
+                    styleColor: GemaTheme.textShadow
+                }
             }
             ColumnLayout {
-                spacing: 3
-                Text { text: "Agent Shell"; color: "#f5f5f5"; font.pixelSize: 18; font.bold: true }
-                Text { text: "Tu espacio de IA"; color: "#aaaaaa"; font.pixelSize: 11 }
+                spacing: 2
+                Text {
+                    text: "Agent Shell"
+                    color: GemaTheme.textColor
+                    font.pixelSize: 18
+                    font.bold: true
+                    style: Text.Raised
+                    styleColor: GemaTheme.textShadow
+                }
+                Text {
+                    text: GemaTheme.synced ? "Gema · " + GemaTheme.gemName : "Tu espacio de IA"
+                    color: GemaTheme.mutedColor
+                    font.pixelSize: 11
+                    style: Text.Raised
+                    styleColor: GemaTheme.textShadow
+                }
             }
         }
         RowLayout {
@@ -39,8 +63,11 @@ MattePanel {
             Text {
                 Layout.fillWidth: true
                 text: sidebar.bridge.projectName || (sidebar.bridge.activeArea === "app" ? "Tus aplicaciones" : "Tus proyectos")
-                color: "#dddddd"
+                color: GemaTheme.textColor
                 font.pixelSize: 12
+                font.weight: Font.DemiBold
+                style: Text.Raised
+                styleColor: GemaTheme.textShadow
                 elide: Text.ElideRight
                 textFormat: Text.PlainText
             }
@@ -67,15 +94,18 @@ MattePanel {
                 else sidebar.bridge.newChat();
             }
         }
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
+        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#22ffffff" }
         RowLayout {
             Layout.fillWidth: true
             Text {
                 Layout.fillWidth: true
                 text: "CONVERSACIONES"
-                color: "#aaaaaa"
+                color: GemaTheme.mutedColor
                 font.pixelSize: 10
-                font.letterSpacing: 1
+                font.weight: Font.Bold
+                font.letterSpacing: 1.1
+                style: Text.Raised
+                styleColor: GemaTheme.textShadow
             }
             ActionButton {
                 text: "Ver todas"
@@ -92,8 +122,10 @@ MattePanel {
             text: sidebar.bridge.activeArea === "app" ? "Las conversaciones de esta aplicación aparecerán aquí."
                   : sidebar.bridge.activeArea === "work" ? "Las conversaciones de este proyecto aparecerán aquí."
                   : "Tus chats se guardarán aquí."
-            color: "#aaaaaa"
+            color: GemaTheme.mutedColor
             font.pixelSize: 12
+            style: Text.Raised
+            styleColor: GemaTheme.textShadow
             wrapMode: Text.Wrap
         }
         ListView {
@@ -135,7 +167,7 @@ MattePanel {
                 spacing: 10
                 Rectangle {
                     implicitWidth: 8; implicitHeight: 8; radius: 4
-                    color: sidebar.bridge.authenticated ? "#ffffff" : "#777777"
+                    color: sidebar.bridge.authenticated ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : "#777777"
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -145,28 +177,41 @@ MattePanel {
                         text: sidebar.bridge.authenticated ? sidebar.bridge.email || "Cuenta conectada" : "Conectar ChatGPT"
                         textFormat: Text.PlainText
                         elide: Text.ElideMiddle
-                        color: "#f5f5f5"
+                        color: GemaTheme.textColor
                         font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
                     }
                     Text {
                         text: sidebar.bridge.authenticated ? "Cuenta y uso del plan" : "Inicia sesión para conversar"
-                        color: "#aaaaaa"
+                        color: GemaTheme.mutedColor
                         font.pixelSize: 10
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
                     }
                 }
-                Text { text: "›"; color: "#aaaaaa"; font.pixelSize: 20 }
+                Text {
+                    text: "›"
+                    color: account.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
+                    font.pixelSize: 20
+                    style: Text.Raised
+                    styleColor: GemaTheme.textShadow
+                }
             }
             background: GlassPanel {
-                highlighted: account.activeFocus
-                topColor: account.hovered ? "#30555555" : "#183b3b3b"
-                bottomColor: "#141c1c1c"
-                edgeColor: "#24ffffff"
+                highlighted: account.activeFocus || account.hovered
+                topColor: account.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#28ffffff") : "#1cffffff"
+                bottomColor: "#24060a10"
+                edgeColor: account.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#60ffffff") : "#42ffffff"
             }
         }
         Text {
             text: "v" + (sidebar.bridge.appVersion || "…")
-            color: "#aaaaaa"
+            color: GemaTheme.subtleColor
             font.pixelSize: 10
+            style: Text.Raised
+            styleColor: GemaTheme.textShadow
         }
     }
 }

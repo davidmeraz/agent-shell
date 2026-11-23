@@ -67,8 +67,9 @@ ColumnLayout {
             width: parent.width * Math.min(100, limit.remaining) / 100
             height: parent.height
             radius: parent.radius
-            color: "#dddddd"
+            color: GemaTheme.synced ? GemaTheme.accent : "#dddddd"
             Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 220 } }
         }
     }
     Text {

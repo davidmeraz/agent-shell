@@ -31,8 +31,8 @@ ComboBox {
         implicitHeight: 40
         radius: 10
         highlighted: control.activeFocus || control.popup.visible
-        topColor: control.hovered ? "#70555555" : "#443c3c3c"
-        bottomColor: "#30202020"
+        topColor: control.hovered ? "#22ffffff" : "#14ffffff"
+        bottomColor: "#0cffffff"
         opacity: control.enabled ? 1 : 0.55
     }
     delegate: ItemDelegate {
@@ -51,8 +51,8 @@ ComboBox {
         background: GlassPanel {
             radius: 8
             visible: option.highlighted || option.hovered
-            topColor: "#70707070"
-            bottomColor: "#304d4d4d"
+            topColor: "#28ffffff"
+            bottomColor: "#18ffffff"
             edgeColor: "#50ffffff"
         }
     }
@@ -68,9 +68,9 @@ ComboBox {
             currentIndex: control.highlightedIndex
             ScrollIndicator.vertical: ScrollIndicator { visible: false }
         }
-        background: GlassPanel {
-            topColor: "#f0333333"
-            bottomColor: "#f0222222"
+        background: MattePanel {
+            overlay: true
+            radius: 12
         }
     }
 }

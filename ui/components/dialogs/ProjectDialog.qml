@@ -102,7 +102,7 @@ GlassDialog {
         Text {
             Layout.fillWidth: true
             text: dialog.isAppMode
-                ? "Generará automáticamente la estructura Gema UI Kit con estilo Dark Glassmorphism (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC stdio y scripts para Probar e Iniciar."
+                ? "Generará automáticamente la estructura Gema UI Kit con estilo Matte Transparent Glassmorphism (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC stdio y scripts para Probar e Iniciar."
                 : "Elige una carpeta existente, vacía o con un proyecto. Work conservará sus conversaciones por separado."
             color: "#aaaaaa"
             font.pixelSize: 12
