@@ -78,6 +78,27 @@ FloatingWindow {
     readonly property var activeScopeChain: CodeSyntax.findActiveScopes(codeScopes, effectiveLineIndex)
     readonly property var activeBreadcrumbs: activeScopeChain.filter(s => !!s.label)
     readonly property var activeScope: activeScopeChain.length > 0 ? activeScopeChain[activeScopeChain.length - 1] : null
+    readonly property var primaryScope: {
+        if (!codeScopes || !codeScopes.length) return null;
+        const mainFn = codeScopes.find(s => s.kind === "func" && /^main\b/i.test(s.label || ""));
+        if (mainFn) return mainFn;
+        const named = codeScopes.filter(s => !!s.label && (s.kind === "func" || s.kind === "type"));
+        if (named.length > 0) {
+            let best = named[0];
+            for (let i = 1; i < named.length; ++i) {
+                if (named[i].indentCol < best.indentCol) best = named[i];
+            }
+            return best;
+        }
+        return codeScopes.find(s => !!s.label) || null;
+    }
+    readonly property var displayedBreadcrumbs: {
+        if (activeBreadcrumbs.length > 0) return activeBreadcrumbs.slice(-4);
+        if (primaryScope) return [primaryScope];
+        if (fileName) return [{ label: fileName, kind: "file", startLine: 0, endLine: Math.max(0, liveLineCount - 1) }];
+        return [];
+    }
+    readonly property var displayedScopeRange: activeScope || primaryScope
     readonly property var activeFunctionScope: {
         for (let i = activeScopeChain.length - 1; i >= 0; --i) {
             if (activeScopeChain[i].kind === "func" || activeScopeChain[i].kind === "type")
@@ -552,28 +573,47 @@ FloatingWindow {
                     onPressed: viewer.startSystemMove()
                 }
             }
-            // Barra de ámbito estilo VS Code (breadcrumbs de clase / función / bloque activo).
+            // Barra fija de ámbito estilo VS Code: siempre muestra la función/ámbito principal sin saltos de diseño.
             RowLayout {
                 objectName: "projectCodeBreadcrumbs"
                 Layout.fillWidth: true
-                visible: viewer.activeBreadcrumbs.length > 0
+                Layout.preferredHeight: 22
+                Layout.minimumHeight: 22
+                Layout.maximumHeight: 22
+                visible: code.text.length > 0
                 spacing: 4
                 Text {
                     text: "ƒ"
-                    color: GemaTheme.accent
+                    color: viewer.activeBreadcrumbs.length > 0 ? GemaTheme.accent : GemaTheme.subtleColor
                     font.family: "monospace"
                     font.pixelSize: 11
                     font.bold: true
                     Layout.leftMargin: 2
+                    Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
                 }
                 Repeater {
-                    model: viewer.activeBreadcrumbs.slice(-4)
+                    model: viewer.displayedBreadcrumbs
                     delegate: RowLayout {
+                        id: crumbEntry
                         required property var modelData
                         required property int index
                         spacing: 4
+                        opacity: 1.0
+                        transform: Translate { id: crumbSlide; x: 0 }
+                        Component.onCompleted: {
+                            if (GemaTheme.animations && index > 0) {
+                                crumbEntry.opacity = 0.0;
+                                crumbSlide.x = -5;
+                                crumbFadeIn.start();
+                            }
+                        }
+                        ParallelAnimation {
+                            id: crumbFadeIn
+                            NumberAnimation { target: crumbEntry; property: "opacity"; from: 0.0; to: 1.0; duration: 180; easing.type: Easing.OutCubic }
+                            NumberAnimation { target: crumbSlide; property: "x"; from: -5; to: 0; duration: 180; easing.type: Easing.OutCubic }
+                        }
                         Text {
-                            visible: index > 0
+                            visible: crumbEntry.index > 0
                             text: "›"
                             color: GemaTheme.subtleColor
                             font.pixelSize: 11
@@ -584,35 +624,37 @@ FloatingWindow {
                             implicitHeight: 19
                             padding: 0
                             hoverEnabled: true
-                            onClicked: viewer.jumpToLine(modelData.startLine)
+                            onClicked: viewer.jumpToLine(crumbEntry.modelData.startLine)
                             contentItem: Text {
                                 id: scopeChipLabel
-                                text: modelData.label
+                                text: crumbEntry.modelData.label
                                 textFormat: Text.PlainText
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                                 color: scopeChip.hovered
                                     ? GemaTheme.accent
-                                    : (modelData.kind === "func" ? viewer.syntaxPalette.func
-                                       : modelData.kind === "type" ? viewer.syntaxPalette.type : GemaTheme.mutedColor)
+                                    : (crumbEntry.modelData.kind === "func" ? viewer.syntaxPalette.func
+                                       : crumbEntry.modelData.kind === "type" ? viewer.syntaxPalette.type : GemaTheme.mutedColor)
                                 font.family: "monospace"
                                 font.pixelSize: 10
-                                font.weight: modelData.kind === "func" || modelData.kind === "type" ? Font.DemiBold : Font.Normal
+                                font.weight: crumbEntry.modelData.kind === "func" || crumbEntry.modelData.kind === "type" ? Font.DemiBold : Font.Normal
+                                Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
                             }
                             background: Rectangle {
                                 radius: 5
                                 color: scopeChip.hovered ? GemaTheme.accentAlpha(0.16) : "#0effffff"
                                 border.width: scopeChip.hovered ? 1 : 0
                                 border.color: GemaTheme.accentAlpha(0.40)
+                                Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
                             }
                         }
                     }
                 }
                 Item { Layout.fillWidth: true }
                 Text {
-                    visible: !!viewer.activeScope
-                    text: viewer.activeScope
-                        ? ("L" + (viewer.activeScope.startLine + 1) + "–" + (viewer.activeScope.endLine + 1))
+                    visible: !!viewer.displayedScopeRange
+                    text: viewer.displayedScopeRange
+                        ? ("L" + (viewer.displayedScopeRange.startLine + 1) + "–" + (viewer.displayedScopeRange.endLine + 1))
                         : ""
                     color: GemaTheme.subtleColor
                     font.family: "monospace"
