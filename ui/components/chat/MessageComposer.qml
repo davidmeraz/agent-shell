@@ -408,11 +408,18 @@ GlassPanel {
                 Accessible.name: "Ver contexto de la última llamada: " + composer.contextMeasurement.context_tokens + " tokens"
                 ToolTip.visible: visible && hovered
                 ToolTip.delay: 400
-                ToolTip.text: composer.contextMeasurement.context_tokens + " tokens de entrada en la última llamada medida.\nVer detalles de rendimiento."
+                ToolTip.text: composer.contextMeasurement.context_tokens + " tokens de entrada en la última llamada medida."
+                    + (composer.bridge.compactThresholdTokens > 0
+                       ? "\nUmbral de compactación: " + Performance.tokens(composer.bridge.compactThresholdTokens)
+                         + " · Compactaciones: " + composer.bridge.chatCompactionCount + "/" + composer.bridge.maxCompactions
+                       : "")
+                    + "\nVer detalles de rendimiento (configura límites con /limites)."
                 onClicked: composer.performanceRequested(composer.contextMeasurement)
                 contentItem: Text {
+                    readonly property bool nearThreshold: composer.bridge.compactThresholdTokens > 0
+                        && composer.contextMeasurement.context_tokens >= composer.bridge.compactThresholdTokens * 0.8
                     text: contextButton.text
-                    color: contextButton.hovered ? "#dddddd" : "#999999"
+                    color: contextButton.hovered || nearThreshold ? "#e6e6e6" : "#999999"
                     font.pixelSize: 11
                 }
                 background: Rectangle {

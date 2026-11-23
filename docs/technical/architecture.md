@@ -47,7 +47,9 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
   dentro de un espacio reservado de altura fija para evitar desplazar el chat.
   `/modelos` organiza familias → modelos → esfuerzos y confirma la selección localmente;
   el editor no incluye un selector de modelos adicional. `/shell comando` envía
-  `shell.execute` para ejecutar directamente sin solicitar una respuesta de IA.
+  `shell.execute` para ejecutar directamente sin solicitar una respuesta de IA;
+  `/compact` compacta el contexto o crea un chat de relevo tras el límite configurado
+  y `/limites` abre `TokenLimitsDialog` para ajustar y guardar límites con `limits.configure`.
 - `HarnessServer`: valida instrucciones, construye contexto local, coordina
   operaciones en trabajadores y emite el contrato NDJSON.
 - `ChatGPTSession`: registro dinámico de cliente, callback loopback, validación
@@ -65,7 +67,7 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
   seleccionado e iniciarlo mediante `launch_program`, sin mensajes ni persistencia
   de chat. Mantiene control HTTP/shell independiente del turno conversacional.
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
-- `core/limits.py`: presupuestos configurables por turno y detección de fallos idénticos consecutivos.
+- `core/limits.py`: presupuestos configurables por turno (incluyendo umbral de compactación, límite de compactaciones y fusible de tokens facturables), perfiles (`ahorro`, `equilibrado`, `grande`), persistencia atómica privada (`LimitsStore` en `config/limits.json`) y detección de fallos idénticos consecutivos.
 - `tools/output.py`: captura limitada con inicio/final y vista reducida de resultados para el modelo.
 - `HistoryStore`: metadatos y mensajes en JSON atómico.
 - `images.py`: valida imágenes y construye contenido multimodal de Responses.

@@ -1,11 +1,13 @@
 """Límites de gasto y detección de fallos sin inferencia."""
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.support import paths  # noqa: F401
-from harness.core.limits import AgentLimits, FailureTracker
+from harness.core.limits import AgentLimits, FailureTracker, LimitsStore, billable_tokens
 from harness.tools.output import BoundedOutput
 
 
@@ -30,6 +32,7 @@ class LimitsTests(unittest.TestCase):
                             ("AGENT_SHELL_COMMAND_TIMEOUT", "forever"),
                             ("AGENT_SHELL_CONTEXT_OUTPUT_CHARS", "100000"),
                             ("AGENT_SHELL_MAX_TURN_TOKENS", "nan"),
+                            ("AGENT_SHELL_MAX_TURN_BILLABLE_TOKENS", "500"),
                             ("AGENT_SHELL_REPEATED_FAILURES", "1"),
                             ("AGENT_SHELL_COMPACT_THRESHOLD_TOKENS", "500"),
                             ("AGENT_SHELL_MAX_COMPACTIONS", "0")):
@@ -62,3 +65,28 @@ class LimitsTests(unittest.TestCase):
             output = BoundedOutput(limit)
             output.append(source)
             self.assertLessEqual(len(output.text), limit)
+
+    def test_presets_store_persistence_and_billable_tokens(self):
+        self.assertEqual(AgentLimits().profile_name(), "equilibrado")
+        ahorro = AgentLimits.preset("ahorro")
+        self.assertEqual(ahorro.profile_name(), "ahorro")
+        self.assertEqual((ahorro.compact_threshold_tokens, ahorro.max_turn_billable_tokens), (40000, 200000))
+        custom = AgentLimits.from_dict({"compact_threshold_tokens": 50000}, base=ahorro)
+        self.assertEqual(custom.profile_name(), "personalizado")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = LimitsStore(Path(tmp))
+            store.save(ahorro)
+            self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(store.load(), ahorro)
+            # Archivo corrupto vuelve a defaults sin crashear.
+            store.path.write_text("{bad json", encoding="utf-8")
+            self.assertEqual(store.load(), AgentLimits())
+            # Enlace simbólico se rechaza al guardar.
+            store.path.unlink()
+            store.path.symlink_to(Path(tmp) / "other.json")
+            with self.assertRaises(ValueError):
+                store.save(ahorro)
+
+        self.assertEqual(billable_tokens({"input_tokens": 10000, "cached_tokens": 9000, "output_tokens": 500}), 1500)
+        self.assertEqual(billable_tokens(None), 0)

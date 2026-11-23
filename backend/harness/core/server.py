@@ -34,7 +34,7 @@ from ..work.project_runner import ProjectRunner
 from ..chat.models import validate_effort
 from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
-from .limits import AgentLimits, FailureTracker
+from .limits import AgentLimits, FailureTracker, LIMIT_FIELDS, LimitsStore, billable_tokens
 from ..chat.performance import TurnPerformance
 from ..tools.files import (
     GREP_TOOL, READ_FILE_TOOL, execute_grep_files, execute_read_file, summarize_file_tool_command,
@@ -82,9 +82,10 @@ class HarnessServer:
     def __init__(self, history_root: Path, output: TextIO, session, client,
                  model: str = "", workspace: Path | None = None, usage_reader=None,
                  limits: AgentLimits | None = None) -> None:
-        self.limits = limits or AgentLimits()
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
+        self.limits_store = LimitsStore(self.history.root / "config")
+        self.limits = limits if limits is not None else AgentLimits.from_environment(base=self.limits_store.load())
         self.projects = ProjectStore(self.history.root / "projects")
         self.active_area = "chat"
         self.project: dict | None = None
@@ -151,6 +152,35 @@ class HarnessServer:
     def _publish_area(self) -> None:
         project = self._visible_project(self.project) if self.project else None
         self._emit("area.state", area=self.active_area, project=project)
+        self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT,
+                   agent_timeout_seconds=self.limits.shell_timeout)
+
+    def _publish_limits(self) -> None:
+        compactions = int(self.conversation.get("compaction_count", 0)) if self.conversation else 0
+        self._emit("limits.state", profile=self.limits.profile_name(),
+                   chat_compaction_count=compactions, **self.limits.to_dict())
+
+    def _configure_limits(self, request: dict) -> None:
+        if self.busy or self.login_pending:
+            self._emit("limits.rejected", message="Espera a que termine la operación actual antes de cambiar los límites.")
+            return
+        try:
+            unknown = set(request) - {"type", "preset"} - set(LIMIT_FIELDS)
+            if unknown:
+                raise ValueError("Solicitud de límites con campos desconocidos.")
+            updated = self.limits
+            if "preset" in request and request["preset"] is not None:
+                updated = AgentLimits.preset(request["preset"], base=updated)
+            overrides = {k: request[k] for k in LIMIT_FIELDS if k in request}
+            if overrides:
+                updated = AgentLimits.from_dict(overrides, base=updated)
+            self.limits_store.save(updated)
+            self.limits = updated
+        except (ValueError, OSError, TypeError) as error:
+            self._emit("limits.rejected", message=str(error) if isinstance(error, ValueError) else
+                       "No se pudieron guardar los límites.")
+            return
+        self._publish_limits()
         self._emit("shell.state", enabled=True, workdir=str(self.workspace), timeout_seconds=DEFAULT_TIMEOUT,
                    agent_timeout_seconds=self.limits.shell_timeout)
 
@@ -227,6 +257,7 @@ class HarnessServer:
             self._restore_model(self.conversation)
             self._emit("chat.loaded", chat=visible_chat(self.conversation))
         self._publish_model()
+        self._publish_limits()
         self._publish_history()
 
     def _create_conversation(self, prompt: str) -> dict:
@@ -417,6 +448,7 @@ class HarnessServer:
         self._restore_model(record)
         self._emit("chat.loaded", chat=visible_chat(record))
         self._publish_model()
+        self._publish_limits()
 
     def _delete_chat(self, chat_id: str) -> None:
         if not self._matches_area(self.history.load(chat_id)):
@@ -876,6 +908,7 @@ class HarnessServer:
                 self._emit("chat.loaded", chat=visible_chat(new_record))
                 self._emit("chat.saved", chat_id=new_record["chat_id"], title=new_record["title"])
                 self._emit("chat.compacted", **info)
+                self._publish_limits()
                 self._publish_history()
                 return copy.deepcopy(new_record["context"]), new_cache_key, info
 
@@ -906,6 +939,7 @@ class HarnessServer:
                 "message": msg,
             }
             self._emit("chat.compacted", **info)
+            self._publish_limits()
             return copy.deepcopy(self.conversation["context"]), cache_key, info
 
     def _run_manual_compact(self, control: StreamControl, generation: int) -> None:
@@ -1000,7 +1034,12 @@ class HarnessServer:
                 with self._lock:
                     if not self._current_turn(generation):
                         return
-                    tokens = (self._performance.usage or {}).get("total_tokens", 0)
+                    usage = self._performance.usage or {}
+                    tokens = usage.get("total_tokens", 0)
+                    billable = billable_tokens(usage)
+                    if self.limits.max_turn_billable_tokens and billable >= self.limits.max_turn_billable_tokens:
+                        raise ServiceError("Se alcanzó el límite de tokens facturables del turno (entrada sin caché + salida). "
+                                           "El trabajo se conserva, pero la tarea no está confirmada como terminada.")
                     if self.limits.max_turn_tokens and tokens >= self.limits.max_turn_tokens:
                         raise ServiceError("Se alcanzó el presupuesto de tokens reportados del turno. "
                                            "El trabajo se conserva, pero la tarea no está confirmada como terminada.")
@@ -1225,6 +1264,9 @@ class HarnessServer:
                                else "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
                     self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else message)
                 return
+            if action == "limits.configure":
+                self._configure_limits(request)
+                return
             if action == "shell.execute":
                 self._start_local_shell(request)
                 return
@@ -1324,6 +1366,7 @@ class HarnessServer:
                         self._performance = None
                         self._emit("chat.reset")
                         self._publish_model()
+                        self._publish_limits()
                     elif action == "chat.open":
                         self._open_chat(request.get("chat_id"))
                     elif action == "chat.delete":
@@ -1447,6 +1490,7 @@ class HarnessServer:
         try:
             self._emit("history.ready", directory=str(self.history.root))
             self._publish_area()
+            self._publish_limits()
             self._publish_projects()
             self._publish_history()
             self._emit("backend.ready", provider="chatgpt", app_version=get_version())

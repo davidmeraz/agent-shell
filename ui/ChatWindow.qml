@@ -29,7 +29,7 @@ FloatingWindow {
     property var accountToRemove: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
-                                           || shellSettings.visible
+                                           || shellSettings.visible || limitsDialog.visible
                                            || commandHelp.visible
                                            || projectDialog.visible || deleteProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
@@ -313,6 +313,7 @@ FloatingWindow {
             // Preparar las sugerencias después de procesar Enter.
             else if (command === "/modelos" || command.startsWith("/modelos ")) Qt.callLater(() => composer.openModels(command));
             else if (command === "/terminal") shellSettings.open();
+            else if (command === "/limites") limitsDialog.open();
         }
         function onPlanConnected() { accountPanel.close(); planWelcome.open(); }
         function onBusyChanged() { window.elapsedMs = 0; }
@@ -494,6 +495,14 @@ FloatingWindow {
     ShellSettingsDialog {
         id: shellSettings
         objectName: "shellSettings"
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(480, window.width - 40)
+    }
+
+    TokenLimitsDialog {
+        id: limitsDialog
+        objectName: "tokenLimitsDialog"
         bridge: window.bridge
         anchors.centerIn: parent
         width: Math.min(480, window.width - 40)

@@ -126,16 +126,22 @@ del mismo grupo se terminan al salir la orden principal.
 
 ## Configurar duración y gasto
 
-Las variables se leen al iniciar el backend normal. Cierra Agent Shell antes
-de cambiar la configuración: el lanzador evita abrir instancias duplicadas.
+Puedes ajustar y guardar los límites en caliente desde el chat con **`/limites`**
+(perfiles **Ahorro**, **Equilibrado** y **Grande**, o valores personalizados
+guardados en `config/limits.json`), o sobrescribirlos con variables de entorno
+al iniciar el backend. Cierra Agent Shell antes de cambiar variables de entorno:
+el lanzador evita abrir instancias duplicadas.
 
 | Variable | Predeterminado | Rango y efecto |
 | --- | ---: | --- |
+| `AGENT_SHELL_COMPACT_THRESHOLD_TOKENS` | 60000 | 0 desactiva la auto-compactación; 8000–500000 dispara compactación al superar ese contexto |
+| `AGENT_SHELL_MAX_COMPACTIONS` | 3 | 1–20 compactaciones por chat; al superar el límite crea un chat nuevo de relevo con Git |
+| `AGENT_SHELL_MAX_TURN_BILLABLE_TOKENS` | 0 | 0 desactiva el fusible; 4000–10000000 limita tokens facturables reales (`entrada sin caché + salida`) del turno |
 | `AGENT_SHELL_MAX_STEPS` | 32 | 1–256 solicitudes al modelo por turno, incluida la respuesta final |
 | `AGENT_SHELL_MAX_TOOL_CALLS` | 64 | 1–1024 llamadas de herramienta por turno; cuenta también solicitudes inválidas |
 | `AGENT_SHELL_COMMAND_TIMEOUT` | 300 | 1–3600 segundos por comando solicitado por la IA en Chat/Work |
 | `AGENT_SHELL_CONTEXT_OUTPUT_CHARS` | 6000 | 256–16000 caracteres de salida por resultado nuevo enviado al modelo conversacional |
-| `AGENT_SHELL_MAX_TURN_TOKENS` | 0 | 0 desactiva el límite; 1–100000000 limita la suma de `usage.total_tokens` reportada |
+| `AGENT_SHELL_MAX_TURN_TOKENS` | 0 | 0 desactiva el límite; 1–100000000 limita la suma de `usage.total_tokens` reportada (incluye caché) |
 | `AGENT_SHELL_REPEATED_FAILURES` | 3 | 2–20 fallos consecutivos idénticos antes de detener el turno |
 
 Una configuración inválida produce un error al iniciar. El presupuesto de tokens

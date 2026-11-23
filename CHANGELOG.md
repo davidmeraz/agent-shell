@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.19.0] — 2026-11-22
+
+Esta versión añade un sistema configurable y persistente de límites de tokens desde la interfaz (`/limites`), perfiles predefinidos y un fusible inteligente de tokens facturables que no penaliza los aciertos de caché.
+
+- Perfiles integrados (`ahorro` 40k, `equilibrado` 60k, `grande` 80k) y valores personalizados guardados atómicamente con permisos privados (`0600`) en `config/limits.json` (`LimitsStore`), respetando overrides por variables de entorno y sin interferir con el directorio del historial de conversaciones.
+- Fusible de turno por tokens facturables (`max_turn_billable_tokens` / `AGENT_SHELL_MAX_TURN_BILLABLE_TOKENS`): contabiliza únicamente `entrada sin caché + salida`, permitiendo sesiones largas bien cacheadas y frenando loops costosos.
+- Comando `/limites` y diálogo `TokenLimitsDialog.qml` con selección en un clic, edición fina de límites, contador de compactaciones del chat activo y validación local.
+- Nuevas extensiones compatibles de NDJSON v2 (`limits.configure`, `limits.state`, `limits.rejected`) e indicador de contexto en `MessageComposer.qml` con tooltip de umbral/compactaciones y resalte al superar el 80 % del umbral.
+- Verificación con 284 pruebas Python, `qmllint` y 12 escenarios Qt/Quickshell.
+
 ## [0.18.0] — 2026-11-22
 
 Esta versión incorpora compactación inteligente de contexto con límite de 3 compactaciones por conversación, relevo automático a un chat nuevo limpio con lo esencial del software y contexto real de Git en Work.

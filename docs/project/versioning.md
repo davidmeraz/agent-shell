@@ -5,7 +5,13 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.18.0` añade compactación inteligente de contexto (`/compact` y
+La versión `0.19.0` añade el sistema persistente y configurable de límites de
+tokens (`/limites` y `TokenLimitsDialog.qml`), perfiles (`ahorro`, `equilibrado`,
+`grande`), persistencia privada en `config/limits.json` (`LimitsStore`) y el
+fusible por tokens facturables (`max_turn_billable_tokens`) que descuenta caché.
+Conserva NDJSON v2 y el esquema 1 del historial; incrementa MENOR por las nuevas
+capacidades de control y configuración de presupuesto.
+La versión anterior `0.18.0` añade compactación inteligente de contexto (`/compact` y
 automática por umbral), límite de 3 compactaciones por chat con relevo automático
 a un nuevo chat limpio (`parent_chat_id`) y contexto real de Git (`git log`, rama
 y estado) en el bootstrap y los relevos de Work. Conserva NDJSON v2 y el esquema 1

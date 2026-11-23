@@ -42,6 +42,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `chat.open` | `chat_id` | Cargar conversación local |
 | `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
 | `shell.configure` | `workdir` | Validar y cambiar el directorio local, sólo fuera de un turno; la terminal permanece disponible |
+| `limits.configure` | `preset` (`ahorro`/`equilibrado`/`grande`) y/o campos numéricos de `AgentLimits` | Validar, aplicar y guardar en disco los límites de tokens, compactación y fusibles de turno |
 | `shell.execute` | `command`: entre 1 y 8000 caracteres, sin NUL | Ejecutar directamente en el directorio configurado, sin autenticación ni modelo |
 | `history.list` | Ninguno | Consultar conversaciones recientes del área o proyecto seleccionado |
 | `auth.login` | `new_account` booleano opcional, por defecto `false` | Reautorizar la cuenta seleccionada o registrar otra |
@@ -131,6 +132,8 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.loaded` | `chat`: registro visible con mensajes, métricas y herramientas; excluye `context` |
 | `chat.deleted` | `chat_id` de la conversación local eliminada |
 | `shell.state` | `enabled: true`, `workdir` absoluto, `timeout_seconds` para `/shell`, `agent_timeout_seconds` opcional para comandos de la IA |
+| `limits.state` | `profile`, `compact_threshold_tokens`, `max_compactions`, `max_turn_billable_tokens`, `max_turn_tokens`, `max_steps`, `max_tool_calls`, `shell_timeout`, `context_output_chars`, `repeated_failures`, `chat_compaction_count` |
+| `limits.rejected` | `message`: configuración de límites rechazada; se conservan los límites actuales |
 | `shell.started` | `turn_id` de la ejecución local |
 | `shell.finished` | `turn_id`, `status: completed/error/timeout/interrupted`, `message` |
 | `shell.rejected` | `message`: petición local inválida, ocupada o que no pudo guardarse; no altera la ejecución activa |

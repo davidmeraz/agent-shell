@@ -40,6 +40,16 @@ QtObject {
     readonly property string areaKey: activeArea === "chat" ? "chat" : "work:" + projectId
     readonly property bool workspaceSelected: activeArea === "chat" || !!projectId
     property int shellTimeout: 120
+    property string limitsProfile: "equilibrado"
+    property int compactThresholdTokens: 60000
+    property int maxCompactions: 3
+    property int maxTurnBillableTokens: 0
+    property int maxTurnTokens: 0
+    property int maxSteps: 32
+    property int maxToolCalls: 64
+    property int contextOutputChars: 6000
+    property int chatCompactionCount: 0
+    property string limitsError: ""
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
     property string email: ""
@@ -241,6 +251,12 @@ QtObject {
         sendCommand({ type: "shell.configure", workdir: workdir });
     }
 
+    function configureLimits(config) {
+        if (!ready || busy || loginBusy) return;
+        limitsError = "";
+        sendCommand(Object.assign({ type: "limits.configure" }, config));
+    }
+
     function updateTool(call) {
         const key = "tool:" + call.id;
         if (messageRows[key] === undefined) {
@@ -395,6 +411,20 @@ QtObject {
             shellTimeout = data.timeout_seconds;
             agentShellTimeout = data.agent_timeout_seconds ?? data.timeout_seconds;
             status = "Terminal disponible · ejecución automática.";
+        } else if (event.type === "limits.state") {
+            limitsProfile = data.profile || "personalizado";
+            compactThresholdTokens = data.compact_threshold_tokens ?? 60000;
+            maxCompactions = data.max_compactions ?? 3;
+            maxTurnBillableTokens = data.max_turn_billable_tokens ?? 0;
+            maxTurnTokens = data.max_turn_tokens ?? 0;
+            maxSteps = data.max_steps ?? 32;
+            maxToolCalls = data.max_tool_calls ?? 64;
+            contextOutputChars = data.context_output_chars ?? 6000;
+            chatCompactionCount = data.chat_compaction_count ?? 0;
+            limitsError = "";
+        } else if (event.type === "limits.rejected") {
+            limitsError = data.message;
+            status = data.message;
         } else if (event.type === "tool.updated") {
             updateTool(data.call);
             if (data.call.status === "running") status = data.call.source === "local" ? "Ejecutando comando local…" : "Ejecutando comando…";

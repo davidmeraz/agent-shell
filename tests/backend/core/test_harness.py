@@ -153,6 +153,51 @@ class ServerTests(unittest.TestCase):
             self.assertIn("no registrada", self.output.wait_for("error")["message"])
         self.assertFalse(self.server.account_pending)
 
+    def test_limits_configure_persists_across_restart_and_billable_fuse_respects_cache(self):
+        self.server.handle({"type": "limits.configure", "preset": "ahorro"})
+        state = self.output.wait_for("limits.state")
+        self.assertEqual(state["profile"], "ahorro")
+        self.assertEqual(state["compact_threshold_tokens"], 40000)
+        self.assertEqual(state["max_turn_billable_tokens"], 200000)
+
+        # Rechazar valores inválidos conserva la configuración anterior.
+        self.server.handle({"type": "limits.configure", "compact_threshold_tokens": 100})
+        self.assertIn("8000", self.output.wait_for("limits.rejected")["message"])
+        self.assertEqual(self.server.limits.compact_threshold_tokens, 40000)
+
+        # Guardar límites no contamina el directorio del historial de chats.
+        self.assertEqual(self.server.history.list(), [])
+        self.assertEqual(self.server.history.invalid_files, [])
+
+        # Un nuevo HarnessServer sobre el mismo directorio recupera config/limits.json.
+        reopened = HarnessServer(Path(self.temp.name), QueueOutput(), self.session, self.client)
+        self.assertEqual(reopened.limits.profile_name(), "ahorro")
+        self.assertEqual(reopened.limits.max_turn_billable_tokens, 200000)
+
+        # El fusible facturable detiene sólo cuando (input - cached) + output alcanza el límite.
+        self.server.limits = AgentLimits(max_turn_billable_tokens=5000, compact_threshold_tokens=0)
+        self.server.client = Mock()
+        self.server.client.stream.side_effect = [
+            iter([{"type": "response.completed", "response": {
+                "status": "completed",
+                "usage": {"input_tokens": 50000, "output_tokens": 200, "total_tokens": 50200,
+                          "input_tokens_details": {"cached_tokens": 49000}},  # billable = 1200 < 5000 → sigue!
+                "output": [{"type": "message", "id": "m1", "role": "assistant", "phase": "commentary",
+                            "content": [{"type": "output_text", "text": "Siguiendo."}]}],
+            }}]),
+            iter([{"type": "response.completed", "response": {
+                "status": "completed",
+                "usage": {"input_tokens": 5000, "output_tokens": 500, "total_tokens": 5500,
+                          "input_tokens_details": {"cached_tokens": 0}},  # acumulado billable = 6700 >= 5000 → frena!
+                "output": [{"type": "message", "id": "m2", "role": "assistant", "phase": "commentary",
+                            "content": [{"type": "output_text", "text": "Paso 2."}]}],
+            }}]),
+        ]
+        result = self.send("comprobar fusible")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("facturables", result["message"])
+        self.assertEqual(self.server.client.stream.call_count, 2)
+
     def test_cancel_closes_http_stream_and_keeps_partial_answer(self):
         self.server.handle({"type": "chat.send", "prompt": "cancel"})
         self.output.wait_for("chat.delta")

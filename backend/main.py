@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from harness.core.server import HarnessServer
-from harness.core.limits import AgentLimits
+from harness.core.limits import AgentLimits, LimitsStore
 from harness.core.version import get_version
 
 def main() -> None:
@@ -43,7 +43,8 @@ def main() -> None:
     except (ValueError, OSError):
         parser.error("--workspace debe indicar un directorio existente")
     try:
-        limits = AgentLimits.from_environment()
+        persisted_limits = LimitsStore(args.history_root / "config").load()
+        limits = AgentLimits.from_environment(base=persisted_limits)
     except ValueError as error:
         parser.error(str(error))
     from harness.account.auth import ChatGPTSession

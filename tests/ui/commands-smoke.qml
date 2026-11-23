@@ -103,7 +103,7 @@ ShellRoot {
                     scenario.prompt.forceActiveFocus(); scenario.prompt.text = "/";
                     scenario.stage = 1;
                 } else if (scenario.stage === 1) {
-                    if (!scenario.check(scenario.menu.visible && scenario.menu.height <= 28 && scenario.list.count === 8, "sugerencias no compactas o incompletas")) return;
+                    if (!scenario.check(scenario.menu.visible && scenario.menu.height <= 28 && scenario.list.count === 9, "sugerencias no compactas o incompletas")) return;
                     if (!scenario.checkLayout()) return;
                     if (!scenario.check(!scenario.activeModel.visible, "modelo activo se superpone a sugerencias")) return;
                     const actions = inspector.findChild(chat, "chatComposerActions");
@@ -114,7 +114,7 @@ ShellRoot {
                     inspector.wait(20);
                     if (!scenario.check(scenario.list.itemAtIndex(3).modelData.label === "/modelos", "nombre de comando incorrecto")) return;
                     inspector.keyClick(Qt.Key_Left);
-                    if (!scenario.check(scenario.list.currentIndex === 7, "flecha izquierda no recorre el menú")) return;
+                    if (!scenario.check(scenario.list.currentIndex === 8, "flecha izquierda no recorre el menú")) return;
                     inspector.keyClick(Qt.Key_Right);
                     if (!scenario.check(scenario.list.currentIndex === 0, "flecha derecha no vuelve al inicio")) return;
                     inspector.keyClick(Qt.Key_Right);
@@ -156,6 +156,15 @@ ShellRoot {
                     if (!scenario.check(settings.visible && agent.shellEnabled && !agent.busy,
                         "terminal no está disponible o abrir configuración ejecutó un comando")) return;
                     settings.close();
+                    scenario.typeCommand("/limites");
+                    const limits = inspector.findChild(chat, "tokenLimitsDialog");
+                    if (!scenario.check(!!limits && limits.visible && !agent.busy, "diálogo de límites no abrió")) return;
+                    inspector.mouseClick(inspector.findChild(chat, "limitsPresetAhorro"));
+                    inspector.wait(20);
+                    inspector.mouseClick(inspector.findChild(chat, "limitsApplyButton"));
+                    inspector.tryCompare(agent, "limitsProfile", "ahorro", 1000);
+                    if (!scenario.check(agent.compactThresholdTokens === 40000 && agent.maxTurnBillableTokens === 200000,
+                        "límites de tokens no se aplicaron")) return;
                     inspector.wait(180);
                     scenario.prompt.forceActiveFocus();
                     for (const prefix of ["/m", "/mo", "/mod", "/mode", "/model", "/modelo"]) {
