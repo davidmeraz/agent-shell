@@ -81,8 +81,22 @@ ShellRoot {
                     const drawer = inspector.findChild(chat, "chatSidebarDrawer");
                     const edge = inspector.findChild(chat, "chatSidebarEdge");
                     const sidebar = inspector.findChild(chat, "chatSidebar");
-                    if (!scenario.check(!!edge && !drawer.visible && !inspector.findChild(chat, "chatSidebarToggle"),
-                        "zona lateral ausente o botón anterior presente")) return;
+                    const sidebarBtn = inspector.findChild(chat, "chatSidebarButton");
+                    const profileBtn = inspector.findChild(chat, "chatProfileButton");
+                    if (!scenario.check(!!edge && !drawer.visible && !!sidebarBtn && sidebarBtn.visible
+                        && !!profileBtn && profileBtn.visible,
+                        "zona lateral o botones superiores de barra lateral/perfil ausentes")) return;
+                    const sPos = sidebarBtn.mapToItem(chat.contentItem, 0, 0);
+                    const pPos = profileBtn.mapToItem(chat.contentItem, 0, 0);
+                    if (!scenario.check(sPos.x < chat.width / 4 && pPos.x > chat.width * 0.75 && Math.abs(sPos.y - pPos.y) < 1,
+                        "posición de botones superiores incorrecta (izquierda/derecha)")) return;
+                    inspector.mouseClick(sidebarBtn); inspector.wait(180);
+                    if (!scenario.check(drawer.visible, "el botón superior izquierdo no abre la barra lateral")) return;
+                    drawer.close(); inspector.wait(180);
+                    inspector.mouseClick(profileBtn); inspector.wait(180);
+                    const accountDialog = inspector.findChild(chat, "chatAccount");
+                    if (!scenario.check(accountDialog.visible, "el botón superior derecho no abre el perfil")) return;
+                    accountDialog.close(); inspector.wait(180);
                     scenario.initialLayout = { height: scenario.composer.height,
                         y: scenario.composer.mapToItem(chat.contentItem, 0, 0).y,
                         conversationHeight: scenario.conversation.height };

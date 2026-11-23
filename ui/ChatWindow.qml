@@ -149,9 +149,125 @@ FloatingWindow {
             Layout.minimumWidth: 0
             spacing: 14
 
-            WorkspaceSwitcher {
-                Layout.alignment: Qt.AlignHCenter
-                bridge: window.bridge
+            Item {
+                id: topHeaderBar
+                Layout.fillWidth: true
+                implicitHeight: 38
+
+                // Botón superior izquierdo para abrir o cerrar la barra lateral.
+                Button {
+                    id: sidebarToggleButton
+                    objectName: "chatSidebarButton"
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 38
+                    implicitHeight: 38
+                    padding: 0
+                    hoverEnabled: true
+                    enabled: !window.dialogVisible
+                    scale: down ? 0.94 : (hovered ? 1.04 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
+                    Accessible.name: narrowSidebar.visible ? "Cerrar barra lateral" : "Abrir barra lateral"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 420
+                    ToolTip.text: narrowSidebar.visible ? "Cerrar barra lateral (Ctrl+B)" : "Abrir barra lateral (Ctrl+B)"
+                    onClicked: {
+                        if (narrowSidebar.visible) {
+                            narrowSidebar.close();
+                        } else {
+                            window.sidebarKeyboardOpen = true;
+                            narrowSidebar.open();
+                        }
+                    }
+                    contentItem: Item {
+                        // Ícono vectorial minimalista de barra lateral (marco + panel izquierdo).
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 18
+                            height: 14
+                            radius: 3.5
+                            color: "transparent"
+                            border.width: 1
+                            border.color: (sidebarToggleButton.hovered || narrowSidebar.visible)
+                                ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                : GemaTheme.mutedColor
+                            Behavior on border.color { ColorAnimation { duration: GemaTheme.animDuration } }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.margins: 2
+                                width: 5
+                                radius: 1.5
+                                color: (sidebarToggleButton.hovered || narrowSidebar.visible)
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.78) : "#b8ffffff")
+                                    : "#52ffffff"
+                                Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                            }
+                        }
+                    }
+                    background: GlassPanel {
+                        radius: 12
+                        reflective: true
+                        highlighted: sidebarToggleButton.hovered || sidebarToggleButton.activeFocus || narrowSidebar.visible
+                        topColor: (sidebarToggleButton.hovered || narrowSidebar.visible)
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#26ffffff")
+                            : "#16ffffff"
+                        bottomColor: "#0cffffff"
+                        edgeColor: (sidebarToggleButton.hovered || narrowSidebar.visible)
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#58ffffff")
+                            : "#32ffffff"
+                    }
+                }
+
+                WorkspaceSwitcher {
+                    anchors.centerIn: parent
+                    bridge: window.bridge
+                }
+
+                // Botón superior derecho con icono de perfil personal (abre Perfil y cuenta).
+                Button {
+                    id: profileHeaderButton
+                    objectName: "chatProfileButton"
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 38
+                    implicitHeight: 38
+                    padding: 0
+                    hoverEnabled: true
+                    enabled: !window.dialogVisible || accountPanel.visible
+                    scale: down ? 0.94 : (hovered ? 1.05 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
+                    Accessible.name: "Perfil y cuenta: " + headerAvatar.displayName
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 420
+                    ToolTip.text: headerAvatar.displayName + "\nPerfil y cuenta"
+                    onClicked: accountPanel.open()
+                    contentItem: Item {
+                        UserAvatar {
+                            id: headerAvatar
+                            anchors.centerIn: parent
+                            size: 28
+                            customName: window.bridge.displayName
+                            plan: window.bridge.plan
+                            connected: window.bridge.authenticated
+                            showStatusDot: true
+                        }
+                    }
+                    background: GlassPanel {
+                        radius: 19
+                        reflective: true
+                        highlighted: profileHeaderButton.hovered || profileHeaderButton.activeFocus || accountPanel.visible
+                        topColor: (profileHeaderButton.hovered || accountPanel.visible)
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#28ffffff")
+                            : "#16ffffff"
+                        bottomColor: "#0cffffff"
+                        edgeColor: (profileHeaderButton.hovered || accountPanel.visible)
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#60ffffff")
+                            : "#36ffffff"
+                    }
+                }
             }
 
             GlassPanel {
