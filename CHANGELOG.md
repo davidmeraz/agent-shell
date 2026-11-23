@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.20.0] — 2026-11-22
+
+Esta versión migra el almacenamiento local de conversaciones, métricas y proyectos a SQLite en modo WAL con un almacén de blobs binarios deduplicados por SHA-256, eliminando lecturas completas de historial en listados y métricas y convirtiendo el borrado de proyectos en una sola transacción ACID.
+
+- Nuevo módulo `backend/harness/core/storage.py`: `StorageDB` en SQLite (`journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000`, permisos `0600`, rechazo de enlaces simbólicos) y `BlobStore` content-addressed por SHA-256 (`blobs/`, permisos `0600`, verificación de integridad al leer).
+- `HistoryStore` indexado en SQLite (`chats`, `turn_performance`, `chat_blobs`): `list()` y `performance(limit)` consultan índices directamente sin abrir historiales completos; las imágenes base64 se externalizan y deduplican en `blobs/` y los blobs huérfanos se limpian tras confirmar el `COMMIT`.
+- `ProjectStore` sobre SQLite compartiendo base `agent-shell.db` con `HistoryStore`: `_delete_project` elimina el proyecto, todos sus chats de Work, métricas y referencias de blobs en una única transacción atómica (`ROLLBACK` completo ante fallo).
+- Migración automática no destructiva desde archivos `*.json` y `projects/*.json` heredados (con copia de respaldo en `.migrated-json/`), conservando intactos archivos dañados y enlaces simbólicos; `benchmarks/runner.py` (`audit_history`) lee `agent-shell.db` en modo solo lectura con fallback a JSON.
+- Verificación con 288 pruebas Python, `qmllint` y 12 escenarios Qt/Quickshell sin dependencias nuevas.
+
 ## [0.19.0] — 2026-11-22
 
 Esta versión añade un sistema configurable y persistente de límites de tokens desde la interfaz (`/limites`), perfiles predefinidos y un fusible inteligente de tokens facturables que no penaliza los aciertos de caché.

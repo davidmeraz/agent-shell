@@ -35,7 +35,7 @@ class ProjectStoreTests(unittest.TestCase):
         self.assertEqual(restored["workdir"], str(self.folder.resolve()))
         self.assertEqual(self.store.list(), [restored])
         if os.name == "posix":
-            self.assertEqual(self.store._path(project["project_id"]).stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.store.db.path.stat().st_mode & 0o777, 0o600)
 
     def test_invalid_names_missing_folders_and_duplicate_alias_do_not_register(self):
         for name in (None, "", " ", "x" * 81, "x\0y"):
@@ -51,7 +51,19 @@ class ProjectStoreTests(unittest.TestCase):
     def test_failed_atomic_update_preserves_project(self):
         project = self.store.create("original", str(self.folder))
         changed = {**project, "name": "cambio"}
-        with patch("harness.work.projects.os.replace", side_effect=OSError("disk error")):
+        real_tx = self.store.db.transaction
+
+        def failing_tx():
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _ctx():
+                with real_tx() as conn:
+                    conn.execute("UPDATE projects SET name = ? WHERE project_id = ?", ("cambio", project["project_id"]))
+                    raise OSError("disk error")
+            return _ctx()
+
+        with patch.object(self.store.db, "transaction", side_effect=failing_tx):
             with self.assertRaises(OSError):
                 self.store.save(changed)
         self.assertEqual(self.store.load(project["project_id"]), project)
@@ -304,19 +316,27 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.server.project["project_id"], second)
         self.assertEqual(self.server.conversation["chat_id"], second_chat)
         self.assertEqual(self.server.workspace, self.folders[1])
-        self.assertFalse(self.server.history._path(first_chat).exists())
-        self.assertTrue(self.server.history._path(second_chat).exists())
+        with self.assertRaises(FileNotFoundError):
+            self.server.history.load(first_chat)
+        self.assertEqual(self.server.history.load(second_chat)["chat_id"], second_chat)
 
     def test_project_delete_failure_restores_records_and_memory(self):
         project_id = self.create()
         chat_id = self.send("conservar")
         record = self.server.conversation
-        replace = os.replace
-        def fail_project(source, destination):
-            if source == self.server.projects._path(project_id):
-                raise OSError("disk error")
-            return replace(source, destination)
-        with patch("harness.core.server.os.replace", side_effect=fail_project):
+        real_tx = self.server.history.db.transaction
+
+        def failing_tx():
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _ctx():
+                with real_tx() as conn:
+                    conn.execute("DELETE FROM chats WHERE area = 'work' AND project_id = ?", (project_id,))
+                    raise OSError("disk error")
+            return _ctx()
+
+        with patch.object(self.server.history.db, "transaction", side_effect=failing_tx):
             self.server.handle({"type": "project.delete", "project_id": project_id})
         self.output.wait_for("area.rejected")
         self.assertIs(self.server.conversation, record)

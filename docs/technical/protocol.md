@@ -70,9 +70,10 @@ actual. El borrado funciona sin sesión y no hace llamadas a OpenAI.
 
 La interfaz también confirma `project.delete` e informa que la carpeta local se
 conserva. Se rechaza durante una respuesta, shell, login o actualización de cuenta.
-El backend valida el identificador y los registros, aparta los JSON privados y
-restaura los traslados si falla la operación. Los historiales dañados o enlaces
-simbólicos se conservan porque no permiten atribuir con certeza el proyecto.
+El backend valida el identificador y los registros, y elimina el proyecto, sus
+conversaciones y métricas en una única transacción atómica de SQLite (`ROLLBACK`
+automático ante fallo), limpiando los blobs huérfanos sólo tras confirmar el commit.
+Los historiales JSON dañados o enlaces simbólicos se conservan sin modificarse.
 Si se elimina el proyecto activo, se vuelve a la lista de Work, se invalida su
 contexto y se limpian sus visores. Después emite `project.deleted` con los chats
 retirados, seguido de listas actualizadas de proyectos, historial y rendimiento.
@@ -263,9 +264,11 @@ de reiniciar. Se rechaza el cambio o registro durante respuesta, ejecución, log
 o actualización de cuenta. Seleccionar una carpeta inexistente no modifica el estado.
 
 `project.create` valida el nombre y resuelve la carpeta existente; rechaza otra
-identidad para la misma carpeta. El registro se escribe privadamente y de forma
-atómica en `projects/`, dentro del directorio del historial, separado de los JSON
-de conversaciones y de las credenciales. No modifica los archivos del proyecto.
+identidad para la misma carpeta. El registro se persiste privadamente y de forma
+atómica en la base SQLite (`agent-shell.db`, modo WAL, permisos `0600`) junto al
+historial, separado de las credenciales y sin modificar los archivos del proyecto.
+Los registros JSON anteriores en el directorio del historial y `projects/` se
+migran automáticamente al iniciar, conservando respaldo en `.migrated-json/`.
 `shell.configure` en Work actualiza también la carpeta persistida del proyecto;
 en Chat cambia sólo su directorio. Work sin proyecto no admite respuestas ni shell.
 

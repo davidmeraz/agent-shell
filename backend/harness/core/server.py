@@ -3,8 +3,7 @@
 import copy
 import json
 import os
-import shutil
-import tempfile
+import sqlite3
 import threading
 import time
 import uuid
@@ -86,7 +85,7 @@ class HarnessServer:
         self.history = HistoryStore(history_root)
         self.limits_store = LimitsStore(self.history.root / "config")
         self.limits = limits if limits is not None else AgentLimits.from_environment(base=self.limits_store.load())
-        self.projects = ProjectStore(self.history.root / "projects")
+        self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
         self.active_area = "chat"
         self.project: dict | None = None
         self._area_chats: dict[str, dict | None] = {}
@@ -264,30 +263,43 @@ class HarnessServer:
         return self.history.create(prompt, self.active_area, self.project["project_id"] if self.project else "")
 
     def _delete_project(self, project_id: str) -> None:
-        """Retira sólo registros privados; nunca recorre ni borra la carpeta del proyecto."""
+        """Retira sólo registros privados en una transacción SQLite; nunca toca la carpeta del proyecto."""
         if self.project_runner.active and self.project_runner.state.get("project_id") == project_id:
             raise ValueError("Detén el programa antes de eliminar su proyecto.")
         self.projects.load(project_id)
-        chats = [row["chat_id"] for row in self.history.list()
-                 if row["area"] == "work" and row["project_id"] == project_id]
-        paths = [self.history._path(chat_id) for chat_id in chats]
-        paths.append(self.projects._path(project_id))
-        # Apartar primero permite restaurar todos los registros si falla un traslado.
-        # Los JSON ilegibles se conservan: no se puede atribuir su propiedad con certeza.
-        temporary = Path(tempfile.mkdtemp(prefix=".deleted-project-", dir=self.history.root))
-        moved = []
-        try:
-            for index, source in enumerate(paths):
-                destination = temporary / str(index)
-                os.replace(source, destination)
-                moved.append((source, destination))
-        except OSError:
-            # Si también falla la restauración, conservar lo apartado para recuperación.
-            for source, destination in reversed(moved):
-                os.replace(destination, source)
-            shutil.rmtree(temporary, ignore_errors=True)
-            raise
-        shutil.rmtree(temporary, ignore_errors=True)
+        # Sincronizar posibles JSON heredados antes de borrar; los corruptos se conservan en disco.
+        self.history._scan_legacy_json()
+        orphans: list[str] = []
+        with self.history.db.transaction() as conn:
+            chats = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT chat_id FROM chats WHERE area = 'work' AND project_id = ?",
+                    (project_id,),
+                )
+            ]
+            old_shas: list[str] = []
+            if chats:
+                placeholders = ",".join("?" for _ in chats)
+                old_shas = [
+                    row[0]
+                    for row in conn.execute(
+                        f"SELECT DISTINCT sha256 FROM chat_blobs WHERE chat_id IN ({placeholders})",
+                        chats,
+                    )
+                ]
+                conn.execute("DELETE FROM chats WHERE area = 'work' AND project_id = ?", (project_id,))
+            cursor = conn.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
+            if cursor.rowcount == 0:
+                raise FileNotFoundError(project_id)
+            for sha in old_shas:
+                still_used = conn.execute(
+                    "SELECT 1 FROM chat_blobs WHERE sha256 = ? LIMIT 1", (sha,)
+                ).fetchone()
+                if still_used is None:
+                    orphans.append(sha)
+        for sha in orphans:
+            self.history.blobs.delete(sha)
         key = "work:" + project_id
         if self._last_project_id == project_id:
             self._last_project_id = ""
@@ -471,7 +483,7 @@ class HarnessServer:
             try:
                 self.history.save(self.conversation)
                 self._last_saved = time.monotonic()
-            except OSError:
+            except (OSError, sqlite3.Error):
                 self._emit("history.notice", message="No se pudo guardar el último estado del chat; el texto sigue visible.")
 
     def _message(self, item_id: str, text: str, append: bool) -> None:
@@ -1259,7 +1271,7 @@ class HarnessServer:
                         self._select_area("work", project["project_id"])
                     else:
                         self._select_area(request.get("area"), request.get("project_id"))
-                except (OSError, ValueError, KeyError, TypeError) as error:
+                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
                     message = ("No se pudo eliminar el proyecto. Vuelve a intentarlo." if action == "project.delete"
                                else "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
                     self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else message)
@@ -1375,7 +1387,7 @@ class HarnessServer:
                         self._publish_history()
                     else:
                         self._select_model(request)
-                except (OSError, ValueError, KeyError, TypeError) as error:
+                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
                     self._emit("error", message="No se pudo borrar la conversación. Vuelve a actualizar el historial e inténtalo de nuevo."
                                if action == "chat.delete" else str(error) if action == "model.select" and isinstance(error, ValueError)
                                else "No se pudo guardar la selección de modelo." if action == "model.select"
@@ -1459,7 +1471,7 @@ class HarnessServer:
                     self.conversation["model"] = self.model
                     self.conversation["reasoning_effort"] = self.reasoning_effort
                     self.history.save(self.conversation)
-                except OSError:
+                except (OSError, sqlite3.Error):
                     if "snapshot" in locals():
                         self.conversation = snapshot
                     self._emit("chat.finished", status="failed", message="No se pudo guardar el mensaje")
@@ -1537,3 +1549,4 @@ class HarnessServer:
                         self._finish("interrupted")
                 self._closing.set()
             self.usage_reader.close()
+            self.history.db.checkpoint()

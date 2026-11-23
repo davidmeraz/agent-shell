@@ -38,7 +38,19 @@ class StoreTests(unittest.TestCase):
         record = self.store.create("original")
         original = self.store.load(record["chat_id"])
         record["title"] = "replacement"
-        with patch("harness.chat.history.os.replace", side_effect=OSError("disk error")):
+        real_tx = self.store.db.transaction
+
+        def failing_tx():
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _ctx():
+                with real_tx() as conn:
+                    conn.execute("UPDATE chats SET title = ? WHERE chat_id = ?", ("replacement", record["chat_id"]))
+                    raise OSError("disk error")
+            return _ctx()
+
+        with patch.object(self.store.db, "transaction", side_effect=failing_tx):
             with self.assertRaises(OSError):
                 self.store.save(record)
         self.assertEqual(self.store.load(record["chat_id"]), original)
@@ -66,11 +78,13 @@ class StoreTests(unittest.TestCase):
         record = self.store.create("test")
         record["messages"] = [{"id": "a", "role": "unknown", "text": 42}]
         self.store.save(record)
-        path = self.store.root / f"{record['chat_id']}.json"
-        before = path.read_bytes()
+        with self.store.db.read() as conn:
+            before = conn.execute("SELECT payload_json FROM chats WHERE chat_id = ?", (record["chat_id"],)).fetchone()[0]
         with self.assertRaises(ValueError):
             self.store.load(record["chat_id"])
-        self.assertEqual(path.read_bytes(), before)
+        with self.store.db.read() as conn:
+            after = conn.execute("SELECT payload_json FROM chats WHERE chat_id = ?", (record["chat_id"],)).fetchone()[0]
+        self.assertEqual(after, before)
 
     def test_delete_removes_only_selected_chat_and_survives_restart(self):
         removed = self.store.create("borrar")
@@ -98,9 +112,9 @@ class StoreTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "Permisos de archivo POSIX")
     def test_history_file_has_owner_only_permissions(self):
-        record = self.store.create("private")
-        path = self.store.root / f"{record['chat_id']}.json"
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.store.create("private")
+        self.assertEqual(self.store.db.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.store.db.journal_mode(), "wal")
 
 
 class RestartTests(unittest.TestCase):
@@ -142,4 +156,5 @@ class RestartTests(unittest.TestCase):
             final = HistoryStore(root / "chats").load(chat_id)
             self.assertEqual(len(final["messages"]), 4)
             self.assertEqual(len(final["performance"]), 2)
-            self.assertEqual(len(list((root / "chats").glob("*.json"))), 1)
+            self.assertEqual(len(HistoryStore(root / "chats").list()), 1)
+            self.assertTrue((root / "chats" / "agent-shell.db").exists())

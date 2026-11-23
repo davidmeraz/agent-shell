@@ -69,7 +69,8 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
 - `context.py`: conserva elementos de Responses y cierra llamadas recuperadas sin reejecutarlas.
 - `core/limits.py`: presupuestos configurables por turno (incluyendo umbral de compactación, límite de compactaciones y fusible de tokens facturables), perfiles (`ahorro`, `equilibrado`, `grande`), persistencia atómica privada (`LimitsStore` en `config/limits.json`) y detección de fallos idénticos consecutivos.
 - `tools/output.py`: captura limitada con inicio/final y vista reducida de resultados para el modelo.
-- `HistoryStore`: metadatos y mensajes en JSON atómico.
+- `core/storage.py`: motor local `StorageDB` en SQLite (modo WAL, permisos `0600`, transacciones ACID) y `BlobStore` content-addressed por SHA-256 (`blobs/`) con verificación de integridad y limpieza de huérfanos.
+- `HistoryStore`: conversaciones, índices de listado/métricas (`turn_performance`) y blobs de imágenes sobre SQLite (WAL), con migración automática no destructiva de JSON heredados (respaldo en `.migrated-json/`) preservando archivos dañados y enlaces simbólicos.
 - `images.py`: valida imágenes y construye contenido multimodal de Responses.
 - `clipboard.py`: lectura binaria acotada del portapapeles; Qt conserva miniaturas,
   adjuntos del borrador y correlación de solicitudes sin mezclar conversaciones.
@@ -77,7 +78,7 @@ Las piezas principales del backend y la interfaz tienen estas responsabilidades:
   árbol y hasta dos visores de texto en ventanas independientes en Work, cada una con su
   propio sondeo mientras está visible; sin inferencia,
   escrituras ni atribución de cambios al modelo.
-- `ProjectStore`: nombres y carpetas de proyectos de Work en JSON privado y atómico.
+- `ProjectStore`: nombres, carpetas y perfiles de inicio de proyectos de Work en SQLite (WAL), compartiendo base de datos con `HistoryStore` para borrados atómicos en una sola transacción.
 - `TurnPerformance`: reloj monotónico, etapas del turno, contexto de la última llamada,
   conteos acumulados y velocidad en tokens basada en uso reportado y tiempo HTTP por solicitud.
 - `ui/js/Performance.js`: formato de métricas y estadísticas por modelo en Qt.

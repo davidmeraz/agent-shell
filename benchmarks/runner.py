@@ -235,7 +235,7 @@ def compute_quota_delta(before: dict[str, Any] | None, after: dict[str, Any] | N
 # ---------------------------------------------------------------------------
 
 def audit_history(history_root: Path) -> dict[str, Any]:
-    """Lee únicamente metadatos numéricos de `performance` sin exponer prompts ni imágenes."""
+    """Lee únicamente metadatos numéricos de `performance` (SQLite o JSON legado) sin exponer prompts ni imágenes."""
     if not history_root.exists():
         return {
             "history_root": str(history_root),
@@ -250,37 +250,67 @@ def audit_history(history_root: Path) -> dict[str, Any]:
             "wasted_tokens_failed": 0,
         }
 
-    files = sorted(history_root.glob("*.json"))
+    import sqlite3
+
     turns_total = 0
     turns: list[dict[str, Any]] = []
+    seen_chat_ids: set[str] = set()
+    chat_count = 0
+
+    def _consume_perf(area: str, perf: dict) -> None:
+        nonlocal turns_total
+        if not isinstance(perf, dict):
+            return
+        turns_total += 1
+        usage = perf.get("usage")
+        if not isinstance(usage, dict) or usage.get("total_tokens") is None:
+            return
+        turns.append({
+            "area": area,
+            "model": perf.get("model", ""),
+            "status": perf.get("status", ""),
+            "model_calls": perf.get("model_calls") or 0,
+            "tool_calls": perf.get("tool_calls") or 0,
+            "context_tokens": perf.get("context_tokens") or 0,
+            "input_tokens": usage.get("input_tokens") or 0,
+            "cached_tokens": usage.get("cached_tokens") or 0,
+            "output_tokens": usage.get("output_tokens") or 0,
+            "reasoning_tokens": usage.get("reasoning_tokens") or 0,
+            "total_tokens": usage.get("total_tokens") or 0,
+        })
+
+    db_path = history_root / "agent-shell.db"
+    if db_path.exists() and not db_path.is_symlink():
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+            try:
+                for (cid,) in conn.execute("SELECT chat_id FROM chats"):
+                    seen_chat_ids.add(cid)
+                    chat_count += 1
+                for area, m_json in conn.execute("SELECT area, measurement_json FROM turn_performance"):
+                    try:
+                        _consume_perf(area or "chat", json.loads(m_json))
+                    except ValueError:
+                        continue
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+
+    files = sorted(history_root.glob("*.json"))
     for path in files:
+        if path.stem in seen_chat_ids:
+            continue
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if not isinstance(record, dict):
             continue
+        chat_count += 1
         area = record.get("area", "chat")
         for perf in record.get("performance") or []:
-            if not isinstance(perf, dict):
-                continue
-            turns_total += 1
-            usage = perf.get("usage")
-            if not isinstance(usage, dict) or usage.get("total_tokens") is None:
-                continue
-            turns.append({
-                "area": area,
-                "model": perf.get("model", ""),
-                "status": perf.get("status", ""),
-                "model_calls": perf.get("model_calls") or 0,
-                "tool_calls": perf.get("tool_calls") or 0,
-                "context_tokens": perf.get("context_tokens") or 0,
-                "input_tokens": usage.get("input_tokens") or 0,
-                "cached_tokens": usage.get("cached_tokens") or 0,
-                "output_tokens": usage.get("output_tokens") or 0,
-                "reasoning_tokens": usage.get("reasoning_tokens") or 0,
-                "total_tokens": usage.get("total_tokens") or 0,
-            })
+            _consume_perf(area, perf)
 
     by_area: dict[str, Any] = {}
     for area in sorted({t["area"] for t in turns}):
@@ -296,7 +326,7 @@ def audit_history(history_root: Path) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "history_root": str(history_root),
-        "chat_files": len(files),
+        "chat_files": chat_count,
         "turns_total": turns_total,
         "turns_with_usage": len(turns),
         "overall": compute_area_stats(turns),

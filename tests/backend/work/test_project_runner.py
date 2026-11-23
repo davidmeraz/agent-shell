@@ -61,7 +61,8 @@ class ProjectRunTests(unittest.TestCase):
         self.server.handle({"type": "chat.send", "prompt": "Hola"})
         self.output.wait_for("chat.finished")
         original = copy.deepcopy(self.server.conversation)
-        saved = self.server.history._path(original["chat_id"]).read_bytes()
+        with self.server.history.db.read() as conn:
+            saved = conn.execute("SELECT payload_json FROM chats WHERE chat_id = ?", (original["chat_id"],)).fetchone()[0]
         self.service.tool_preface = "Texto privado de la tarea interna"
         (self.folder / "run.sh").write_text("printf '%s' \"$PWD\" > launched.txt\n")
         before = len(self.events())
@@ -70,7 +71,9 @@ class ProjectRunTests(unittest.TestCase):
         self.assertEqual(state["exit_code"], 0)
         self.assertEqual((self.folder / "launched.txt").read_text(), str(self.folder))
         self.assertEqual(self.server.conversation, original)
-        self.assertEqual(self.server.history._path(original["chat_id"]).read_bytes(), saved)
+        with self.server.history.db.read() as conn:
+            after = conn.execute("SELECT payload_json FROM chats WHERE chat_id = ?", (original["chat_id"],)).fetchone()[0]
+        self.assertEqual(after, saved)
         events = self.events()[before:]
         self.assertTrue(all(event["type"].startswith("project.run.") for event in events))
         internal = self.service.requests[-2:]

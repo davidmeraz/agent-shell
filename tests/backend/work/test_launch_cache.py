@@ -74,7 +74,7 @@ class LaunchCacheTests(unittest.TestCase):
         self.assertTrue(self.cache.save(self.project["project_id"], self.folder, "printf ok", snapshot))
         reopened = LaunchCache(ProjectStore(self.store.root))
         self.assertEqual(reopened.load(self.project["project_id"], self.folder)["command"], "printf ok")
-        self.assertEqual(self.store._path(self.project["project_id"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.store.db.path.stat().st_mode & 0o777, 0o600)
         other = self.root / "other"
         other.mkdir()
         self.store.update_workdir(self.project["project_id"], str(other))
