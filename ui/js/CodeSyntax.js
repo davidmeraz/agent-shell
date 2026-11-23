@@ -1011,11 +1011,12 @@ function highlightInner(text, langId, palette) {
     return tokenizeCode(text, langId, palette);
 }
 
-function highlightToHtml(text, langId, palette) {
+function highlightToHtml(text, langId, palette, wordWrap) {
     const plainColor = (palette && palette.plain) || "#f3f5f8";
     if (!text) return "";
     const inner = highlightInner(text, langId, palette);
-    return '<pre style="margin:0;white-space:pre-wrap;color:' + plainColor + ';">' + inner + "</pre>";
+    const ws = wordWrap === false ? "pre" : "pre-wrap";
+    return '<pre style="margin:0;white-space:' + ws + ";color:" + plainColor + ';">' + inner + "</pre>";
 }
 
 // Analiza indentación y bloques de función/ámbito (estilo VS Code) para dibujar guías verticales

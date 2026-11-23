@@ -70,10 +70,11 @@ FloatingWindow {
     property int cursorLineIndex: 0
     property int cursorColumnIndex: 1
     property int hoveredLineIndex: -1
+    property bool hasClickedLine: false
     property bool copiedNotice: false
     readonly property int effectiveLineIndex: writing && writingLineIndex >= 0
         ? writingLineIndex
-        : (hoveredLineIndex >= 0 ? hoveredLineIndex : cursorLineIndex)
+        : (hasClickedLine ? cursorLineIndex : (hoveredLineIndex >= 0 ? hoveredLineIndex : cursorLineIndex))
     readonly property var activeScopeChain: CodeSyntax.findActiveScopes(codeScopes, effectiveLineIndex)
     readonly property var activeBreadcrumbs: activeScopeChain.filter(s => !!s.label)
     readonly property var activeScope: activeScopeChain.length > 0 ? activeScopeChain[activeScopeChain.length - 1] : null
@@ -127,10 +128,12 @@ FloatingWindow {
     onSyntaxPaletteChanged: syncSyntax()
     onHighlightActiveChanged: syncSyntax()
     onWordWrapChanged: {
+        syncSyntax();
         Qt.callLater(viewer.updateChangeGeometry);
         Qt.callLater(viewer.repaintCodeOverlays);
     }
     onEffectiveLineIndexChanged: repaintCodeOverlays()
+    onHoveredLineIndexChanged: repaintCodeOverlays()
     onWritingChanged: {
         syncSyntax();
         repaintCodeOverlays();
@@ -142,12 +145,14 @@ FloatingWindow {
         codeGuidesCanvas.requestPaint();
     }
 
-    function updateCursorLocation() {
+    function updateCursorLocation(markClicked) {
         const pos = Math.min(code.cursorPosition, code.text.length);
         const lineIdx = findLineIndex(pos);
         const lineStart = lineOffsets[lineIdx] || 0;
         cursorLineIndex = lineIdx;
         cursorColumnIndex = Math.max(1, pos - lineStart + 1);
+        if (markClicked) hasClickedLine = true;
+        repaintCodeOverlays();
     }
 
     function jumpToLine(lineIndex) {
@@ -158,8 +163,7 @@ FloatingWindow {
             scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height, rect.y - 24));
         }
         code.cursorPosition = pos;
-        updateCursorLocation();
-        repaintCodeOverlays();
+        updateCursorLocation(true);
     }
 
     function findLineIndex(pos) {
@@ -187,7 +191,7 @@ FloatingWindow {
         }
         const canHighlight = languageInfo.id !== "plain" && current.length > 0
             && current.length <= (writing ? 28000 : 64000);
-        highlightedHtml = canHighlight ? CodeSyntax.highlightToHtml(current, languageInfo.id, syntaxPalette) : "";
+        highlightedHtml = canHighlight ? CodeSyntax.highlightToHtml(current, languageInfo.id, syntaxPalette, wordWrap) : "";
         if (current.length > 0 && current.length <= (writing ? 20000 : 64000)) {
             const structure = CodeSyntax.analyzeCodeStructure(current, languageInfo.id);
             indentSize = structure.indentSize;
@@ -197,8 +201,7 @@ FloatingWindow {
             indentCols = [];
             codeScopes = [];
         }
-        updateCursorLocation();
-        repaintCodeOverlays();
+        updateCursorLocation(false);
     }
 
     FileWriteReveal {
@@ -305,6 +308,10 @@ FloatingWindow {
         changeStartLine = -1; changeEndLine = -1;
         pendingId = "";
         filePath = path;
+        hasClickedLine = false;
+        hoveredLineIndex = -1;
+        cursorLineIndex = 0;
+        cursorColumnIndex = 1;
         preview = following ? "" : "Cargando…";
         writeReveal.reset(preview);
         followWriting = true;
@@ -678,8 +685,8 @@ FloatingWindow {
                         if (!offsets || !offsets.length || !totalText.length) return;
                         const totalLines = (!viewer.writing && totalText.endsWith("\n"))
                             ? Math.max(1, offsets.length - 1) : offsets.length;
-                        const scrollX = viewer.scroller ? viewer.scroller.contentX : 0;
-                        const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
+                        const scrollX = viewer.scroller ? (viewer.scroller.contentX - viewer.scroller.originX) : 0;
+                        const scrollY = viewer.scroller ? (viewer.scroller.contentY - viewer.scroller.originY) : 0;
                         const viewBottom = scrollY + height + 24;
                         const padLeft = code.leftPadding;
                         const cw = viewer.charWidth;
@@ -713,16 +720,27 @@ FloatingWindow {
                         }
 
                         const activeLine = viewer.effectiveLineIndex;
+                        const hoveredLine = viewer.hoveredLineIndex;
                         const indents = viewer.indentCols;
                         const innerScope = viewer.activeScope;
                         const fnScope = viewer.activeFunctionScope;
 
-                        // 1. Banda sutil de la línea activa / bajo el cursor (estilo VS Code).
+                        // 1a. Banda muy suave bajo el puntero cuando apunta a otra línea.
+                        if (!viewer.writing && hoveredLine >= lo && hoveredLine < totalLines && hoveredLine !== activeLine) {
+                            const hr = code.positionToRectangle(Math.min(offsets[hoveredLine], totalText.length));
+                            const hy = hr.y - scrollY;
+                            if (hy + hr.height >= 0 && hy <= height) {
+                                ctx.fillStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.045)";
+                                ctx.fillRect(2, hy, Math.max(0, width - 4), Math.max(16, hr.height));
+                            }
+                        }
+
+                        // 1b. Banda de la línea activa / seleccionada (estilo VS Code).
                         if (!viewer.writing && activeLine >= lo && activeLine < totalLines) {
                             const ar = code.positionToRectangle(Math.min(offsets[activeLine], totalText.length));
                             const ay = ar.y - scrollY;
                             if (ay + ar.height >= 0 && ay <= height) {
-                                ctx.fillStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.085)";
+                                ctx.fillStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.095)";
                                 ctx.fillRect(2, ay, Math.max(0, width - 4), Math.max(16, ar.height));
                             }
                         }
@@ -812,19 +830,6 @@ FloatingWindow {
                     ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    HoverHandler {
-                        onPointChanged: {
-                            const scrollX = viewer.scroller ? viewer.scroller.contentX : 0;
-                            const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
-                            const pos = code.positionAt(point.position.x + scrollX, point.position.y + scrollY);
-                            if (pos >= 0 && code.text.length > 0)
-                                viewer.hoveredLineIndex = viewer.findLineIndex(Math.min(pos, code.text.length));
-                        }
-                        onHoveredChanged: {
-                            if (!hovered) viewer.hoveredLineIndex = -1;
-                        }
-                    }
-
                     // TextEdit conserva el control del desplazamiento y el contrato PlainText en el visor.
                     TextEdit {
                         id: code
@@ -849,7 +854,9 @@ FloatingWindow {
                         bottomPadding: 14
                         rightPadding: 14
                         leftPadding: 14
-                        onCursorPositionChanged: viewer.updateCursorLocation()
+                        onCursorPositionChanged: viewer.updateCursorLocation(code.activeFocus || code.selectedText.length > 0)
+                        onSelectionStartChanged: viewer.updateCursorLocation(true)
+                        onSelectionEndChanged: viewer.updateCursorLocation(true)
                         onTextChanged: {
                             viewer.syncSyntax();
                             Qt.callLater(viewer.updateChangeGeometry);
@@ -857,6 +864,19 @@ FloatingWindow {
                         onWidthChanged: {
                             Qt.callLater(viewer.updateChangeGeometry);
                             Qt.callLater(viewer.repaintCodeOverlays);
+                        }
+
+                        // HoverHandler directamente sobre TextEdit: coordenadas locales exactas sin sumar scroll dos veces.
+                        HoverHandler {
+                            onPointChanged: {
+                                if (code.text.length <= 0) return;
+                                const pos = code.positionAt(point.position.x, point.position.y);
+                                if (pos >= 0)
+                                    viewer.hoveredLineIndex = viewer.findLineIndex(Math.min(pos, code.text.length));
+                            }
+                            onHoveredChanged: {
+                                if (!hovered) viewer.hoveredLineIndex = -1;
+                            }
                         }
 
                         // Banda de líneas recién modificadas, teñida con el acento del tema.
@@ -1048,7 +1068,7 @@ FloatingWindow {
                         if (!offsets || !offsets.length || !totalText.length) return;
                         const totalLines = (!viewer.writing && totalText.endsWith("\n"))
                             ? Math.max(1, offsets.length - 1) : offsets.length;
-                        const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
+                        const scrollY = viewer.scroller ? (viewer.scroller.contentY - viewer.scroller.originY) : 0;
                         const viewBottom = scrollY + height + 24;
 
                         // Búsqueda binaria de la primera línea visible para soportar archivos grandes.
