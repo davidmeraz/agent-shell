@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/js/ChatCommands.js" as ChatCommands
 
 // Familias y esfuerzo con la interfaz y backend reales, catálogo y HTTP locales.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false

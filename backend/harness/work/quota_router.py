@@ -28,9 +28,12 @@ class QuotaAwareRouter:
     def _available(self, candidate: Candidate) -> bool:
         return self._exhausted_until.get(candidate.bucket, 0) <= self._clock()
 
-    def candidates(self, roster: list[Candidate], level: str, remaining: dict[str, float],
-                   provider: str = "") -> list[Candidate]:
-        return [row for row in rank(roster, level, remaining, provider) if self._available(row)]
+    def exhausted_buckets(self) -> set[str]:
+        return {bucket for bucket, until in self._exhausted_until.items() if until > self._clock()}
+
+    def candidates(self, roster: list[Candidate], role: str, remaining: dict[str, float],
+                   **context: str) -> list[Candidate]:
+        return [row for row in rank(roster, role, remaining, **context) if self._available(row)]
 
     def run(
         self,
@@ -38,20 +41,20 @@ class QuotaAwareRouter:
         control: StreamControl,
         roster: list[Candidate],
         remaining: dict[str, float],
-        level: str = "standard",
-        provider: str = "",
+        role: str = "builder",
         max_steps: int = 16,
         on_start: Callable[[Candidate], None] = lambda candidate: None,
         progress: Callable[[str], None] = lambda line: None,
+        **context: str,
     ) -> WorkerResult:
         result = WorkerResult(status="quota_exhausted", error="No worker has available quota.")
         prompt = task
-        for candidate in self.candidates(roster, level, remaining, provider):
+        for candidate in self.candidates(roster, role, remaining, **context):
             control.check()
             if not self._available(candidate):
                 continue
             on_start(candidate)
-            result = self.router.run(prompt, candidate, control, max_steps, progress)
+            result = self.router.run(prompt, candidate, control, max_steps, progress, role)
             if result.status != "quota_exhausted":
                 return result
             self.mark_exhausted(candidate.bucket)

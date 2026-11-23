@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Window
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/js/ChatCommands.js" as ChatCommands
 
 // Comandos reales en el workspace temporal; cuenta y servicio HTTP de prueba.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false
@@ -155,7 +155,7 @@ ShellRoot {
                     const height = card.height;
                     output.select(0, 6); const selection = output.selectedText;
                     inspector.mouseClick(copy);
-                    if (!scenario.check(Quickshell.clipboardText === original && copy.copied
+                    if (!scenario.check(NativeApp.clipboardText === original && copy.copied
                         && output.selectedText === selection, "copiar pierde salida original o selección")) return;
                     inspector.mouseClick(expand); inspector.wait(80);
                     if (!scenario.check(card.expanded && output.text.includes("line 18") && card.height > height,

@@ -1,10 +1,9 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
+import AgentShell.Native
 import "../.."
 
 // Tres tarjetas de uso, una por proveedor, en fila sobre el chat mientras dura el modo unificado.
-Scope {
+NativeScope {
     id: group
     required property AgentBridge bridge
     property string mainWindowTitle: ""
@@ -31,7 +30,7 @@ Scope {
     }
     function schedulePlacement() {
         if (shown && mainWindowTitle
-            && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen")
+            && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen")
             placementDelay.restart();
     }
     onShownChanged: {
@@ -82,14 +81,14 @@ Scope {
             const card = group.cards.find(item => item.visible);
             if (!card || !group.mainWindowTitle) return;
             placement.running = false;
-            placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
-                Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId), card.title, "21", group.mainWindowTitle];
+            placement.command = [NativeApp.pythonExecutable,
+                NativeApp.placementScript,
+                String(NativeApp.processId), card.title, "21", group.mainWindowTitle];
             placement.running = true;
         }
     }
-    Process {
+    NativeProcess {
         id: placement
-        stderr: SplitParser { onRead: data => console.warn("Posición del uso: " + data) }
+        errorOutput: LineParser { onRead: data => console.warn("Posición del uso: " + data) }
     }
 }

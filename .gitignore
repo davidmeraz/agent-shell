@@ -7,3 +7,5 @@ __pycache__/
 !.env.example
 *.log
 *.egg-info/
+build/
+native/build/

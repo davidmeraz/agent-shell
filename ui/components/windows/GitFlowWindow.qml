@@ -1,14 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Io
-import Quickshell.Wayland
+import AgentShell.Native
 import "../.."
 import "../shared"
 
 // Visor lateral derecho del flujo de commits Git para Work y App (Matte Glassmorphism).
-FloatingWindow {
+NativeWindow {
     id: gitWin
     objectName: "gitFlowWindow"
     required property AgentBridge bridge
@@ -26,7 +24,6 @@ FloatingWindow {
     color: "transparent"
     visible: false
     onClosed: gitWin.visible = false
-    BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
 
     property bool loading: false
     property bool isRepo: true
@@ -157,7 +154,7 @@ FloatingWindow {
     }
 
     function schedulePlacement() {
-        if (visible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
+        if (visible && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen") {
             placementDelay.restart();
         }
     }
@@ -212,9 +209,9 @@ FloatingWindow {
             if (!gitWin.visible || !gitWin.projectId) return;
             placement.running = false;
             placement.command = [
-                Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
-                Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId),
+                NativeApp.pythonExecutable,
+                NativeApp.placementScript,
+                String(NativeApp.processId),
                 gitWin.title,
                 "1",
                 gitWin.mainWindowTitle
@@ -240,9 +237,9 @@ FloatingWindow {
         onTriggered: gitWin.hashCopied = false
     }
 
-    Process {
+    NativeProcess {
         id: placement
-        stderr: SplitParser { onRead: data => console.warn("Posición del visor Git: " + data) }
+        errorOutput: LineParser { onRead: data => console.warn("Posición del visor Git: " + data) }
     }
 
     Connections {
@@ -957,7 +954,7 @@ FloatingWindow {
                                     horizontalPadding: 8
                                     verticalPadding: 3
                                     onClicked: {
-                                        Quickshell.clipboardText = gitWin.commitDetail.hash || gitWin.selectedHash;
+                                        NativeApp.clipboardText = gitWin.commitDetail.hash || gitWin.selectedHash;
                                         gitWin.hashCopied = true;
                                         hashCopiedTimer.restart();
                                     }

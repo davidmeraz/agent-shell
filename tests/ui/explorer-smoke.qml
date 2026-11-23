@@ -2,11 +2,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // Carpeta temporal real, sin OAuth: ventana, sondeo, texto y cambio de espacio.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property var explorer: null

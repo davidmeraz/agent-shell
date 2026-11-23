@@ -725,6 +725,7 @@ class ClaudeClient:
         effort: str = "",
         image: str = "",
         isolated: bool = False,
+        tools: str = "",
     ) -> Iterator[dict]:
         exe = self._resolve_binary()
         if not exe:
@@ -762,6 +763,8 @@ class ClaudeClient:
             cmd.extend(["--resume", session_id])
         if isolated:
             cmd.extend(isolation_flags())
+        if tools:
+            cmd.extend(["--tools", tools])
 
         stderr_chunks: list[str] = []
         done = threading.Event()

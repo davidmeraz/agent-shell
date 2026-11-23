@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // Áreas y dos carpetas temporales con backend real y servicio local de prueba.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false

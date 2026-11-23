@@ -255,6 +255,52 @@ class ViewerPlacementTests(unittest.TestCase):
         self.assertIn('move({x=870, y=242, relative=false, window="address:0xabcd"})', code)
         self.assertNotIn("dead", code)
 
+    def test_agent_windows_stack_in_the_left_column_without_covering_the_chat(self):
+        for width, height in ((2560, 1440), (1920, 1080), (1366, 768)):
+            with self.subTest(width=width):
+                monitor = {**self.monitor(), "width": width, "height": height}
+                chat = placement.geometry(monitor, 3, 160)
+                slots = [placement.agent_geometry(monitor, slot) for slot in range(4)]
+                for x, y, w, h in slots:
+                    self.assertGreaterEqual(x, 10)
+                    self.assertGreaterEqual(w, 340)
+                    self.assertGreaterEqual(h, 240)
+                    self.assertTrue(60 <= y and y + h <= height - 10)
+                if width >= 1920:
+                    self.assertTrue(all(x + w <= chat[0] for x, _, w, _ in slots))
+                self.assertEqual(len({rect[1] for rect in slots}), 4)
+        big = [placement.agent_geometry(self.monitor(), slot) for slot in range(4)]
+        self.assertTrue(all(a[1] + a[3] <= b[1] for a, b in zip(big, big[1:])))
+        self.assertGreaterEqual(big[0][2], 500)
+
+    @patch.object(placement, "hyprctl")
+    def test_placing_an_agent_moves_only_that_window(self, ctl):
+        import json
+        ctl.side_effect = [json.dumps([
+            dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2}),
+            dict(pid=123, title="Agent Shell · Agente · Revisor", address="0xcafe", monitor=0, workspace={"id": 5}),
+            dict(pid=123, title="Agent Shell · Agente · Constructor", address="0xbeef", monitor=0, workspace={"id": 2}),
+        ]), json.dumps([self.monitor()]), '{"version":"0.57.2"}', "ok\n"]
+        self.assertTrue(placement.place(123, "Agent Shell · Agente · Revisor", placement.AGENT_ROLES[1], "Chat"))
+        code = ctl.call_args.args[1]
+        x, y, w, h = placement.agent_geometry(self.monitor(), 1)
+        self.assertIn(f'move({{x={x}, y={y}, relative=false, window="address:0xcafe"}})', code)
+        self.assertIn('workspace="2", follow=false, window="address:0xcafe"', code)
+        self.assertNotIn("beef", code)
+        self.assertNotIn('window="address:0xabcd"', code)
+
+    @patch.object(placement, "hyprctl")
+    def test_agent_rule_is_named_scoped_and_only_for_lua(self, ctl):
+        ctl.side_effect = ['{"version":"0.57.2"}', "ok\n"]
+        placement.prepare_agent_windows()
+        code = ctl.call_args.args[1]
+        for part in ('name = "agent-shell-agents"', 'class = "^agent-shell$"', "Agente", "no_initial_focus = true"):
+            self.assertIn(part, code)
+        ctl.reset_mock(side_effect=True)
+        ctl.side_effect = ['{"version":"0.54.3"}']
+        placement.prepare_agent_windows()
+        self.assertEqual(ctl.call_count, 1)
+
     def test_hidden_usage_leaves_full_height_chat(self):
         self.assertEqual(placement.geometry(self.monitor(), 3, 0), (870, 80, 820, 1330))
 

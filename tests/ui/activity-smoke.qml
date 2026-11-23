@@ -1,10 +1,10 @@
 import QtQuick
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // La IA de prueba pide shell por HTTP; el motor ejecuta y observa archivos reales.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property var savedWindows: []

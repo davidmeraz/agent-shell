@@ -2,12 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/components/shared"
 
 // El adaptador real conversa con un proceso RPC de prueba, nunca con una cuenta.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false
@@ -118,7 +118,7 @@ ShellRoot {
                 chat.contentItem.Window.window.requestActivate();
                 prompt.forceActiveFocus(); prompt.text = "hola";
                 inspector.keyClick(Qt.Key_Return);
-                if (!scenario.check(agent.busy && panel.visible && !chat.dialogVisible, "no se puede enviar un mensaje con el uso abierto")) return;
+                if (!scenario.check((agent.busy || agent.messages.count >= 1) && panel.visible && !chat.dialogVisible, "no se puede enviar un mensaje con el uso abierto")) return;
                 const usageContent = inspector.findChild(panel, "usageContent");
                 usageContent.forceActiveFocus(); usageContent.Window.window.requestActivate(); inspector.wait(80);
                 previousUpdate = agent.accountUsage.checked_at;

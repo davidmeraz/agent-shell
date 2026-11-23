@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Runtime temporal y servicio HTTP local: no abre OAuth ni consume una cuenta real.
+# Pruebas de integración UI reales sobre el binario nativo Qt6/C++ en modo offscreen.
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+binary="${AGENT_SHELL_BUILD_DIR:-$project_root/build}/agent-shell"
+
+if [[ ! -x "$binary" ]]; then
+    "$project_root/scripts/build.sh"
+fi
+
 smoke_runtime="$(mktemp -d /tmp/agent-shell-smoke.XXXXXX)"
 trap 'rm -rf -- "$smoke_runtime"' EXIT
-# Quickshell sólo registra componentes dentro de la raíz de su configuración.
-# La copia temporal permite probar tests/ui/ junto a ui/ sin archivos en la raíz
-# del repositorio ni cambios en los componentes durante la ejecución.
-smoke_config_root="$smoke_runtime/config"
-mkdir -p "$smoke_config_root"
-cp -R "$project_root/ui" "$smoke_config_root/ui"
+
 for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-smoke.qml shell-command-smoke.qml workspaces-smoke.qml explorer-smoke.qml images-smoke.qml activity-smoke.qml writing-smoke.qml usage-smoke.qml project-run-smoke.qml unified-smoke.qml; do
     smoke_marker=SMOKE_OK
     if [[ "$smoke_config" == commands-smoke.qml ]]; then smoke_marker=COMMANDS_OK; fi
@@ -32,10 +33,10 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
     if [[ "$smoke_config" == writing-smoke.qml ]]; then smoke_marker=WRITING_OK; smoke_writing=1; fi
     if [[ "$smoke_config" == project-run-smoke.qml ]]; then smoke_project_run=1; fi
     smoke_run="$smoke_runtime/${smoke_config%.qml}"
-    mkdir -p "$smoke_run"
-    sed 's|^import "../../ui|import "ui|' "$project_root/tests/ui/$smoke_config" \
-        > "$smoke_config_root/$smoke_config"
+    mkdir -p "$smoke_run/workspace"
     env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$smoke_runtime" QT_QPA_PLATFORM=offscreen \
+        AGENT_SHELL_APP_DIR="$project_root" \
+        AGENT_SHELL_WORKSPACE="$smoke_run/workspace" \
         AGENT_SHELL_PYTHON="${AGENT_SHELL_PYTHON:-$project_root/.venv/bin/python}" \
         AGENT_SHELL_BACKEND_ENTRY="$project_root/tests/support/fake_backend.py" \
         AGENT_SHELL_HISTORY_DIR="$smoke_run/chats" \
@@ -44,16 +45,14 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
         AGENT_SHELL_TEST_WRITING="$smoke_writing" \
         AGENT_SHELL_TEST_PROJECT_RUN="$smoke_project_run" \
         AGENT_SHELL_TEST_MODELS="$smoke_models" \
-        timeout --kill-after=2s 12s qs --path "$smoke_config_root/$smoke_config" > "$smoke_run/output.log" 2>&1 || {
+        timeout --kill-after=2s 12s "$binary" --no-single-instance \
+            --qml "$project_root/tests/ui/$smoke_config" > "$smoke_run/output.log" 2>&1 || {
         cat "$smoke_run/output.log"
         exit 1
     }
     cat "$smoke_run/output.log"
     if ! rg -q "$smoke_marker" "$smoke_run/output.log"; then exit 1; fi
-    # Algunos entornos restringidos impiden crear el socket IPC auxiliar de qs.
-    # El arnés usa stdio: se tolera sólo ese diagnóstico, nunca errores de QML.
-    if rg 'SMOKE_FAILED|COMMANDS_FAILED|MODELS_FAILED|CONVERSATION_FAILED|SHELL_COMMAND_FAILED|WORKSPACES_FAILED|EXPLORER_FAILED|IMAGES_FAILED|ACTIVITY_FAILED|WRITING_FAILED|USAGE_FAILED|PROJECT_RUN_FAILED|UNIFIED_FAILED|FATAL|ERROR|TypeError|ReferenceError|Binding loop' "$smoke_run/output.log" \
-        | rg -v 'ERROR quickshell.ipc: Failed to start IPC server on path'; then
+    if rg 'SMOKE_FAILED|COMMANDS_FAILED|MODELS_FAILED|CONVERSATION_FAILED|SHELL_COMMAND_FAILED|WORKSPACES_FAILED|EXPLORER_FAILED|IMAGES_FAILED|ACTIVITY_FAILED|WRITING_FAILED|USAGE_FAILED|PROJECT_RUN_FAILED|UNIFIED_FAILED|FATAL|ERROR|TypeError|ReferenceError|Binding loop' "$smoke_run/output.log"; then
         exit 1
     fi
 done

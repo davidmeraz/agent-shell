@@ -3,8 +3,7 @@ import QtQuick.Controls
 import QtQuick.Effects
 import QtQuick.Layouts
 import QtQuick.Window
-import Quickshell
-import Quickshell.Wayland
+import AgentShell.Native
 import "js/Performance.js" as Performance
 import "components/chat"
 import "components/dialogs"
@@ -13,7 +12,7 @@ import "components/windows"
 import "components/work"
 
 // Cliente de conversación: cuenta, texto progresivo y controles de turno.
-FloatingWindow {
+NativeWindow {
     id: window
     required property AgentBridge bridge
     title: bridge.activeArea === "app"
@@ -26,7 +25,6 @@ FloatingWindow {
     minimumSize: Qt.size(560, 560)
     color: "transparent"
     visible: true
-    BackgroundEffect.blurRegion: Region { item: glassSurface; radius: glassSurface.radius }
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
     property var projectToDelete: ({})
@@ -64,6 +62,10 @@ FloatingWindow {
     readonly property UnifiedUsageWindows unifiedUsage: UnifiedUsageWindows {
         bridge: window.bridge
         mainWindowTitle: window.title
+    }
+    readonly property AgentWindows agentWindows: AgentWindows {
+        bridge: window.bridge
+        mainWindow: window
     }
     function openUsage() {
         if (bridge.unifiedMode) unifiedUsage.open();
@@ -1144,11 +1146,14 @@ FloatingWindow {
         anchors.centerIn: parent
         width: Math.min(440, window.width - 48)
         standardButtons: Dialog.Ok
-        contentItem: Text {
-            text: "Estás usando tu plan de ChatGPT. Las respuestas de Agent Shell consumen sus límites disponibles. Puedes administrar el uso y desconectar la aplicación en los ajustes de ChatGPT."
-            wrapMode: Text.Wrap
-            color: "#e4e4e4"
-            font.pixelSize: 14
+        contentItem: ColumnLayout {
+            Text {
+                Layout.fillWidth: true
+                text: "Estás usando tu plan de ChatGPT. Las respuestas de Agent Shell consumen sus límites disponibles. Puedes administrar el uso y desconectar la aplicación en los ajustes de ChatGPT."
+                wrapMode: Text.Wrap
+                color: "#e4e4e4"
+                font.pixelSize: 14
+            }
         }
     }
 

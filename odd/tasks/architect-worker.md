@@ -15,6 +15,9 @@ Test runner: `.venv/bin/python -m unittest discover -s tests -t .`
 - S17: Los obreros Claude omiten memoria global, estilo y MCP, y conservan permisos, hooks y CLAUDE.md del proyecto.
 - S18: "cuando se activa el modo unificado quiero saber que modelo es el arquitecto y cuales son los obreros puedes mejorar esto en la interfaz grafica"
 - S19: "Quiero cuando este modo unificado muestre 3 mini ventanas del uso de los 3 provedores"
+- S20: "Quiero mejora la arquictectura usando sub agentes tipo obreros y el arquitecto seria el modelo mas potente que tenemos como astral o opus 5.5 o argon de gemini y cual seria los obreros". Aprobado: roles explorador, constructor, especialista y revisor (reemplazan niveles de S14); revisor de otro proveedor; arquitecto Astra, Opus o Argon con más cuota.
+- S21: "si en la manera visual quiero crear mini vetanas cuando se estan usando los agentes para saber si realmente el arquitecto usa a los obreros"
+- S22: "Quiero mejorar los mini vetanas de lo agentes quiero que sean flotante y que no sean tan pequenas que tenga un tamano mas grande y que tenga mejores animaciones y un diseno mas profesional."
 
 ## Tasks
 
@@ -29,6 +32,9 @@ Test runner: `.venv/bin/python -m unittest discover -s tests -t .`
 
 - T9 [S18] Panel de equipo del modo unificado — inline — DONE (sin commit)
 - T10 [S19] Tres ventanas de uso por proveedor — inline — DONE (sin commit)
+- T11 [S20] Roles, arquitecto tope, relevo por cuota y cambios reales en disco — inline — DONE (sin commit)
+- T12 [S21] Mini ventanas por subagente — inline — DONE (sin commit)
+- T13 [S22] Ventanas flotantes de subagentes rediseñadas — inline — DONE (sin commit)
 
 ## Log
 
@@ -41,3 +47,5 @@ Test runner: `.venv/bin/python -m unittest discover -s tests -t .`
 - L7: GREEN 352 pruebas. Prueba real: Opus 5.5 delegó a gemini-3.8-flash-medium y verificó, 22 s. Obrero Haiku aislado: de 39k a 7k tokens frescos. Pendiente: los obreros Claude no tienen permiso para comandos Bash generales (decisión del usuario). Risk: item 4 (cancelación compartida entre arquitecto y obrero), cubierto por test.
 - L8 (2026-11-23): S18 pedido por el usuario. `UnifiedTeam.qml` muestra arquitecto, obrero por nivel, cuota y obrero activo (evento `unified.worker`). GREEN 354 pruebas y capturas offscreen en 820x760 y 480x620. Risk: none.
 - L9 (2026-11-23): S19 pedido por el usuario. `UnifiedUsageWindows.qml`/`ProviderUsageWindow.qml`, comando `unified.usage`, evento `usage.provider`, rol 21 en `place-text-viewer.py`, `unified-smoke.qml`. GREEN 358 pruebas, smoke 3/3, geometría real en Hyprland 268/269/269 px sobre el chat de 826 px. Risk: none.
+- L10 (2026-11-23): S20-S21. Antes: ChatGPT elegía Sol y Gemini elegía Neon como arquitecto; la cuota de Argon se contaba como Gemini. Prueba real 1: Argon sin cuota hizo fallar el turno, por eso se agregó el relevo. Prueba real 2 (78 s): Argon -> Opus 5.5 -> constructor Sonnet 5.5 (agy) -> revisor Gemini 3.8 Flash, 6 tests pasan. `agy --mode plan` no impide escribir: el explorador evita agy. GREEN 385 pruebas, unified-smoke OK. Sin verificar: popups en compositor real (Hyprland headless no arrancó). Risk: item 4 (relevo del arquitecto entre hilos de turno), cubierto por tests; sin verificador independiente.
+- L11 (2026-11-23): S22. Popups reemplazados por `NativeWindow` de 540x328, arrastrables y redimensionables (`AgentWindow`, `AgentActivity`, `AgentMedallion`); roles 22-25 y `--prepare-agents` en `place-text-viewer.py` (regla con nombre `no_initial_focus`, aceptada por Hyprland 0.57.2). GREEN 388 pruebas, unified-smoke 4/4. Sin verificar en el escritorio real. Risk: none.

@@ -1,15 +1,13 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Io
-import Quickshell.Wayland
+import AgentShell.Native
 import "../.."
 import "../../js/CodeSyntax.js" as CodeSyntax
 import "../shared"
 
 // Navegador de carpetas; soporta vista en árbol compacta y vista de iconos grandes.
-FloatingWindow {
+NativeWindow {
     id: explorer
     required property AgentBridge bridge
     property string mainWindowTitle: ""
@@ -23,7 +21,6 @@ FloatingWindow {
     implicitHeight: 655
     minimumSize: Qt.size(320, 400)
     color: "transparent"
-    BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     visible: false
     // El cierre nativo debe actualizar también la intención de visibilidad de Qt.
     onClosed: explorer.visible = false
@@ -359,10 +356,10 @@ FloatingWindow {
     onVisibleChanged: {
         if (visible) {
             reset();
-            if (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
-                placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
-                    Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                    String(Quickshell.processId), title, "0", mainWindowTitle];
+            if (NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen") {
+                placement.command = [NativeApp.pythonExecutable,
+                    NativeApp.placementScript,
+                    String(NativeApp.processId), title, "0", mainWindowTitle];
                 placement.running = true;
             }
         } else {
@@ -371,9 +368,9 @@ FloatingWindow {
             placement.running = false;
         }
     }
-    Process {
+    NativeProcess {
         id: placement
-        stderr: SplitParser { onRead: data => console.warn("Posición del explorador: " + data) }
+        errorOutput: LineParser { onRead: data => console.warn("Posición del explorador: " + data) }
     }
     Connections {
         target: explorer.bridge

@@ -1,13 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Wayland
+import AgentShell.Native
 import "../.."
 import "../shared"
 
 // Tarjeta de uso de un proveedor en modo unificado; UnifiedUsageWindows la alinea con las demás.
-FloatingWindow {
+NativeWindow {
     id: card
     required property AgentBridge bridge
     required property string providerId
@@ -21,7 +20,7 @@ FloatingWindow {
     readonly property var usage: bridge.providerUsage[providerId] || null
     readonly property bool hasData: !!usage && !!usage.checked_at
     readonly property bool architect: bridge.unifiedArchitect.provider === providerId
-    readonly property bool working: !!bridge.activeWorker && bridge.activeWorker.worker.provider === providerId
+    readonly property bool working: !!bridge.activeAgent && bridge.activeAgent.worker.provider === providerId
     readonly property var limits: {
         const rows = hasData ? usage.limits || [] : [];
         if (providerId !== "agy") return rows;
@@ -42,7 +41,6 @@ FloatingWindow {
     color: "transparent"
     visible: false
     onClosed: dismissed()
-    BackgroundEffect.blurRegion: Region { item: surface; radius: surface.radius }
 
     function groupTitle(row) {
         const name = row.name || "";
@@ -57,7 +55,7 @@ FloatingWindow {
             id: surface
             anchors.fill: parent
             anchors.margins: 1
-            radius: 18
+            radius: 20
             topColor: "#54141c26"
             bottomColor: "#680c121a"
             edgeColor: card.working && GemaTheme.synced ? GemaTheme.accentAlpha(0.80)

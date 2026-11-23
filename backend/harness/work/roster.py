@@ -12,11 +12,14 @@ TIER_LINES = {
     "sonnet": "balanced", "terra": "balanced",
     "opus": "strong", "sol": "strong",
 }
-LEVEL_TIERS = {
-    "simple": ("fast", "balanced", "strong"),
-    "standard": ("balanced", "fast", "strong"),
-    "hard": ("strong", "balanced", "fast"),
+ARCHITECT_LINES = frozenset({"astra", "opus", "argon"})
+ROLE_TIERS = {
+    "explorer": ("fast", "balanced", "strong"),
+    "builder": ("balanced", "fast", "strong"),
+    "specialist": ("strong", "balanced", "fast"),
+    "reviewer": ("balanced", "strong", "fast"),
 }
+READ_ONLY_ROLES = frozenset({"explorer", "reviewer"})
 TIER_EFFORTS = {
     "fast": ("medium", "high", "low"),
     "balanced": ("medium", "high", "low"),
@@ -42,11 +45,17 @@ class Candidate:
 
 
 def quota_bucket(provider: str, model: str = "") -> str:
-    """agy bills Gemini and third-party models against independent quotas."""
+    """agy bills Gemini, Argon and third-party models against independent quotas."""
     if provider == "agy":
         lower = (model or "").lower()
+        if "argon" in lower:
+            return "agy:argon"
         return "agy:3p" if lower and not lower.startswith("gemini") else "agy:gemini"
     return provider
+
+
+def vendor(slug: str) -> str:
+    return slug.split("-", 1)[0].lower()
 
 
 def model_tier(slug: str) -> str:
@@ -91,10 +100,12 @@ def architect_candidate(catalogs: dict[str, list[dict]], remaining: dict[str, fl
                         preferred_provider: str) -> Candidate | None:
     """Prefer flagships with quota. Versions are comparable only within a model family."""
     def capability(slug: str) -> int:
+        parts = EFFORT_SUFFIX_RE.sub("", slug.lower()).split("-")
+        if ARCHITECT_LINES.intersection(parts):
+            return 4
         tier = model_tier(slug)
         if tier:
             return {"fast": 0, "balanced": 1, "strong": 3}[tier]
-        parts = EFFORT_SUFFIX_RE.sub("", slug.lower()).split("-")
         # Sin línea rápida o equilibrada, las familias conocidas son buques insignia.
         return 3 if parts[0] in {"gpt", "gemini", "claude"} else 1
 
@@ -102,8 +113,7 @@ def architect_candidate(catalogs: dict[str, list[dict]], remaining: dict[str, fl
     for provider, rows in catalogs.items():
         for row in rows:
             slug = row["slug"]
-            family = slug.split("-", 1)[0].lower()
-            key = (provider, quota_bucket(provider, slug), family, capability(slug))
+            key = (provider, quota_bucket(provider, slug), vendor(slug), capability(slug))
             groups.setdefault(key, []).append(row)
 
     ranked = []
@@ -116,14 +126,23 @@ def architect_candidate(catalogs: dict[str, list[dict]], remaining: dict[str, fl
     return max(ranked, key=lambda entry: entry[0])[1] if ranked else None
 
 
-def rank(roster: list[Candidate], level: str, remaining: dict[str, float],
-         provider: str = "") -> list[Candidate]:
-    """Best candidate first: quota left, requested provider, tier fit, then most quota left."""
-    tiers = LEVEL_TIERS[level]
+def rank(roster: list[Candidate], role: str, remaining: dict[str, float], provider: str = "",
+         architect_bucket: str = "", builder_vendor: str = "") -> list[Candidate]:
+    """Best candidate first for a role, given the quota left and who else works on the turn."""
+    tiers = ROLE_TIERS[role]
+
+    def unsuited(candidate: Candidate) -> bool:
+        # agy cannot enforce read-only access; headless Claude cannot run arbitrary commands.
+        return (role == "explorer" and candidate.provider == "agy"
+                or role == "reviewer" and candidate.provider == "claude")
+
+    def conflicts(candidate: Candidate) -> bool:
+        return (role == "specialist" and candidate.bucket == architect_bucket
+                or role == "reviewer" and vendor(candidate.model) == builder_vendor)
 
     def key(candidate: Candidate):
         left = remaining.get(candidate.bucket, UNKNOWN_QUOTA_PERCENT)
-        return (left < LOW_QUOTA_PERCENT, bool(provider) and candidate.provider != provider,
-                tiers.index(candidate.tier), -left)
+        return (left < LOW_QUOTA_PERCENT, unsuited(candidate), bool(provider) and candidate.provider != provider,
+                conflicts(candidate), tiers.index(candidate.tier), -left)
 
     return sorted(roster, key=key)

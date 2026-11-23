@@ -1,7 +1,6 @@
 pragma Singleton
 import QtQuick
-import Quickshell
-import Quickshell.Io
+import AgentShell.Native
 import "../../js/CodeSyntax.js" as CodeSyntax
 
 // Sincronización en vivo con el tema Gema de Hyprland (~/.config/gema/preferences.json).
@@ -10,10 +9,13 @@ QtObject {
     property color accent: "#c4dcff"
     property string accentHex: "#c4dcff"
     property int rounding: 18
+    property int borderSize: 2
     property bool blur: true
+    property bool shadows: false
     property bool animations: true
     property bool darkText: false
     property int gemShape: 7
+    property color wallpaperColor: "#101119"
     property bool synced: false
 
     readonly property color textColor: darkText ? "#17202b" : "#f3f5f8"
@@ -38,8 +40,8 @@ QtObject {
 
     Behavior on accent { ColorAnimation { duration: gemaTheme.animations ? 260 : 0 } }
 
-    readonly property string preferencesPath: Quickshell.env("GEMA_SETTINGS_PATH")
-        || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/gema/preferences.json")
+    readonly property string preferencesPath: NativeApp.env("GEMA_SETTINGS_PATH")
+        || ((NativeApp.env("XDG_CONFIG_HOME") || (NativeApp.env("HOME") + "/.config")) + "/gema/preferences.json")
 
     // Tintes derivados del acento de la gema activa para bordes, reflejos y controles.
     function tintColor(baseColor, alphaMix) {
@@ -69,21 +71,27 @@ QtObject {
             }
             if (typeof data.rounding === "number" && isFinite(data.rounding))
                 rounding = Math.max(8, Math.min(28, Math.round(data.rounding)));
+            if (typeof data.borderSize === "number" && isFinite(data.borderSize))
+                borderSize = Math.max(0, Math.min(8, Math.round(data.borderSize)));
             if (typeof data.blur === "boolean")
                 blur = data.blur;
+            if (typeof data.shadows === "boolean")
+                shadows = data.shadows;
             if (typeof data.animations === "boolean")
                 animations = data.animations;
             if (typeof data.darkText === "boolean")
                 darkText = data.darkText;
             if (typeof data.gemShape === "number")
                 gemShape = data.gemShape;
+            if (typeof data.wallpaperColor === "string" && /^#[0-9a-fA-F]{6}$/.test(data.wallpaperColor))
+                wallpaperColor = data.wallpaperColor.toLowerCase();
             synced = true;
         } catch (e) {
             // Si Gema no está instalado o el archivo aún no existe, conserva los valores base.
         }
     }
 
-    readonly property FileView prefsFile: FileView {
+    readonly property NativeFileView prefsFile: NativeFileView {
         path: gemaTheme.preferencesPath
         blockLoading: true
         printErrors: false

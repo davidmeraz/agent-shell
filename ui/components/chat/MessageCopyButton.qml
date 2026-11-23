@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import Quickshell
+import AgentShell.Native
 
 // Copia el texto original, incluido Markdown y código, sin cambiar su selección.
 Button {
@@ -19,7 +19,7 @@ Button {
     ToolTip.delay: 400
     ToolTip.text: copied ? "Copiado" : copyLabel
     onClicked: {
-        Quickshell.clipboardText = textToCopy;
+        NativeApp.clipboardText = textToCopy;
         copied = true;
         feedback.restart();
     }

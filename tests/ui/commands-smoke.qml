@@ -2,11 +2,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // Teclado y paneles reales con la cuenta y el servicio HTTP locales de prueba.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false

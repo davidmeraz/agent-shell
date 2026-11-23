@@ -1,12 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2a2a2a"/>
-      <stop offset="100%" stop-color="#121212"/>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d2838"/>
+      <stop offset="55%" stop-color="#111824"/>
+      <stop offset="100%" stop-color="#0b1018"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d8ebff" stop-opacity="0.85"/>
+      <stop offset="45%" stop-color="#8ec5ff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.20"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="50%" stop-color="#c4dcff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#eaf4ff"/>
+      <stop offset="100%" stop-color="#9cc6ff"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#glass)" stroke="#6a6a6a" stroke-width="3"/>
-  <path d="M36 46 L56 64 L36 82" fill="none" stroke="#f2f2f2" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="64" y1="82" x2="92" y2="82" stroke="#d0d0d0" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="88" cy="46" r="6" fill="#f2f2f2"/>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)" stroke="url(#rim)" stroke-width="2.5"/>
+  <rect x="11" y="11" width="106" height="54" rx="25" fill="url(#sheen)"/>
+  <path d="M35 46 L57 64 L35 82" fill="none" stroke="#f3f7fc" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="64" y1="82" x2="93" y2="82" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+  <polygon points="88,35 97,44 88,53 79,44" fill="url(#accent)"/>
 </svg>

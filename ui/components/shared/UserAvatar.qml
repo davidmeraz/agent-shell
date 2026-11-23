@@ -1,5 +1,5 @@
 import QtQuick
-import Quickshell
+import AgentShell.Native
 
 // Medallón de perfil personal sincronizado con el tema Gema y el nombre de usuario elegido.
 Item {
@@ -14,7 +14,7 @@ Item {
         const custom = (customName || "").trim();
         if (custom)
             return custom;
-        const sysUser = Quickshell.env("USER") || "";
+        const sysUser = NativeApp.env("USER") || "";
         if (sysUser)
             return sysUser;
         return "Tú";

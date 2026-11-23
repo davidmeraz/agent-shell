@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/js/Performance.js" as Performance
 
 // Interacción con mensajes de prueba; nunca envía solicitudes a un modelo real.
-ShellRoot {
+NativeScope {
     id: scenario
     AgentBridge { id: agent }
     ChatWindow { id: chat; bridge: agent; implicitWidth: 560; implicitHeight: 680 }
@@ -65,7 +65,7 @@ ShellRoot {
             assistant.select(0, 4);
             const selection = assistant.selectedText;
             inspector.mouseClick(copy);
-            if (!scenario.check(Quickshell.clipboardText === markdown && copy.copied && assistant.selectedText === selection,
+            if (!scenario.check(NativeApp.clipboardText === markdown && copy.copied && assistant.selectedText === selection,
                 "copiar pierde formato original, selección o confirmación")) return;
             if (!scenario.check(metrics.text === "2.30 s · Media: 45.5 tok/s",
                 "resumen duplica contexto o pierde velocidad")) return;

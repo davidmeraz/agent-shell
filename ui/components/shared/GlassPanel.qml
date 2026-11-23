@@ -8,8 +8,18 @@ Rectangle {
     property color edgeColor: "#42ffffff"
     property bool highlighted: false
     property bool reflective: true
-    readonly property color effectiveTopColor: GemaTheme.synced ? GemaTheme.tintColor(topColor, 0.16) : topColor
-    readonly property color effectiveBottomColor: GemaTheme.synced ? GemaTheme.tintColor(bottomColor, 0.12) : bottomColor
+    readonly property color effectiveTopColor: {
+        const base = GemaTheme.synced ? GemaTheme.tintColor(topColor, 0.16) : topColor;
+        if (GemaTheme.synced && !GemaTheme.blur && base.a > 0.25 && base.a < 0.75)
+            return Qt.rgba(base.r, base.g, base.b, Math.min(0.92, base.a + 0.34));
+        return base;
+    }
+    readonly property color effectiveBottomColor: {
+        const base = GemaTheme.synced ? GemaTheme.tintColor(bottomColor, 0.12) : bottomColor;
+        if (GemaTheme.synced && !GemaTheme.blur && base.a > 0.25 && base.a < 0.75)
+            return Qt.rgba(base.r, base.g, base.b, Math.min(0.95, base.a + 0.30));
+        return base;
+    }
     readonly property color effectiveEdgeColor: GemaTheme.synced ? GemaTheme.tintColor(edgeColor, 0.38) : edgeColor
     readonly property color highlightBorderColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.82) : "#a8ffffff"
 

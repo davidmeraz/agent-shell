@@ -1,16 +1,14 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Io
-import Quickshell.Wayland
+import AgentShell.Native
 import "../.."
 import "../../js/CodeSyntax.js" as CodeSyntax
 import "../../js/FileChanges.js" as FileChanges
 import "../shared"
 
 // Visor independiente: sólo lee el archivo abierto y descarta respuestas tardías.
-FloatingWindow {
+NativeWindow {
     id: viewer
     required property AgentBridge bridge
     required property int viewerId
@@ -27,7 +25,6 @@ FloatingWindow {
     visible: false
     // Permite reabrir tras cerrar con el atajo del compositor o la decoración.
     onClosed: viewer.visible = false
-    BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     property string filePath: ""
     property string preview: ""
     property bool previewTruncated: false
@@ -343,11 +340,11 @@ FloatingWindow {
         if (!following) refresh();
         if (switching) fileTransition.restart();
         // Wayland delega la posición al compositor; sólo se aplica al abrir.
-        if (!wasVisible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
+        if (!wasVisible && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen") {
             const roleId = floatingMode ? Math.min(20, 4 + Math.max(1, viewerId - 2)) : viewerId;
-            placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
-                Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId), title, String(roleId), mainWindowTitle];
+            placement.command = [NativeApp.pythonExecutable,
+                NativeApp.placementScript,
+                String(NativeApp.processId), title, String(roleId), mainWindowTitle];
             placement.running = true;
         }
     }
@@ -370,9 +367,9 @@ FloatingWindow {
             Qt.callLater(viewer.repaintCodeOverlays);
         }
     }
-    Process {
+    NativeProcess {
         id: placement
-        stderr: SplitParser { onRead: data => console.warn("Posición del visor: " + data) }
+        errorOutput: LineParser { onRead: data => console.warn("Posición del visor: " + data) }
     }
     Connections {
         target: viewer.bridge
@@ -529,7 +526,7 @@ FloatingWindow {
                         hoverEnabled: true
                         z: 2
                         onClicked: {
-                            Quickshell.clipboardText = viewer.preview || code.text;
+                            NativeApp.clipboardText = viewer.preview || code.text;
                             viewer.copiedNotice = true;
                             copiedResetTimer.restart();
                         }

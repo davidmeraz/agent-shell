@@ -1,6 +1,5 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
+import AgentShell.Native
 import "js/Performance.js" as Performance
 import "js/ChatCommands.js" as ChatCommands
 
@@ -21,7 +20,10 @@ QtObject {
     property var unifiedArchitect: ({})
     property var unifiedTeam: []
     property var resolvedModels: ({})
-    property var activeWorker: null
+    // Subagentes del turno actual o del último; `agentTurn` indica que hubo un turno unificado.
+    property var agents: []
+    property bool agentTurn: false
+    readonly property var activeAgent: agents.find(agent => agent.status === "running") || null
     property var providerUsage: ({})
     property bool teamUsageBusy: false
     readonly property bool engineReady: unifiedMode ? !!unifiedArchitect.model : (provider === "agy" && agyAvailable)
@@ -651,8 +653,9 @@ QtObject {
                 ? Object.assign({}, previous, { error: data.error }) : data);
         } else if (event.type === "unified.usage.finished") {
             teamUsageBusy = false;
-        } else if (event.type === "unified.worker") {
-            activeWorker = data.active ? data : null;
+        } else if (event.type === "unified.agent") {
+            agents = agents.some(agent => agent.id === data.id)
+                ? agents.map(agent => agent.id === data.id ? data : agent) : agents.concat(data);
         } else if (event.type === "provider.rejected") {
             providerBusy = false;
             status = data.message;
@@ -827,6 +830,7 @@ QtObject {
             }
             status = data.message;
         } else if (event.type === "chat.busy") {
+            if (data.turn_id !== activeTurnId || !busy) { agents = []; agentTurn = unifiedMode; }
             busy = true;
             activeTurnId = data.turn_id || "";
             if (messages.count && messages.get(messages.count - 1).author === "TÚ")
@@ -852,7 +856,6 @@ QtObject {
                 messages.append({ author: "SISTEMA", body: status, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
         } else if (event.type === "chat.finished") {
             busy = false;
-            activeWorker = null;
             refreshTeamUsage();
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? data.message || "Respuesta detenida."
@@ -908,21 +911,20 @@ QtObject {
         eventReceived(event);
     }
 
-    readonly property Process backend: Process {
-        command: [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python", "-u",
-                  Quickshell.env("AGENT_SHELL_BACKEND_ENTRY") || Quickshell.shellDir + "/backend/main.py"]
-        workingDirectory: Quickshell.env("AGENT_SHELL_WORKSPACE") || Quickshell.shellDir
+    readonly property NativeProcess backend: NativeProcess {
+        command: [NativeApp.pythonExecutable, "-u", NativeApp.backendEntry]
+        workingDirectory: NativeApp.initialWorkspace
         stdinEnabled: true
         running: true
-        stdout: SplitParser { onRead: data => bridge.receive(data) }
-        stderr: SplitParser { onRead: data => console.warn("Error del backend: " + data) }
+        output: LineParser { onRead: data => bridge.receive(data) }
+        errorOutput: LineParser { onRead: data => console.warn("Error del backend: " + data) }
         onExited: (exitCode, exitStatus) => {
             bridge.projectRunPending = false;
             bridge.projectRun = ({});
             bridge.projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             bridge.usageBusy = false;
             bridge.teamUsageBusy = false;
-            bridge.activeWorker = null;
+            bridge.agents = [];
             bridge.backendUsageBusy = false;
             bridge.activeBackendUsageId = "";
             bridge.usageRetryPending = false;

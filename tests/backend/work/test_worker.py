@@ -58,11 +58,11 @@ class WorkerCase(unittest.TestCase):
         self.workspace = Path(temp.name)
         self.progress = []
 
-    def run_worker(self, candidate, client, max_steps=8, control=None):
+    def run_worker(self, candidate, client, max_steps=8, control=None, role="builder"):
         router = WorkerRouter(*(client if candidate.provider == name else None
                                 for name in ("chatgpt", "agy", "claude")))
         router.workspace = self.workspace
-        return router.run("do it", candidate, control or StreamControl(), max_steps, self.progress.append)
+        return router.run("do it", candidate, control or StreamControl(), max_steps, self.progress.append, role)
 
 
 class ClaudeWorkerTests(WorkerCase):
@@ -84,7 +84,7 @@ class ClaudeWorkerTests(WorkerCase):
         self.assertEqual((result.status, result.summary, result.files_changed, result.tool_calls, result.tokens_used),
                          ("completed", "Created new.py", ["new.py"], 2, 38))
         self.assertEqual((client.calls[0]["effort"], client.calls[0]["isolated"]), ("medium", True))
-        self.assertIn("worker executing one bounded task", client.calls[0]["prompt"])
+        self.assertIn("Your role is builder", client.calls[0]["prompt"])
         self.assertTrue(self.progress)
 
     def test_error_result_is_never_completed(self):
@@ -154,6 +154,55 @@ class ChatGPTWorkerTests(WorkerCase):
         self.assertEqual(self.run_worker(CHATGPT, ScriptedChatGPT(), control=control).status, "interrupted")
 
 
+class ReadOnlyRoleTests(WorkerCase):
+    PATCH = {"patch": "*** Begin Patch\n*** Add File: b.txt\n+hi\n*** End Patch"}
+
+    def test_chatgpt_read_only_roles_do_not_get_or_run_editing_tools(self):
+        for role, names in (("explorer", {"read_file", "grep_files"}), ("reviewer", {"shell", "read_file", "grep_files"})):
+            with self.subTest(role=role):
+                client = ScriptedChatGPT(completed(tool("apply_patch", self.PATCH)), completed(text("Report")))
+                result = self.run_worker(CHATGPT, client, role=role)
+                self.assertEqual({t["name"] for t in client.calls[0]["tools"]}, names)
+                self.assertFalse((self.workspace / "b.txt").exists())
+                self.assertEqual(result.status, "completed")
+
+    def test_claude_read_only_roles_restrict_builtin_tools(self):
+        done = [{"type": "result", "is_error": False, "result": "Report"}]
+        for role, tools in (("explorer", "Read,Grep,Glob"), ("reviewer", "Read,Grep,Glob"), ("builder", "")):
+            client = ScriptedCli(parse_claude_stream_line, done)
+            self.run_worker(CLAUDE, client, role=role)
+            self.assertEqual(client.calls[0]["tools"], tools)
+
+    def test_edits_made_by_a_read_only_role_are_a_failure(self):
+        step = {"step_type": "tool", "step_index": 1, "tool_name": "write_file", "state": "DONE",
+                "tool_info": {"parameters": {"Path": "x.txt"}}}
+        client = ScriptedCli(parse_stream_line, [
+            {"event": "step_update", "step_update": step},
+            {"event": "result", "result": {"status": "SUCCESS", "response": "Reviewed."}}])
+        result = self.run_worker(AGY, client, role="reviewer")
+        self.assertEqual((result.status, result.files_changed), ("failed", ["x.txt"]))
+        self.assertIn("read-only", result.error)
+
+
+class DiskChangeTests(WorkerCase):
+    def run_shell(self, command, role):
+        client = ScriptedChatGPT(completed(tool("shell", {"command": command})), completed(text("Report")))
+        return self.run_worker(CHATGPT, client, role=role)
+
+    def test_files_written_by_commands_are_reported(self):
+        (self.workspace / "old.txt").write_text("1")
+        (self.workspace / "gone.txt").write_text("1")
+        result = self.run_shell("echo 22 > old.txt; echo x > new.txt; rm gone.txt; mkdir -p __pycache__; touch __pycache__/a.pyc",
+                                "builder")
+        self.assertEqual((result.status, result.files_changed, result.warning),
+                         ("completed", ["gone.txt", "new.txt", "old.txt"], ""))
+
+    def test_disk_changes_during_a_read_only_role_are_a_warning(self):
+        result = self.run_shell("echo x > new.txt", "reviewer")
+        self.assertEqual((result.status, result.files_changed), ("completed", ["new.txt"]))
+        self.assertIn("new.txt", result.warning)
+
+
 class ContractTests(unittest.TestCase):
     def test_strict_schema_requires_every_property(self):
         schema = DELEGATE_TOOL["parameters"]
@@ -170,9 +219,9 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(child.cancelled.is_set())
 
     def test_arguments_are_validated(self):
-        self.assertEqual(parse_delegate_arguments('{"task": " x ", "level": "hard", "provider": null}'),
-                         {"task": "x", "level": "hard", "provider": ""})
-        for bad in ('[]', '{"task": ""}', '{"task": "x", "level": "epic"}', '{"task": "x", "provider": "other"}', '{'):
+        self.assertEqual(parse_delegate_arguments('{"task": " x ", "role": "reviewer", "provider": null}'),
+                         {"task": "x", "role": "reviewer", "provider": ""})
+        for bad in ('[]', '{"task": ""}', '{"task": "x", "role": "boss"}', '{"task": "x", "provider": "other"}', '{'):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 parse_delegate_arguments(bad)
 

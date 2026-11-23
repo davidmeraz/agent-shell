@@ -1,10 +1,10 @@
 import QtQuick
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // Guardado atómico por shell real; después verifica retarget y ciclo del visor.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool sawProgress: false
@@ -93,7 +93,7 @@ ShellRoot {
                 if (!scenario.check(code.text === scenario.nextText.replace(/\r\n/g, "\n")
                     && scenario.viewer.preview === scenario.nextText,
                     "los saltos CRLF rompen el documento o alteran la instantánea original")) return;
-                scenario.nextText = "// " + "z".repeat(128 * 1024 - 4) + "\n";
+                scenario.nextText = ("// " + "z".repeat(124) + "\n").repeat(1024);
                 scenario.viewer.applyPreview({text: scenario.nextText, truncated: true}, true);
                 scenario.startedAt = Date.now();
                 scenario.stage = 5;

@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Shell (Quickshell + ChatGPT local harness)
+Description=Agent Shell (Aplicación nativa Qt6/Wayland + harness local de IA)
 PartOf=graphical-session.target
 After=graphical-session.target
 

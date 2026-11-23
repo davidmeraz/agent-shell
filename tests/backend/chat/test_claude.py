@@ -83,7 +83,7 @@ class _FakeClaudeClient:
             "checked_at": "2026-11-23T08:15:00+00:00",
         }
 
-    def stream_turn(self, prompt, model, workspace, control, *, session_id="", effort="", image="", isolated=False):
+    def stream_turn(self, prompt, model, workspace, control, *, session_id="", effort="", image="", isolated=False, tools=""):
         self.calls.append({
             "prompt": prompt,
             "model": model,
@@ -92,6 +92,7 @@ class _FakeClaudeClient:
             "session_id": session_id,
             "image": image,
             "isolated": isolated,
+            "tools": tools,
         })
         control.mark("request")
         control.mark("headers")

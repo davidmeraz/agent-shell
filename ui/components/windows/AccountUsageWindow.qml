@@ -2,14 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
-import Quickshell
-import Quickshell.Io
-import Quickshell.Wayland
+import AgentShell.Native
 import "../.."
 import "../shared"
 
 // Ventana independiente: acompaña Chat/Work sin bloquearlos ni desenfocarlos.
-FloatingWindow {
+NativeWindow {
     id: usage
     objectName: "accountUsageWindow"
     required property AgentBridge bridge
@@ -23,7 +21,6 @@ FloatingWindow {
     color: "transparent"
     visible: false
     onClosed: usage.visible = false
-    BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     property double nowMs: Date.now()
     property bool geminiOnly: true
     readonly property bool hasData: !!bridge.accountUsage.checked_at
@@ -75,7 +72,7 @@ FloatingWindow {
     // Comparte columna con el chat desde el arranque, tanto en Chat como en Work.
     function schedulePlacement() {
         if (visible && mainWindowTitle
-            && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen")
+            && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen")
             placementDelay.restart();
     }
     onImplicitHeightChanged: schedulePlacement()
@@ -106,15 +103,15 @@ FloatingWindow {
         onTriggered: {
             if (!usage.visible || !usage.mainWindowTitle) return;
             placement.running = false;
-            placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
-                Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId), usage.title, "4", usage.mainWindowTitle];
+            placement.command = [NativeApp.pythonExecutable,
+                NativeApp.placementScript,
+                String(NativeApp.processId), usage.title, "4", usage.mainWindowTitle];
             placement.running = true;
         }
     }
-    Process {
+    NativeProcess {
         id: placement
-        stderr: SplitParser { onRead: data => console.warn("Posición del uso: " + data) }
+        errorOutput: LineParser { onRead: data => console.warn("Posición del uso: " + data) }
     }
 
     Timer {

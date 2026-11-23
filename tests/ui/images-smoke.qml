@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 
 // Teclado real y PNG de prueba; HTTP/SSE local sin portapapeles ni cuenta del usuario.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false
@@ -41,12 +41,12 @@ ShellRoot {
                     inspector.findChild(chat, "chatSidebarDrawer").close(); inspector.wait(200);
                     scenario.prompt = inspector.findChild(chat, "chatPrompt");
                     scenario.composer = inspector.findChild(chat, "chatComposer");
-                    Quickshell.clipboardText = "texto nativo";
+                    NativeApp.clipboardText = "texto nativo";
                     scenario.prompt.text = "Antes: "; scenario.prompt.cursorPosition = scenario.prompt.length;
                     inspector.wait(30); scenario.paste(); inspector.wait(30);
                     if (!scenario.check(scenario.prompt.text === "Antes: texto nativo" && !scenario.composer.pendingPasteId
                         && !scenario.composer.attachedImage, "Ctrl+V de texto dejó de ser nativo")) return;
-                    Quickshell.clipboardText = "";
+                    NativeApp.clipboardText = "";
                     scenario.prompt.text = "Descripción";
                     inspector.wait(20); scenario.paste();
                     scenario.stage = 1;

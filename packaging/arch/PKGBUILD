@@ -2,18 +2,23 @@
 pkgname=agent-shell
 pkgver=0.26.0
 pkgrel=1
-pkgdesc="Cliente nativo de ChatGPT para Linux con Quickshell, Qt Quick y ejecución local de shell"
-arch=('any')
+pkgdesc="Aplicación nativa Qt6/Wayland de IA para Linux integrada con Hyprland y el tema Gema"
+arch=('x86_64')
 url="https://github.com/davidmeraz/agent-shell"
 license=('MIT')
 depends=(
-  'quickshell'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-wayland'
+  'qt6-svg'
   'python'
   'python-pyjwt'
   'python-cryptography'
   'python-pillow'
 )
 makedepends=(
+  'cmake'
+  'ninja'
   'python-build'
   'python-installer'
   'python-setuptools'
@@ -22,7 +27,7 @@ makedepends=(
 optdepends=(
   'wl-clipboard: pegado de imágenes desde el portapapeles en Wayland'
   'xclip: pegado de imágenes desde el portapapeles en X11'
-  'hyprland: colocación automática en mosaico de ventanas Chat y Work'
+  'hyprland: colocación automática en mosaico y desenfoque nativo de vidrio'
 )
 
 # Construye desde el árbol local del repositorio (dos niveles arriba de packaging/arch).
@@ -31,20 +36,32 @@ _repo_root="${startdir}/../.."
 build() {
   cd "$_repo_root"
   python -m build --wheel --no-isolation --outdir "$srcdir/dist"
+  cmake -S "$_repo_root/native" -B "$srcdir/native-build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DAGENT_SHELL_INSTALL_DATADIR=/usr/share/$pkgname
+  cmake --build "$srcdir/native-build" --parallel
 }
 
 package() {
   cd "$_repo_root"
   python -m installer --destdir="$pkgdir" "$srcdir"/dist/*.whl
 
+  DESTDIR="$pkgdir" cmake --install "$srcdir/native-build"
+
   install -dm755 "$pkgdir/usr/share/$pkgname/backend"
+  install -dm755 "$pkgdir/usr/share/$pkgname/scripts"
+  install -dm755 "$pkgdir/usr/share/$pkgname/hyprland"
   install -Dm755 backend/main.py "$pkgdir/usr/share/$pkgname/backend/main.py"
+  install -Dm755 scripts/place-text-viewer.py "$pkgdir/usr/share/$pkgname/scripts/place-text-viewer.py"
   install -Dm644 shell.qml "$pkgdir/usr/share/$pkgname/shell.qml"
+  install -Dm644 packaging/arch/agent-shell.svg "$pkgdir/usr/share/$pkgname/agent-shell.svg"
+  install -Dm644 packaging/arch/hyprland-agent-shell.lua "$pkgdir/usr/share/$pkgname/hyprland/agent-shell.lua"
+
   cp -a ui "$pkgdir/usr/share/$pkgname/ui"
   find "$pkgdir/usr/share/$pkgname/ui" -type d -exec chmod 755 {} +
   find "$pkgdir/usr/share/$pkgname/ui" -type f -exec chmod 644 {} +
 
-  install -Dm755 packaging/arch/agent-shell "$pkgdir/usr/bin/$pkgname"
   install -Dm644 packaging/arch/agent-shell.desktop "$pkgdir/usr/share/applications/$pkgname.desktop"
   install -Dm644 packaging/arch/agent-shell.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/$pkgname.svg"
   install -Dm644 packaging/arch/agent-shell.service "$pkgdir/usr/lib/systemd/user/$pkgname.service"

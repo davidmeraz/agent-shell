@@ -14,6 +14,9 @@ ROLES = (0, 1, 2, 3, 4)
 FLOATING_ROLES = tuple(range(5, 21))
 # 21: cualquiera de las tarjetas de uso por proveedor; se alinean todas juntas.
 PROVIDER_USAGE_ROLE = 21
+# 22..25: ventanas de subagentes, por orden de aparición en el turno.
+AGENT_ROLES = tuple(range(22, 26))
+AGENT_PREPARE = "--prepare-agents"
 USAGE_TITLE = "Agent Shell · Uso del plan"
 PROVIDER_USAGE_TITLES = tuple(f"Agent Shell · Uso · {name}" for name in ("ChatGPT", "Gemini", "Claude"))
 PROVIDER_USAGE_GAP = 10
@@ -72,6 +75,30 @@ def provider_usage_geometry(monitor: dict, index: int, count: int, height: int) 
     start = usable * index // count
     end = usable * (index + 1) // count
     return x + start + PROVIDER_USAGE_GAP * index, y, end - start, height
+
+
+def agent_geometry(monitor: dict, slot: int) -> tuple[int, int, int, int]:
+    """Columna izquierda, pegada al chat; si no hay alto suficiente, en cascada dentro del área útil."""
+    chat_x, _, _, _ = geometry(monitor, 3)
+    x, top, column, _ = geometry(monitor, 0)
+    _, _, _, full = geometry(monitor, 1)
+    gap = 10
+    width = min(540, max(340, column))
+    height = min(340, max(240, (full - 3 * gap) // 4))
+    step = min(height + gap, max(1, (full - height) // 3))
+    return max(min(x, chat_x), chat_x - gap - width), top + slot * step, width, height
+
+
+def prepare_agent_windows() -> None:
+    """Las ventanas de subagentes aparecen solas: no deben quitar el foco de lo que se esté usando."""
+    version = json.loads(hyprctl("-j", "version"))
+    match = re.search(r"(\d+)\.(\d+)", version.get("version", version.get("tag", "")))
+    if match and tuple(map(int, match.groups())) >= (0, 55):
+        # La regla con nombre se reemplaza a sí misma y no toca la configuración del usuario.
+        result = hyprctl("eval", 'hl.window_rule({ name = "agent-shell-agents", match = { class = "^agent-shell$", '
+                        'title = "^Agent Shell · Agente · .*" }, no_initial_focus = true })')
+        if result.strip() != "ok":
+            raise RuntimeError("El compositor rechazó la regla de foco de los subagentes: " + result.strip())
 
 
 def hyprctl(*args: str) -> str:
@@ -136,7 +163,9 @@ def place(pid: int, title: str, viewer_id: int, main_title: str = "") -> bool:
                 for window, role in targets:
                     x, y, width, height = (
                         provider_usage_geometry(monitor, cards.index(window), len(cards), usage_height)
-                        if role == PROVIDER_USAGE_ROLE else geometry(monitor, role, usage_height))
+                        if role == PROVIDER_USAGE_ROLE
+                        else agent_geometry(monitor, role - AGENT_ROLES[0]) if role in AGENT_ROLES
+                        else geometry(monitor, role, usage_height))
                     target = "address:" + window["address"]
                     move_workspace = bool(main and (window.get("workspace", {}).get("id") != main["workspace"]["id"]
                                                    or window["monitor"] != main["monitor"]))
@@ -169,9 +198,12 @@ def main() -> int:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not shutil.which("hyprctl"):
         return 0
     try:
+        if sys.argv[1:] == [AGENT_PREPARE]:
+            prepare_agent_windows()
+            return 0
         pid, title, viewer_id = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
         main_title = sys.argv[4] if len(sys.argv) > 4 else ""
-        if viewer_id not in (*ROLES, *FLOATING_ROLES, PROVIDER_USAGE_ROLE):
+        if viewer_id not in (*ROLES, *FLOATING_ROLES, PROVIDER_USAGE_ROLE, *AGENT_ROLES):
             raise ValueError("Identificador de visor inválido")
         if not place(pid, title, viewer_id, main_title):
             raise RuntimeError("No se encontró el visor o su ventana principal en el compositor")

@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/components/work"
 
 // Tarea interna de IA por HTTP local y programa real, sin mensajes de chat.
-ShellRoot {
+NativeScope {
     id: scenario
     property int stage: 0
     property bool stepping: false

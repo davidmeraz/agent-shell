@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Quickshell
+import AgentShell.Native
 import "../.."
 import "../../js/ChatCommands.js" as ChatCommands
 import "../../js/Performance.js" as Performance
@@ -258,7 +258,7 @@ GlassPanel {
                 padding: 4
                 background: null
                 Keys.onPressed: event => {
-                    if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && !Quickshell.clipboardText) {
+                    if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && !NativeApp.clipboardText) {
                         composer.pasteImage();
                         event.accepted = true;
                         return;

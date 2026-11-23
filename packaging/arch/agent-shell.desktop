@@ -3,11 +3,20 @@ Type=Application
 Version=1.0
 Name=Agent Shell
 GenericName=AI Coding Shell
-Comment=Cliente nativo de ChatGPT con ejecución local de shell y proyectos Work
+Comment=Aplicación nativa Qt6/Wayland de IA con ejecución local de shell y proyectos Work integrada con Hyprland y Gema
 Exec=/usr/bin/agent-shell
 Icon=agent-shell
 Terminal=false
 Categories=Development;
-Keywords=ai;chatgpt;shell;terminal;coding;quickshell;
+Keywords=ai;chatgpt;claude;gemini;shell;terminal;coding;hyprland;gema;
 StartupNotify=false
 StartupWMClass=agent-shell
+Actions=toggle;quit;
+
+[Desktop Action toggle]
+Name=Mostrar / Ocultar Agent Shell
+Exec=/usr/bin/agent-shell --toggle
+
+[Desktop Action quit]
+Name=Cerrar Agent Shell
+Exec=/usr/bin/agent-shell --quit

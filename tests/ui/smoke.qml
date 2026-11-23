@@ -1,10 +1,10 @@
 import QtQuick
-import Quickshell
+import AgentShell.Native
 import "../../ui"
 import "../../ui/js/Performance.js" as Performance
 
 // Escenario con backend real y HTTP/SSE local. Nunca inicia OAuth ni un modelo.
-ShellRoot {
+NativeScope {
     id: test
     property int stage: 0
     property string savedChatId: ""

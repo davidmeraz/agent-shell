@@ -4,14 +4,17 @@ import QtQuick.Layouts
 import "../.."
 import "../shared"
 
-// Equipo del modo unificado: el arquitecto activo y el obrero que se usaría en cada nivel.
+// Equipo del modo unificado: el arquitecto activo y el subagente que se usaría en cada rol.
 GlassPanel {
     id: team
     objectName: "unifiedTeam"
     required property AgentBridge bridge
     property bool compact: false
-    readonly property var activeWorker: bridge.activeWorker
-    readonly property bool planning: bridge.busy && !activeWorker
+    readonly property var activeAgent: bridge.activeAgent
+    readonly property bool planning: bridge.busy && !activeAgent
+    readonly property string delegations: !bridge.agentTurn ? ""
+        : bridge.agents.length ? " · " + bridge.agents.length + (bridge.agents.length === 1 ? " DELEGACIÓN" : " DELEGACIONES")
+        : bridge.busy ? "" : " · SIN DELEGAR"
     readonly property var architect: bridge.unifiedArchitect
     readonly property color accentColor: GemaTheme.synced ? GemaTheme.accentInk : "#ffffff"
     implicitHeight: content.implicitHeight + 20
@@ -57,17 +60,19 @@ GlassPanel {
     component WorkerCell: Rectangle {
         id: cell
         required property string title
-        required property string level
+        required property string role
+        readonly property int uses: team.bridge.agents.filter(agent => agent.role === role).length
         readonly property var options: {
-            const row = team.bridge.unifiedTeam.find(entry => entry.level === level);
+            const row = team.bridge.unifiedTeam.find(entry => entry.role === role);
             return row ? row.workers : [];
         }
-        readonly property bool working: !!team.activeWorker && team.activeWorker.level === level
-        readonly property var worker: working ? team.activeWorker.worker : (options.length ? options[0] : null)
-        objectName: "unifiedWorker_" + level
+        readonly property bool working: !!team.activeAgent && team.activeAgent.role === role
+        readonly property var worker: working && team.activeAgent.worker.name ? team.activeAgent.worker : (options.length ? options[0] : null)
+        objectName: "unifiedWorker_" + role
         Layout.fillWidth: true
         Layout.preferredWidth: 1
         Layout.minimumWidth: 0
+        Layout.fillHeight: true
         implicitHeight: cellContent.implicitHeight + 14
         radius: 10
         color: working ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#24ffffff") : "#0cffffff"
@@ -86,14 +91,14 @@ GlassPanel {
             Caption {
                 id: cellCaption
                 Layout.fillWidth: true
-                text: !cell.working ? cell.title : cell.width < 180 ? "● " + cell.title : cell.title + " · TRABAJANDO"
+                text: (cell.working ? "● " : "") + cell.title + (cell.uses ? " ×" + cell.uses : "")
                 color: cell.working ? team.accentColor : GemaTheme.subtleColor
                 Pulse { subject: cellCaption; running: cell.working && GemaTheme.animations }
             }
             Label {
-                objectName: "unifiedWorkerName_" + cell.level
+                objectName: "unifiedWorkerName_" + cell.role
                 Layout.fillWidth: true
-                text: cell.worker ? team.symbol(cell.worker.provider) + " " + cell.worker.name : "Sin obrero disponible"
+                text: cell.worker ? team.symbol(cell.worker.provider) + " " + cell.worker.name : "No disponible"
                 color: cell.worker ? GemaTheme.textColor : GemaTheme.subtleColor
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
@@ -114,7 +119,7 @@ GlassPanel {
             (index + 1) + ". " + worker.name + (worker.effort ? " (" + worker.effort + ")" : "")
             + " · " + team.engine(worker.provider) + " · " + team.quota(worker)).slice(0, 7).join("\n")
         Accessible.role: Accessible.StaticText
-        Accessible.name: "Obrero " + cell.title.toLowerCase() + ": " + (cell.worker ? cell.worker.name : "no disponible")
+        Accessible.name: "Subagente " + cell.title.toLowerCase() + ": " + (cell.worker ? cell.worker.name : "no disponible")
     }
 
     ColumnLayout {
@@ -131,7 +136,8 @@ GlassPanel {
             spacing: 8
             Caption {
                 id: architectCaption
-                text: team.planning ? "ARQUITECTO · PENSANDO" : "ARQUITECTO"
+                objectName: "unifiedArchitectState"
+                text: "ARQUITECTO" + (team.planning ? " · PENSANDO" : "") + team.delegations
                 color: team.planning ? team.accentColor : GemaTheme.subtleColor
                 Pulse { subject: architectCaption; running: team.planning && GemaTheme.animations }
             }
@@ -154,12 +160,15 @@ GlassPanel {
             }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 6
-            WorkerCell { title: "SIMPLE"; level: "simple" }
-            WorkerCell { title: "NORMAL"; level: "standard" }
-            WorkerCell { title: "DIFÍCIL"; level: "hard" }
+            columns: team.width < 600 ? 2 : 4
+            columnSpacing: 6
+            rowSpacing: 6
+            WorkerCell { title: "EXPLORADOR"; role: "explorer" }
+            WorkerCell { title: "CONSTRUCTOR"; role: "builder" }
+            WorkerCell { title: "ESPECIALISTA"; role: "specialist" }
+            WorkerCell { title: "REVISOR"; role: "reviewer" }
         }
     }
 }
