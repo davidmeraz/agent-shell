@@ -16,7 +16,7 @@ FloatingWindow {
     property string mainWindowTitle: ""
     title: "Agent Shell · Uso del plan"
     implicitWidth: 320
-    implicitHeight: Math.max(140, Math.min(420, stats.implicitHeight + 32))
+    implicitHeight: Math.max(140, Math.min(560, stats.implicitHeight + 32))
     // La altura sigue las cuotas incluso si llegan después de abrir en Wayland.
     minimumSize: Qt.size(260, implicitHeight)
     maximumSize: Qt.size(16777215, implicitHeight)
@@ -25,7 +25,30 @@ FloatingWindow {
     onClosed: usage.visible = false
     BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     property double nowMs: Date.now()
+    property bool geminiOnly: false
     readonly property bool hasData: !!bridge.accountUsage.checked_at
+    readonly property bool isAgyUsage: hasData && bridge.accountUsage.source === "agy"
+    readonly property var visibleLimits: {
+        if (!hasData) return [];
+        const raw = bridge.accountUsage.limits || [];
+        if (!isAgyUsage) return raw;
+        return raw.filter(item => {
+            const id = (item.id || "").toLowerCase();
+            const name = (item.name || "").toLowerCase();
+            if (id.indexOf("argon") >= 0 || name.indexOf("argon") >= 0) return false;
+            if (!geminiOnly) return true;
+            return id.indexOf("gemini") >= 0 || name.indexOf("gemini") >= 0;
+        });
+    }
+
+    function groupTitle(item) {
+        const name = (item && item.name) ? item.name : "Codex";
+        if (!isAgyUsage) return name === "codex" ? "Codex" : name;
+        const lower = name.toLowerCase();
+        if (lower.indexOf("gemini") >= 0) return "Gemini";
+        if (lower.indexOf("claude") >= 0) return "Claude · GPT";
+        return name;
+    }
 
     function open() {
         const alreadyVisible = visible;
@@ -52,8 +75,8 @@ FloatingWindow {
     onImplicitHeightChanged: schedulePlacement()
     onMainWindowTitleChanged: schedulePlacement()
     function refreshWhenAvailable() {
-        if (visible && bridge.ready && bridge.authenticated && !hasData
-            && !bridge.accountBusy && !bridge.loginBusy && !bridge.usageBusy)
+        if (visible && bridge.ready && bridge.engineReady && !hasData
+            && !bridge.accountBusy && !bridge.loginBusy && !bridge.providerBusy && !bridge.usageBusy)
             bridge.refreshUsage();
     }
     Connections {
@@ -61,8 +84,13 @@ FloatingWindow {
         function onAreaChanged() { usage.schedulePlacement(); }
         function onReadyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
         function onLoginBusyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
+        function onProviderChanged() {
+            usage.nowMs = Date.now();
+            Qt.callLater(usage.refreshWhenAvailable);
+        }
         function onEventReceived(event) {
-            if (event.type === "auth.refresh.finished") usage.refreshWhenAvailable();
+            if (event.type === "auth.refresh.finished" || event.type === "provider.refresh.finished")
+                usage.refreshWhenAvailable();
         }
     }
     Timer {
@@ -119,7 +147,7 @@ FloatingWindow {
                 enabled: usage.visible
                 onActivated: { usage.nowMs = Date.now(); usage.bridge.refreshUsage(); }
             }
-            // El contenido es informativo; se puede arrastrar la tarjeta sin una cabecera.
+            // El contenido es informativo; se puede arrastrar la tarjeta sin una cabecera pesada.
             DragHandler {
                 target: null
                 acceptedButtons: Qt.LeftButton
@@ -136,7 +164,70 @@ FloatingWindow {
                     id: stats
                     objectName: "usageStats"
                     width: parent.width
-                    spacing: 18
+                    spacing: 12
+                    RowLayout {
+                        objectName: "usageHeaderRow"
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            objectName: "usageHeaderTitle"
+                            Layout.fillWidth: true
+                            text: usage.bridge.provider === "agy"
+                                ? (usage.geminiOnly ? "Uso · Gemini" : "Uso · Antigravity")
+                                : "Uso · ChatGPT"
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            color: "#cfd8e3"
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                        }
+                        Button {
+                            id: geminiFilterButton
+                            objectName: "usageGeminiOnlyButton"
+                            visible: usage.isAgyUsage
+                            implicitHeight: 20
+                            leftPadding: 8
+                            rightPadding: 8
+                            topPadding: 0
+                            bottomPadding: 0
+                            hoverEnabled: true
+                            focusPolicy: Qt.NoFocus
+                            scale: down ? 0.95 : (hovered ? 1.03 : 1.0)
+                            Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+                            onClicked: usage.geminiOnly = !usage.geminiOnly
+                            Accessible.name: usage.geminiOnly
+                                ? "Mostrando solo modelos Gemini. Pulsar para ver Gemini y Claude"
+                                : "Filtrar para mostrar solo el uso de los modelos Gemini"
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 350
+                            ToolTip.text: usage.geminiOnly
+                                ? "Mostrando solo Gemini · Clic para ver todos"
+                                : "Mostrar solo el uso de Gemini"
+                            contentItem: Text {
+                                text: usage.geminiOnly ? "✦ Gemini" : "Solo Gemini"
+                                textFormat: Text.PlainText
+                                color: usage.geminiOnly
+                                    ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
+                                    : (geminiFilterButton.hovered ? "#ffffff" : "#b8c4d2")
+                                font.pixelSize: 10
+                                font.weight: usage.geminiOnly ? Font.DemiBold : Font.Medium
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: GlassPanel {
+                                radius: 6
+                                reflective: false
+                                highlighted: usage.geminiOnly || geminiFilterButton.hovered
+                                topColor: usage.geminiOnly
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                                    : (geminiFilterButton.hovered ? "#22ffffff" : "#14ffffff")
+                                bottomColor: "#08ffffff"
+                                edgeColor: usage.geminiOnly
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.58) : "#58ffffff")
+                                    : (geminiFilterButton.hovered ? "#44ffffff" : "#28ffffff")
+                            }
+                        }
+                    }
                     Text {
                         objectName: "chatUsageError"
                         Layout.fillWidth: true
@@ -156,18 +247,30 @@ FloatingWindow {
                     }
                     Repeater {
                         objectName: "chatUsageLimits"
-                        model: usage.hasData ? usage.bridge.accountUsage.limits : []
+                        model: usage.visibleLimits
                         delegate: ColumnLayout {
                             required property var modelData
+                            required property int index
                             Layout.fillWidth: true
-                            spacing: 14
+                            spacing: 10
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                visible: index > 0 && usage.isAgyUsage
+                                color: "#1affffff"
+                            }
                             Text {
                                 Layout.fillWidth: true
-                                visible: usage.bridge.accountUsage.limits.length > 1
-                                text: modelData.name === "codex" ? "Codex" : modelData.name || "Codex"
+                                visible: usage.visibleLimits.length > 1
+                                text: usage.groupTitle(modelData)
                                 textFormat: Text.PlainText
+                                elide: Text.ElideRight
                                 color: "#aaaaaa"
                                 font.pixelSize: 11
+                                HoverHandler { id: groupTitleHover }
+                                ToolTip.visible: visible && groupTitleHover.hovered && !!modelData.description
+                                ToolTip.delay: 350
+                                ToolTip.text: modelData.description || ""
                             }
                             UsageLimit {
                                 objectName: "usagePrimary_" + modelData.id
@@ -190,8 +293,10 @@ FloatingWindow {
                     }
                     Text {
                         Layout.fillWidth: true
-                        visible: usage.hasData && !usage.bridge.accountUsage.limits.length
-                        text: "Sin cuotas disponibles"
+                        visible: usage.hasData && !usage.visibleLimits.length
+                        text: usage.geminiOnly && usage.isAgyUsage
+                            ? "Sin cuotas de Gemini disponibles"
+                            : "Sin cuotas disponibles"
                         color: "#bbbbbb"
                         font.pixelSize: 12
                     }

@@ -61,12 +61,14 @@ def main() -> None:
     except ValueError as error:
         parser.error(str(error))
     from harness.account.auth import ChatGPTSession
+    from harness.chat.agy import AgyClient
     from harness.chat.chatgpt import ChatGPTClient
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     session = ChatGPTSession(paths.session_root)
     HarnessServer(
         paths.history_root, sys.stdout, session, ChatGPTClient(session), args.model,
         args.workspace, limits=limits, config_root=paths.config_root,
+        agy_client=AgyClient(),
     ).serve(sys.stdin)
 
 

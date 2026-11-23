@@ -27,6 +27,15 @@ GlassPanel {
         return slug || "";
     }
 
+    function assistantLabel(slug) {
+        const lower = (slug || "").toLowerCase();
+        if (lower.startsWith("gemini")) return "Gemini";
+        if (lower.startsWith("claude")) return "Claude";
+        if (lower.startsWith("gpt-oss")) return "Antigravity";
+        if (!lower && bridge.provider === "agy") return "Antigravity";
+        return "ChatGPT";
+    }
+
     // Avanza el texto revelado alineándolo a palabras completas para evitar saltos de línea a mitad de palabra.
     function nextStreamLength(fullText, currentLen, finishing) {
         const total = fullText.length;
@@ -106,11 +115,11 @@ GlassPanel {
         }
         Text {
             width: parent.width
-            text: pane.bridge.authenticated
+            text: pane.bridge.engineReady
                 ? (pane.bridge.activeArea === "app"
                    ? "Construye con vidrio mate transparente (Quickshell + " + (pane.bridge.projectEngine === "rust" ? "Rust" : "Python") + "). Usa 'Probar' e 'Iniciar' arriba."
                    : pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
-                : "Conecta tu cuenta de ChatGPT para comenzar."
+                : "Conecta tu cuenta de ChatGPT" + (pane.bridge.agyAvailable ? " o usa Antigravity (Gemini / Claude)" : "") + " para comenzar."
             color: GemaTheme.mutedColor
             font.pixelSize: 13
             style: Text.Raised
@@ -122,7 +131,7 @@ GlassPanel {
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(parent.width, 520)
             spacing: 8
-            visible: pane.bridge.authenticated && pane.height >= 260
+            visible: pane.bridge.engineReady && pane.height >= 260
             Repeater {
                 model: pane.bridge.activeArea === "app" ? [
                     { icon: "◈", label: "Añadir panel Glass", desc: "Tarjetas MattePanel, GlassPanel y controles interactivos", prompt: "Diseña en AppWindow.qml una interfaz con paneles GlassPanel/MattePanel y controles de Gema UI Kit para: " },
@@ -216,13 +225,23 @@ GlassPanel {
                 }
             }
         }
-        ActionButton {
+        Row {
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: !pane.bridge.authenticated
-            text: "Continuar con ChatGPT"
-            accent: true
-            enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.accountBusy
-            onClicked: pane.loginRequested()
+            visible: !pane.bridge.engineReady
+            spacing: 10
+            ActionButton {
+                text: "Continuar con ChatGPT"
+                accent: true
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                onClicked: pane.loginRequested()
+            }
+            ActionButton {
+                objectName: "chatHeroUseAgy"
+                visible: pane.bridge.agyAvailable
+                text: "✦ Usar Antigravity (agy)"
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                onClicked: pane.bridge.selectProvider("agy")
+            }
         }
     }
 
@@ -606,7 +625,8 @@ GlassPanel {
                         }
                     }
                     Text {
-                        text: message.systemMessage ? "Sistema" : "ChatGPT"
+                        text: message.systemMessage ? "Sistema"
+                            : pane.assistantLabel(message.measurement.model || (message.streaming ? pane.bridge.modelName : ""))
                         color: GemaTheme.textColor
                         font.pixelSize: 13
                         font.bold: true

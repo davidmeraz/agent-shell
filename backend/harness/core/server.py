@@ -32,11 +32,13 @@ from ..chat.compaction import (
 from ..chat.history import HistoryStore
 from ..work.projects import ProjectStore
 from ..work.project_runner import ProjectRunner
+from ..chat.agy import summarize_agy_tool
 from ..chat.models import validate_effort
 from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
 from .limits import AgentLimits, FailureTracker, LIMIT_FIELDS, LimitsStore, billable_tokens
 from .profile import ProfileStore
+from .provider import ProviderStore, normalize_provider
 from ..chat.performance import TurnPerformance
 from ..tools.files import (
     GREP_TOOL, READ_FILE_TOOL, execute_grep_files, execute_read_file, summarize_file_tool_command,
@@ -83,7 +85,8 @@ class HarnessServer:
 
     def __init__(self, history_root: Path, output: TextIO, session, client,
                  model: str = "", workspace: Path | None = None, usage_reader=None,
-                 limits: AgentLimits | None = None, config_root: Path | None = None) -> None:
+                 limits: AgentLimits | None = None, config_root: Path | None = None,
+                 agy_client=None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
         config_dir = config_root if config_root is not None else self.history.root / "config"
@@ -91,6 +94,17 @@ class HarnessServer:
         self.limits = limits if limits is not None else AgentLimits.from_environment(base=self.limits_store.load())
         self.profile_store = ProfileStore(config_dir)
         self.profile = self.profile_store.load()
+        self.provider_store = ProviderStore(config_dir)
+        saved_provider = self.provider_store.load()
+        self.agy_client = agy_client
+        self.agy_available = bool(self.agy_client is not None and self.agy_client.is_available())
+        self.provider = "agy" if saved_provider["provider"] == "agy" and self.agy_available else "chatgpt"
+        self.provider_pending = False
+        self._chatgpt_models: list[dict] = []
+        self._chatgpt_model = model
+        self._chatgpt_effort = ""
+        self._agy_models: list[dict] = []
+        self._agy_model = saved_provider.get("agy_model", "")
         self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
         self.active_area = "chat"
         self.project: dict | None = None
@@ -100,7 +114,7 @@ class HarnessServer:
         self.session = session
         self.client = client
         self.conversation: dict | None = None
-        self.model = model
+        self.model = self._agy_model if self.provider == "agy" else model
         self.reasoning_effort = ""
         self.models: list[dict] = []
         self.authenticated = False
@@ -168,6 +182,106 @@ class HarnessServer:
 
     def _publish_profile(self) -> None:
         self._emit("profile.state", display_name=self.profile.get("display_name", ""))
+
+    def _publish_provider(self) -> None:
+        self._emit(
+            "provider.state",
+            provider=self.provider,
+            agy_available=self.agy_available,
+            chatgpt_authenticated=self.authenticated,
+        )
+
+    def _apply_catalog(self, models: list[dict], preferred_model: str = "", preferred_effort: str = "") -> None:
+        self.models = models
+        allowed = {row["slug"] for row in models}
+        selected = preferred_model if preferred_model in allowed else (models[0]["slug"] if models else "")
+        self.model = selected
+        efforts = self._model_options(selected).get("reasoning_efforts", [])
+        self.reasoning_effort = preferred_effort if isinstance(preferred_effort, str) and preferred_effort in efforts else ""
+        self._emit("models.list", models=models, selected=self.model, reasoning_effort=self.reasoning_effort)
+
+    def _load_agy_models(self, force: bool = False) -> None:
+        try:
+            models = self.agy_client.models(force=force) if self.agy_client is not None else []
+            with self._lock:
+                if self._closing.is_set():
+                    return
+                self._agy_models = models
+                if self.provider == "agy":
+                    preferred = self._agy_model or self.model
+                    self._apply_catalog(models, preferred, "")
+                    self._agy_model = self.model
+                self._publish_provider()
+        except (ServiceError, OSError) as error:
+            with self._lock:
+                if self.provider == "agy":
+                    self._apply_catalog([], "", "")
+                self._publish_provider()
+                self._emit("error", message=str(error) if isinstance(error, ServiceError) else
+                           "No se pudo consultar el catálogo de Antigravity (agy).")
+        finally:
+            with self._lock:
+                self.provider_pending = False
+                self._emit("provider.refresh.finished")
+
+    def _select_provider(self, request: dict) -> None:
+        if self.busy or self.login_pending or self.account_pending or self.provider_pending or self.project_runner.preparing:
+            self._emit("provider.rejected", message="Espera a que termine la operación actual antes de cambiar de motor.")
+            return
+        try:
+            unknown = set(request) - {"type", "provider"}
+            if unknown:
+                raise ValueError("Solicitud de motor con campos desconocidos.")
+            target = normalize_provider(request.get("provider"))
+        except ValueError as error:
+            self._emit("provider.rejected", message=str(error))
+            return
+
+        if target == "agy" and not self.agy_available:
+            self._emit("provider.rejected", message="Antigravity CLI (agy) no está disponible en este equipo.")
+            return
+
+        if target == self.provider:
+            if target == "agy" and not self._agy_models:
+                self.provider_pending = True
+                self._emit("provider.refresh.started")
+                self._spawn(lambda: self._load_agy_models(force=True))
+            else:
+                self._publish_provider()
+            return
+
+        if self.provider == "chatgpt":
+            self._chatgpt_model = self.model
+            self._chatgpt_effort = self.reasoning_effort
+        else:
+            self._agy_model = self.model
+
+        self.provider = target
+        try:
+            self.provider_store.save(self.provider, self._agy_model)
+        except OSError:
+            pass
+
+        self._publish_provider()
+        if target == "agy":
+            if self._agy_models:
+                self._apply_catalog(self._agy_models, self._agy_model, "")
+                self._agy_model = self.model
+                self._emit("provider.refresh.finished")
+            else:
+                self.provider_pending = True
+                self._emit("provider.refresh.started")
+                self._spawn(self._load_agy_models)
+        else:
+            if self.authenticated:
+                if self._chatgpt_models:
+                    self._apply_catalog(self._chatgpt_models, self._chatgpt_model, self._chatgpt_effort)
+                else:
+                    self.account_pending = True
+                    self._emit("auth.refresh.started")
+                    self._spawn(self._refresh_account)
+            else:
+                self._apply_catalog([], "", "")
 
     def _update_profile(self, request: dict) -> None:
         try:
@@ -238,6 +352,15 @@ class HarnessServer:
             self.history.save(record)
             self.conversation = record
         self.model, self.reasoning_effort = model["slug"], effort
+        if self.provider == "agy":
+            self._agy_model = self.model
+            try:
+                self.provider_store.save("agy", self._agy_model)
+            except OSError:
+                pass
+        else:
+            self._chatgpt_model = self.model
+            self._chatgpt_effort = self.reasoning_effort
         self._publish_model()
 
     def _visible_project(self, project):
@@ -355,21 +478,30 @@ class HarnessServer:
         self._emit("auth.state", **account)
 
     def _usage_identity(self):
+        if self.provider == "agy":
+            return ("agy", self.agy_available, "", "")
         account = self.session.account()
         selected = next((row.get("id") for row in account.get("accounts", []) if row.get("active")), "")
-        return (account.get("authenticated"), account.get("email", ""), selected)
+        return ("chatgpt", account.get("authenticated"), account.get("email", ""), selected)
 
     def _read_usage(self, request_id, identity):
         try:
-            result = self.usage_reader.read(expected_email=identity[1])
+            if identity[0] == "agy":
+                if self.agy_client is None:
+                    raise UsageError("agy_missing", "Antigravity CLI (agy) no está disponible en este equipo.")
+                result = self.agy_client.usage()
+            else:
+                result = self.usage_reader.read(expected_email=identity[2])
             with self._lock:
                 if self._usage_identity() != identity:
-                    raise UsageError("account_changed", "La cuenta activa cambió. Vuelve a consultar el uso.")
+                    raise UsageError("account_changed", "El motor o la cuenta activa cambió. Vuelve a consultar el uso.")
                 self._emit("usage.state", request_id=request_id, **result)
         except (UsageError, ServiceError, OSError, ValueError, TypeError) as error:
+            default_msg = ("No se pudo consultar el uso de Antigravity (agy)."
+                           if identity[0] == "agy" else "No se pudo consultar el uso de Codex.")
             self._emit("usage.error", request_id=request_id,
                        code=error.code if isinstance(error, UsageError) else "unavailable",
-                       message=str(error) if isinstance(error, UsageError) else "No se pudo consultar el uso de Codex.")
+                       message=str(error) if isinstance(error, UsageError) else default_msg)
         finally:
             with self._lock:
                 self.usage_pending = False
@@ -384,20 +516,26 @@ class HarnessServer:
             with self._lock:
                 if self._closing.is_set():
                     return
-                self.models = models
+                self._chatgpt_models = models
                 allowed = {row["slug"] for row in models}
-                if self.model not in allowed:
-                    self.model = models[0]["slug"] if models else ""
-                    self.reasoning_effort = ""
-                if self.reasoning_effort not in self._model_options().get("reasoning_efforts", []):
-                    self.reasoning_effort = ""
-                self._emit("models.list", models=models, selected=self.model, reasoning_effort=self.reasoning_effort)
+                if self._chatgpt_model not in allowed:
+                    self._chatgpt_model = models[0]["slug"] if models else ""
+                    self._chatgpt_effort = ""
+                if self.provider == "chatgpt":
+                    preferred = self.model if self.model in allowed else self._chatgpt_model
+                    self._apply_catalog(models, preferred, self.reasoning_effort or self._chatgpt_effort)
+                    self._chatgpt_model = self.model
+                    self._chatgpt_effort = self.reasoning_effort
                 self._publish_account()
+                self._publish_provider()
         except (ServiceError, OSError) as error:
             with self._lock:
-                self.models = []
+                self._chatgpt_models = []
+                if self.provider == "chatgpt":
+                    self.models = []
+                    self._emit("models.list", models=[], selected="")
                 self._publish_account()
-                self._emit("models.list", models=[], selected="")
+                self._publish_provider()
                 self._emit("error", message=str(error) if isinstance(error, ServiceError) else
                            "No se pudo leer la sesión guardada")
         finally:
@@ -471,9 +609,12 @@ class HarnessServer:
         try:
             confirmed = self.session.logout()
             with self._lock:
-                self.models = []
-                self._emit("models.list", models=[], selected="")
+                self._chatgpt_models = []
+                if self.provider == "chatgpt":
+                    self.models = []
+                    self._emit("models.list", models=[], selected="")
                 self._publish_account()
+                self._publish_provider()
                 if not confirmed:
                     self._emit("error", message="Sesión local cerrada. No se confirmó la revocación remota; puedes desconectar Agent Shell en los ajustes de ChatGPT.")
         finally:
@@ -1198,6 +1339,196 @@ class HarnessServer:
                                  "No se pudo completar la respuesta")
                     self._publish_account()
 
+    @staticmethod
+    def _build_agy_prompt(prompt: str, prior_messages: list[dict], has_conversation_id: bool) -> str:
+        """Si el chat ya tenía historial previo sin sesión de `agy`, resume el hilo para continuar."""
+        if has_conversation_id or not prior_messages:
+            return prompt
+        lines: list[str] = []
+        budget = 8000
+        for row in prior_messages[-12:]:
+            text = (row.get("text") or "").strip()
+            if not text:
+                continue
+            role = "Usuario" if row.get("role") == "user" else "Asistente" if row.get("role") == "assistant" else "Sistema"
+            snippet = text[:1600]
+            if budget - len(snippet) < 0:
+                break
+            lines.append(f"{role}: {snippet}")
+            budget -= len(snippet)
+        if not lines:
+            return prompt
+        return (
+            "Contexto previo de esta conversación en Agent Shell:\n"
+            + "\n".join(lines)
+            + "\n\nNuevo mensaje del usuario:\n"
+            + prompt
+        )
+
+    def _start_agy_turn(
+        self,
+        prompt: str,
+        model: str,
+        control: StreamControl,
+        generation: int,
+        workspace: Path,
+        project_id: str,
+        agy_conversation_id: str,
+        image: str = "",
+    ) -> None:
+        """Ejecuta un turno mediante el CLI oficial `agy -p --output-format stream-json`."""
+        agy_calls: dict[int, dict] = {}
+        active_step: int | None = None
+        step_usage_reported = False
+        streamed_text = False
+        result_seen = False
+        result_error = ""
+        final_response = ""
+        final_usage = None
+        turn_id = ""
+        with self._lock:
+            if not self._current_turn(generation) or self._performance is None:
+                return
+            turn_id = self._performance.turn_id
+            self._performance.begin_model_call()
+            call_stub = {"id": turn_id, "turn_id": turn_id}
+            observe_work = bool(project_id)
+
+        try:
+            observer = ProjectActivity(
+                workspace,
+                lambda change: self._work_changed(change, project_id, call_stub, generation),
+                ignored=(self.history.root,),
+            ) if observe_work else nullcontext()
+            with observer:
+                stream = self.agy_client.stream_turn(
+                    prompt,
+                    model,
+                    workspace,
+                    control,
+                    conversation_id=agy_conversation_id,
+                    image=image,
+                )
+                for event in stream:
+                    control.check()
+                    with self._lock:
+                        if not self._current_turn(generation):
+                            return
+                        kind = event["type"]
+                        conv_id = event.get("conversation_id") or ""
+                        if conv_id and self.conversation is not None:
+                            self.conversation["agy_conversation_id"] = conv_id
+
+                        if kind == "init":
+                            self._save()
+                        elif kind == "text_delta":
+                            step_index = int(event.get("step_index", 0))
+                            if active_step is not None and active_step != step_index and not self._performance._call_active:
+                                self._performance.begin_model_call()
+                                self._performance.mark("request")
+                            active_step = step_index
+                            delta = event.get("text", "")
+                            if delta:
+                                streamed_text = True
+                                self._message(f"agy-{turn_id}-{step_index}", delta, True)
+                            if event.get("done") and event.get("usage"):
+                                if not self._performance._call_active:
+                                    self._performance.begin_model_call()
+                                    self._performance.mark("request")
+                                self._performance.complete_model_call(event["usage"])
+                                step_usage_reported = True
+                                self._update_performance(force=True)
+                        elif kind == "tool":
+                            step_index = int(event.get("step_index", 0))
+                            call = agy_calls.get(step_index)
+                            state = event.get("state", "")
+                            summary = summarize_agy_tool(event.get("tool_name", "tool"), event.get("parameters"), workspace)
+                            if call is None:
+                                call = {
+                                    "id": uuid.uuid4().hex,
+                                    "call_id": f"agy-{turn_id}-{step_index}",
+                                    "turn_id": turn_id,
+                                    "source": "agy",
+                                    "command": summary,
+                                    "workdir": str(workspace),
+                                    "status": "running",
+                                    "output": "",
+                                    "exit_code": None,
+                                    "truncated": False,
+                                    "message_index": len(self.conversation["messages"]),
+                                }
+                                agy_calls[step_index] = call
+                                self.conversation.setdefault("tool_calls", []).append(call)
+                                self._performance.tool_calls += 1
+                                self._emit("tool.updated", call=call)
+                                if observe_work:
+                                    self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                                               turn_id=turn_id, status="running")
+                                self._save()
+                            else:
+                                if summary and summary != call["command"]:
+                                    call["command"] = summary
+                            if state in ("DONE", "ERROR", "CANCELLED"):
+                                err_msg = event.get("error", "")
+                                if state == "CANCELLED":
+                                    call["status"] = "interrupted"
+                                elif state == "ERROR" or err_msg:
+                                    call["status"] = "error"
+                                else:
+                                    call["status"] = "completed"
+                                output_text = event.get("output", "")
+                                if err_msg and not output_text:
+                                    output_text = err_msg
+                                call["output"] = output_text
+                                call["truncated"] = bool(event.get("truncated", False))
+                                duration_sec = event.get("duration_seconds")
+                                if duration_sec is not None:
+                                    duration_ms = round(duration_sec * 1000, 3)
+                                    call["duration_ms"] = duration_ms
+                                    self._performance.tool_ms += duration_ms
+                                self._emit("tool.updated", call=call)
+                                if observe_work:
+                                    self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                                               turn_id=turn_id, status=call["status"])
+                                self._save()
+                            elif event.get("output") and event["output"] != call["output"]:
+                                call["output"] = event["output"]
+                                self._emit("tool.updated", call=call)
+                        elif kind == "error":
+                            raise ServiceError(event.get("message") or "Antigravity (agy) devolvió un error.")
+                        elif kind == "result":
+                            result_seen = True
+                            if event.get("status") not in ("SUCCESS", "OK", ""):
+                                result_error = event.get("error") or f"Antigravity terminó con estado {event.get('status')}."
+                            final_response = event.get("response", "")
+                            final_usage = event.get("usage")
+
+            with self._lock:
+                if not self._current_turn(generation):
+                    return
+                if result_error:
+                    raise ServiceError(result_error)
+                if final_response and not streamed_text:
+                    streamed_text = True
+                    self._message(f"agy-{turn_id}-final", final_response, False)
+                if not step_usage_reported and final_usage:
+                    if not self._performance._call_active:
+                        self._performance.begin_model_call()
+                        self._performance.mark("request")
+                    self._performance.complete_model_call(final_usage)
+                if not streamed_text and not agy_calls and not result_seen:
+                    raise ServiceError("Antigravity (agy) terminó sin devolver una respuesta.")
+                self._finish("completed")
+        except Cancelled:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self._finish("interrupted")
+        except (ServiceError, OSError, ValueError, KeyError, TypeError) as error:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self._finish("failed", str(error) if isinstance(error, ServiceError) else
+                                 "No se pudo completar la respuesta con Antigravity (agy).")
+
     def _explore(self, request: dict) -> None:
         project_id = request.get("project_id")
         request_id = request.get("request_id")
@@ -1329,12 +1660,18 @@ class HarnessServer:
                 if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
                     self._emit("usage.error", request_id="", code="invalid_request", message="Solicitud de uso inválida.")
                     return
-                if self.usage_pending or self.login_pending or self.account_pending:
-                    self._emit("usage.error", request_id=request_id, code="busy", message="Espera a que termine la consulta o el cambio de cuenta.")
+                if self.usage_pending or self.login_pending or self.account_pending or self.provider_pending:
+                    self._emit("usage.error", request_id=request_id, code="busy", message="Espera a que termine la consulta o el cambio de motor.")
                     self._emit("usage.finished", request_id=request_id)
                     return
                 identity = self._usage_identity()
-                if not identity[0] or not identity[1]:
+                if identity[0] == "agy":
+                    if not identity[1]:
+                        self._emit("usage.error", request_id=request_id, code="agy_missing",
+                                   message="Instala e inicia sesión en Antigravity CLI (`agy`) para consultar tu uso.")
+                        self._emit("usage.finished", request_id=request_id)
+                        return
+                elif not identity[1] or not identity[2]:
                     self._emit("usage.error", request_id=request_id, code="login_required", message="Conecta tu cuenta de ChatGPT en Agent Shell antes de consultar el uso.")
                     self._emit("usage.finished", request_id=request_id)
                     return
@@ -1399,6 +1736,9 @@ class HarnessServer:
             if action == "profile.update":
                 self._update_profile(request)
                 return
+            if action == "provider.select":
+                self._select_provider(request)
+                return
             if action == "shell.execute":
                 self._start_local_shell(request)
                 return
@@ -1456,13 +1796,21 @@ class HarnessServer:
                         self._finish("interrupted")
                 return
             if action == "chat.compact":
-                if self.busy or self.login_pending or self.account_pending:
+                if self.busy or self.login_pending or self.account_pending or self.provider_pending:
                     self._emit("chat.compacted", status="failed", handoff=False, manual=True,
                                chat_id=self.conversation["chat_id"] if self.conversation else "",
                                previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
                                compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
                                max_compactions=self.limits.max_compactions,
                                message="Espera a que termine la operación actual.")
+                    return
+                if self.provider == "agy":
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                               max_compactions=self.limits.max_compactions,
+                               message="Antigravity (agy) gestiona la compactación de contexto automáticamente en su sesión.")
                     return
                 if not self.authenticated or not self.models:
                     self._emit("chat.compacted", status="failed", handoff=False, manual=True,
@@ -1489,7 +1837,7 @@ class HarnessServer:
                 self._login_cancel.set()
                 return
             if action in ("chat.new", "chat.open", "chat.delete", "history.list", "model.select"):
-                if self.busy or self.login_pending or (action == "model.select" and self.account_pending):
+                if self.busy or self.login_pending or (action == "model.select" and (self.account_pending or self.provider_pending)):
                     self._emit("error", message="Espera a que termine la operación actual")
                     return
                 try:
@@ -1542,7 +1890,7 @@ class HarnessServer:
             if action != "chat.send":
                 self._emit("error", message="Instrucción desconocida")
                 return
-            if self.busy or self.login_pending or self.account_pending:
+            if self.busy or self.login_pending or self.account_pending or self.provider_pending:
                 self._emit("error", message="Espera a que termine la operación actual")
                 return
             prompt = request.get("prompt")
@@ -1557,7 +1905,9 @@ class HarnessServer:
                 return
             if not isinstance(prompt, str) or (not prompt.strip() and not image) or len(prompt) > MAX_PROMPT_LENGTH:
                 self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
-            elif not self.authenticated or not self.models:
+            elif self.provider == "agy" and (not self.agy_available or not self.models):
+                self._emit("chat.finished", status="failed", message="Antigravity (agy) no tiene modelos disponibles. Comprueba tu sesión en `agy`.")
+            elif self.provider != "agy" and (not self.authenticated or not self.models):
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
             elif self.active_area in ("work", "app") and self.project is None:
                 self._emit("chat.finished", status="failed",
@@ -1569,6 +1919,7 @@ class HarnessServer:
                     if self.conversation is None:
                         self.conversation = self._create_conversation(prompt.strip() or "Imagen adjunta")
                     snapshot = copy.deepcopy(self.conversation)
+                    prior_messages = copy.deepcopy(self.conversation.get("messages", []))
                     turn_id = uuid.uuid4().hex
                     self.conversation["messages"].append({"id": turn_id, "role": "user",
                                                          "text": prompt.strip(), "status": "completed",
@@ -1592,6 +1943,7 @@ class HarnessServer:
                     self.conversation.setdefault("performance", []).append(turn_performance.snapshot())
                     self.conversation["model"] = self.model
                     self.conversation["reasoning_effort"] = self.reasoning_effort
+                    self.conversation["provider"] = self.provider
                     self.history.save(self.conversation)
                 except (OSError, sqlite3.Error):
                     if "snapshot" in locals():
@@ -1614,11 +1966,20 @@ class HarnessServer:
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)
-                chat_cache_key = "chat-" + self.conversation["chat_id"]
-                control.turn_state = self._turn_states.get(chat_cache_key, "")
-                self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort,
-                                                     prompt_cache_key=chat_cache_key,
-                                                     prior_context_tokens=prior_context_tokens))
+                if self.provider == "agy":
+                    agy_conv_id = self.conversation.get("agy_conversation_id") or ""
+                    agy_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(agy_conv_id))
+                    workspace = self.workspace
+                    project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
+                    self._spawn(lambda: self._start_agy_turn(
+                        agy_prompt, model, control, generation, workspace, project_id, agy_conv_id, image=image,
+                    ))
+                else:
+                    chat_cache_key = "chat-" + self.conversation["chat_id"]
+                    control.turn_state = self._turn_states.get(chat_cache_key, "")
+                    self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort,
+                                                         prompt_cache_key=chat_cache_key,
+                                                         prior_context_tokens=prior_context_tokens))
 
     def serve(self, source: TextIO) -> None:
         try:
@@ -1626,9 +1987,10 @@ class HarnessServer:
             self._publish_area()
             self._publish_limits()
             self._publish_profile()
+            self._publish_provider()
             self._publish_projects()
             self._publish_history()
-            self._emit("backend.ready", provider="chatgpt", app_version=get_version())
+            self._emit("backend.ready", provider=self.provider, app_version=get_version())
             with self._lock:
                 try:
                     self._publish_account()
@@ -1636,7 +1998,13 @@ class HarnessServer:
                     self.authenticated = False
                     self._emit("auth.state", authenticated=False, method="none", email="", plan="", plan_enabled=False)
                     self._emit("error", message="No se pudo leer la sesión guardada. El historial sigue disponible.")
-                if self.authenticated:
+                self._publish_provider()
+                if self.provider == "agy" and self.agy_available:
+                    self.provider_pending = True
+                    self._emit("provider.refresh.started")
+                    self._emit("auth.refresh.finished")
+                    self._spawn(self._load_agy_models)
+                elif self.authenticated:
                     self.account_pending = True
                     self._emit("auth.refresh.started")
                     self._spawn(self._refresh_account)
@@ -1672,4 +2040,6 @@ class HarnessServer:
                         self._finish("interrupted")
                 self._closing.set()
             self.usage_reader.close()
+            if self.agy_client is not None and hasattr(self.agy_client, "close"):
+                self.agy_client.close()
             self.history.db.checkpoint()

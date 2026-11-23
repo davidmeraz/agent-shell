@@ -9,6 +9,10 @@ QtObject {
     id: bridge
     property bool ready: false
     property bool authenticated: false
+    property string provider: "chatgpt"
+    property bool agyAvailable: false
+    property bool providerBusy: false
+    readonly property bool engineReady: (provider === "agy" && agyAvailable) || (provider === "chatgpt" && authenticated)
     property bool busy: false
     property bool loginBusy: false
     property bool accountBusy: false
@@ -83,10 +87,10 @@ QtObject {
     readonly property ListModel registeredAccounts: ListModel {}
     property int activeAccountIndex: -1
     readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId && !areaBusy
-    readonly property bool canSelectArea: ready && canBrowseHistory && !accountBusy
-    readonly property bool canSend: ready && authenticated && availableModels.count > 0
-                                   && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
-    readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy
+    readonly property bool canSelectArea: ready && canBrowseHistory && !accountBusy && !providerBusy
+    readonly property bool canSend: ready && engineReady && availableModels.count > 0
+                                   && !busy && !loginBusy && !accountBusy && !providerBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
+    readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy && !providerBusy
                                       && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunProject: canRunShell && (activeArea === "work" || activeArea === "app") && !!projectId && !projectRunActive
                                          && ((authenticated && availableModels.count > 0) || !!projectRunCaches[projectId])
@@ -103,7 +107,7 @@ QtObject {
     }
 
     function refreshUsage() {
-        if (!ready || usageBusy || accountBusy || loginBusy) return;
+        if (!ready || usageBusy || accountBusy || loginBusy || providerBusy) return;
         usageBusy = true;
         usageError = "";
         usageRequestId = "usage-" + (++usageSequence);
@@ -344,6 +348,13 @@ QtObject {
         sendCommand(request);
     }
 
+    function selectProvider(nextProvider) {
+        if (!ready || busy || loginBusy || accountBusy || providerBusy || projectRunPreparing) return;
+        if (nextProvider !== "chatgpt" && nextProvider !== "agy") return;
+        if (nextProvider === "agy" && !agyAvailable) return;
+        sendCommand({ type: "provider.select", provider: nextProvider });
+    }
+
     function refreshPerformance() {
         if (!ready || performanceBusy) return;
         performanceBusy = true;
@@ -516,6 +527,34 @@ QtObject {
         } else if (event.type === "profile.rejected") {
             profileError = data.message;
             status = data.message;
+        } else if (event.type === "provider.state") {
+            const nextProvider = data.provider === "agy" ? "agy" : "chatgpt";
+            if (nextProvider !== provider) {
+                accountUsage = ({});
+                usageError = "";
+                usageRequestId = "";
+                usageBusy = false;
+            }
+            provider = nextProvider;
+            agyAvailable = !!data.agy_available;
+            if (!busy && !loginBusy && !accountBusy && !providerBusy) {
+                if (provider === "agy")
+                    status = availableModels.count > 0 ? "Conectado con Antigravity (agy)." : "Antigravity (agy) listo.";
+                else if (authenticated)
+                    status = "Conectado con tu cuenta de ChatGPT.";
+            }
+        } else if (event.type === "provider.refresh.started") {
+            providerBusy = true;
+            status = "Cargando modelos de Antigravity (agy)…";
+        } else if (event.type === "provider.refresh.finished") {
+            providerBusy = false;
+            if (provider === "agy")
+                status = availableModels.count > 0
+                    ? "Conectado con Antigravity (agy)."
+                    : "No se encontraron modelos en Antigravity (agy).";
+        } else if (event.type === "provider.rejected") {
+            providerBusy = false;
+            status = data.message;
         } else if (event.type === "tool.updated") {
             updateTool(data.call);
             if (data.call.status === "running") status = data.call.source === "local" ? "Ejecutando comando local…" : "Ejecutando comando…";
@@ -561,11 +600,12 @@ QtObject {
             currentChatId = chat.chat_id;
             currentTitle = chat.title;
             openingChat = false;
-            status = authenticated ? "Conversación recuperada. Puedes continuar."
-                     : "Conversación recuperada. Conecta ChatGPT para continuar.";
+            status = engineReady ? "Conversación recuperada. Puedes continuar."
+                     : "Conversación recuperada. Conecta un motor de IA para continuar.";
             conversationChanged();
         } else if (event.type === "backend.ready") {
             ready = true;
+            if (data.provider === "agy" || data.provider === "chatgpt") provider = data.provider;
             appVersion = data.app_version;
             status = "Comprobando tu sesión…";
         } else if (event.type === "auth.state") {
@@ -589,7 +629,7 @@ QtObject {
                 registeredAccounts.append({ accountId: account.id,
                                             displayName: account.label + (account.email ? " · " + account.email : "") });
             }
-            if (!busy && !loginBusy && !accountBusy)
+            if (!busy && !loginBusy && !accountBusy && !providerBusy && provider !== "agy")
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
                          : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                          : "Inicia sesión con ChatGPT para empezar.";
@@ -606,7 +646,10 @@ QtObject {
             status = "Actualizando la cuenta y los modelos…";
         } else if (event.type === "auth.refresh.finished") {
             accountBusy = false;
-            if (authenticated && availableModels.count > 0)
+            if (provider === "agy") {
+                if (!providerBusy && availableModels.count > 0)
+                    status = "Conectado con Antigravity (agy).";
+            } else if (authenticated && availableModels.count > 0)
                 status = "Conectado. Usando tu plan de ChatGPT.";
             else if (!authenticated)
                 status = email ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
@@ -660,7 +703,7 @@ QtObject {
         } else if (event.type === "chat.delta") {
             recordFirstText(data.turn_id, data.text);
             updateMessage(data.item_id, data.text, true, data.turn_id);
-            status = "ChatGPT está respondiendo…";
+            status = provider === "agy" ? "Antigravity está respondiendo…" : "ChatGPT está respondiendo…";
         } else if (event.type === "chat.message") {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
             recordFirstText(data.turn_id, data.text);
@@ -689,7 +732,7 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
-            status = authenticated ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
+            status = engineReady ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
             if (event.type === "error") deletingChatId = "";
@@ -710,6 +753,7 @@ QtObject {
             busy = false;
             loginBusy = false;
             accountBusy = false;
+            providerBusy = false;
             performanceBusy = false;
             framePending = false;
             deletingChatId = "";
@@ -740,6 +784,7 @@ QtObject {
             bridge.shellRunning = false;
             bridge.loginBusy = false;
             bridge.accountBusy = false;
+            bridge.providerBusy = false;
             bridge.performanceBusy = false;
             bridge.framePending = false;
             bridge.historyReady = false;

@@ -118,6 +118,123 @@ GlassDialog {
     contentItem: ColumnLayout {
         spacing: 8
 
+        GlassPanel {
+            objectName: "settingsProviderCard"
+            Layout.fillWidth: true
+            implicitHeight: providerCol.implicitHeight + 20
+            radius: 12
+            reflective: false
+            topColor: "#14ffffff"
+            bottomColor: "#0affffff"
+            edgeColor: "#26ffffff"
+            ColumnLayout {
+                id: providerCol
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Motor de IA"
+                        textFormat: Text.PlainText
+                        color: GemaTheme.textColor
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
+                    }
+                    Text {
+                        text: dialog.bridge.provider === "agy"
+                            ? "Gemini · Claude (agy)"
+                            : (dialog.bridge.authenticated ? "Plan ChatGPT" : "Sin sesión")
+                        textFormat: Text.PlainText
+                        color: GemaTheme.subtleColor
+                        font.pixelSize: 10
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    readonly property bool canSwitch: dialog.bridge.ready && !dialog.bridge.busy
+                        && !dialog.bridge.loginBusy && !dialog.bridge.accountBusy
+                        && !dialog.bridge.providerBusy && !dialog.bridge.projectRunPreparing
+                    Button {
+                        id: chatgptProviderBtn
+                        objectName: "settingsProviderChatgpt"
+                        Layout.fillWidth: true
+                        implicitHeight: 34
+                        hoverEnabled: true
+                        enabled: parent.canSwitch
+                        readonly property bool active: dialog.bridge.provider === "chatgpt"
+                        onClicked: dialog.bridge.selectProvider("chatgpt")
+                        contentItem: Text {
+                            text: (chatgptProviderBtn.active ? "● " : "") + "ChatGPT"
+                            textFormat: Text.PlainText
+                            color: chatgptProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
+                                : GemaTheme.mutedColor
+                            font.pixelSize: 12
+                            font.weight: chatgptProviderBtn.active ? Font.DemiBold : Font.Normal
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: GlassPanel {
+                            radius: 9
+                            reflective: false
+                            highlighted: chatgptProviderBtn.active || chatgptProviderBtn.hovered
+                            topColor: chatgptProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                                : (chatgptProviderBtn.hovered ? "#1effffff" : "#10ffffff")
+                            bottomColor: "#08ffffff"
+                            edgeColor: chatgptProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#58ffffff")
+                                : "#24ffffff"
+                        }
+                    }
+                    Button {
+                        id: agyProviderBtn
+                        objectName: "settingsProviderAgy"
+                        Layout.fillWidth: true
+                        implicitHeight: 34
+                        hoverEnabled: true
+                        enabled: parent.canSwitch && dialog.bridge.agyAvailable
+                        readonly property bool active: dialog.bridge.provider === "agy"
+                        onClicked: dialog.bridge.selectProvider("agy")
+                        ToolTip.visible: hovered && !dialog.bridge.agyAvailable
+                        ToolTip.text: "Instala e inicia sesión en Antigravity CLI (`agy`) para habilitar este motor."
+                        contentItem: Text {
+                            text: (agyProviderBtn.active ? "✦ " : "")
+                                + (dialog.bridge.agyAvailable ? "Antigravity (agy)" : "agy (no disponible)")
+                            textFormat: Text.PlainText
+                            color: !dialog.bridge.agyAvailable ? "#777777"
+                                : agyProviderBtn.active
+                                  ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
+                                  : GemaTheme.mutedColor
+                            font.pixelSize: 12
+                            font.weight: agyProviderBtn.active ? Font.DemiBold : Font.Normal
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        background: GlassPanel {
+                            radius: 9
+                            reflective: false
+                            highlighted: agyProviderBtn.active || agyProviderBtn.hovered
+                            topColor: agyProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                                : (agyProviderBtn.hovered ? "#1effffff" : "#10ffffff")
+                            bottomColor: "#08ffffff"
+                            edgeColor: agyProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#58ffffff")
+                                : "#24ffffff"
+                        }
+                    }
+                }
+            }
+        }
+
         SettingsRow {
             objectName: "settingsLimitsRow"
             iconText: "◈"
@@ -155,10 +272,12 @@ GlassDialog {
 
         SettingsRow {
             objectName: "settingsUsageRow"
-            visible: dialog.bridge.authenticated
+            visible: dialog.bridge.engineReady
             iconText: "◔"
             titleText: "Uso del plan"
-            subtitleText: "Ventana de cuotas 5 h y límite semanal"
+            subtitleText: dialog.bridge.provider === "agy"
+                ? "Cuotas por grupo de modelos en Antigravity (Gemini, Claude y GPT)"
+                : "Ventana de cuotas 5 h y límite semanal"
             onClicked: { dialog.close(); dialog.usageRequested(); }
         }
 

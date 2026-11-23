@@ -32,7 +32,7 @@ function parse(text) {
     if (command.name !== "/modelos") return { name: command.name };
     const parts = (match[2] || "").trim().split(/\s+/).filter(part => !!part);
     let family = "";
-    if (parts.length && /^(gpt-\d+|otros)$/i.test(parts[0])) {
+    if (parts.length && /^(gpt-\d+|gemini|claude|otros)$/i.test(parts[0])) {
         family = parts.shift().toLowerCase();
         if (parts[0] && parts[0].toLowerCase() === "modelos") parts.shift();
     }
@@ -46,12 +46,27 @@ function effortLabel(value) {
               medium: "Medio", high: "Alto", xhigh: "Muy alto", max: "Máximo", ultra: "Ultra" })[value] || value;
 }
 
+function familyRank(name) {
+    if (name === "gemini") return 10000;
+    if (name === "claude") return 9999;
+    if (name.startsWith("gpt-")) return Number(name.slice(4)) || 0;
+    if (name === "otros") return -1;
+    return 0;
+}
+
+function familyLabel(name) {
+    if (name === "gemini") return "Gemini";
+    if (name === "claude") return "Claude";
+    if (name === "otros") return "Otros";
+    return name.toUpperCase();
+}
+
 function modelChoices(text, models, activeModel, activeEffort) {
     const query = modelQuery(text);
     if (query === null) return [];
     const parts = query.split(/\s+/).filter(part => !!part);
     const families = Array.from(new Set(models.map(model => model.family)));
-    families.sort((a, b) => a === "otros" ? 1 : b === "otros" ? -1 : Number(b.slice(4)) - Number(a.slice(4)));
+    families.sort((a, b) => familyRank(b) - familyRank(a));
     const family = families.includes(parts[0]) ? parts.shift() : "";
     if (family && parts[0] === "modelos") parts.shift();
     const candidates = models.filter(model => !family || model.family === family);
@@ -70,7 +85,7 @@ function modelChoices(text, models, activeModel, activeEffort) {
     if (parts.length > 1) return [];
     if (!family && (!query || families.some(name => name.startsWith(query)))) {
         return families.filter(name => !query || name.startsWith(query)).map(name => ({
-            label: name === "otros" ? "Otros" : name.toUpperCase(), value: name,
+            label: familyLabel(name), value: name,
             command: "/modelos " + name + " ", kind: "family", final: false,
             selected: models.some(model => model.slug === activeModel && model.family === name),
             description: candidates.filter(model => model.family === name).length + " modelos disponibles"
@@ -103,8 +118,15 @@ function blockedReason(name, bridge) {
     if (name === "/nuevo") return bridge.canBrowseHistory ? "" : "Espera a que termine la operación actual y esté disponible el historial.";
     if (name === "/terminal") return bridge.ready && !bridge.busy && !bridge.loginBusy ? "" : "Espera a que el motor esté disponible y termine la operación actual.";
     if (name === "/shell") return bridge.canRunShell ? "" : "Espera a que termine la operación actual y esté disponible la terminal.";
-    if (name === "/modelos") return bridge.canSend ? "" : "Conecta ChatGPT y espera a que termine la operación actual para elegir modelo.";
-    if (name === "/compact") return bridge.canSend && bridge.currentChatId ? "" : "Abre una conversación con sesión conectada para compactar el contexto.";
+    if (name === "/modelos") return bridge.canSend ? ""
+        : (bridge.provider === "agy"
+           ? "Espera a que los modelos de Antigravity (agy) estén disponibles."
+           : "Conecta ChatGPT y espera a que termine la operación actual para elegir modelo.");
+    if (name === "/compact") {
+        if (bridge.provider === "agy")
+            return "Antigravity (agy) gestiona el contexto automáticamente en su sesión.";
+        return bridge.canSend && bridge.currentChatId ? "" : "Abre una conversación con sesión conectada para compactar el contexto.";
+    }
     if (name === "/limites") return bridge.ready && !bridge.busy && !bridge.loginBusy ? "" : "Espera a que el motor esté disponible y termine la operación actual.";
     return "Comando desconocido.";
 }

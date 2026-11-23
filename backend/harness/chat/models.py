@@ -17,7 +17,12 @@ DOCUMENTED = {
 
 
 def family(slug: str) -> str:
-    match = re.match(r"^(gpt-\d+)(?:[.-]|$)", slug.lower())
+    lower = slug.lower()
+    if lower.startswith("gemini"):
+        return "gemini"
+    if lower.startswith("claude"):
+        return "claude"
+    match = re.match(r"^(gpt-\d+)(?:[.-]|$)", lower)
     return match[1] if match else "otros"
 
 

@@ -907,8 +907,8 @@ FloatingWindow {
             ActionButton {
                 objectName: "chatUsageButton"
                 Layout.fillWidth: true
-                visible: window.bridge.authenticated
-                text: "Ver uso del plan"
+                visible: window.bridge.engineReady
+                text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)" : "Ver uso del plan"
                 onClicked: { accountPanel.close(); window.usageWindow.open(); }
             }
             Text {

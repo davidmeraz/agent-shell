@@ -45,7 +45,7 @@ GlassPanel {
     readonly property bool showCommands: prompt.activeFocus && !commandsDismissed && (completions.length > 0 || modelMode)
     readonly property bool canSubmit: !pendingPasteId && (prompt.text.trim().startsWith("/") || bridge.canSend)
     readonly property string activeModelLabel: {
-        if (bridge.shellRunning || !bridge.authenticated || !bridge.modelName) return "";
+        if (bridge.shellRunning || !bridge.engineReady || !bridge.modelName) return "";
         for (let i = 0; i < bridge.availableModels.count; ++i) {
             const model = bridge.availableModels.get(i);
             if (model.slug === bridge.modelName) return (model.displayName || model.slug)
@@ -224,7 +224,7 @@ GlassPanel {
                     ? "Describe qué quieres añadir a tu aplicación Gema UI Kit o /shell comando…"
                     : composer.bridge.activeArea === "work"
                       ? "Describe lo que quieres construir o /shell comando…"
-                      : composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
+                      : composer.bridge.engineReady ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
                 placeholderTextColor: "#aaaaaa"
                 color: "#f5f5f5"
                 font.pixelSize: 14
@@ -297,6 +297,54 @@ GlassPanel {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: !composer.showCommands
                     spacing: 6
+                    Button {
+                        id: providerSwitch
+                        objectName: "chatProviderSwitch"
+                        visible: composer.bridge.agyAvailable && !composer.bridge.shellRunning
+                        implicitHeight: 22
+                        leftPadding: 8
+                        rightPadding: 8
+                        topPadding: 0
+                        bottomPadding: 0
+                        hoverEnabled: true
+                        focusPolicy: Qt.NoFocus
+                        enabled: composer.bridge.ready && !composer.bridge.busy && !composer.bridge.loginBusy
+                                 && !composer.bridge.accountBusy && !composer.bridge.providerBusy
+                                 && !composer.bridge.projectRunPreparing
+                        readonly property bool isAgy: composer.bridge.provider === "agy"
+                        onClicked: composer.bridge.selectProvider(isAgy ? "chatgpt" : "agy")
+                        Accessible.name: isAgy
+                            ? "Motor activo: Antigravity (agy). Pulsar para cambiar a ChatGPT"
+                            : "Motor activo: ChatGPT. Pulsar para cambiar a Antigravity (agy)"
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: isAgy
+                            ? "Motor activo: Antigravity (Gemini / Claude) · Clic para cambiar a ChatGPT"
+                            : "Motor activo: ChatGPT · Clic para cambiar a Antigravity (Gemini / Claude)"
+                        contentItem: Text {
+                            text: providerSwitch.isAgy ? "✦ agy" : "ChatGPT"
+                            textFormat: Text.PlainText
+                            color: providerSwitch.isAgy
+                                ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
+                                : (providerSwitch.hovered ? "#ffffff" : "#cccccc")
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: GlassPanel {
+                            radius: 7
+                            reflective: false
+                            highlighted: providerSwitch.hovered || providerSwitch.isAgy
+                            topColor: providerSwitch.isAgy
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#28ffffff")
+                                : (providerSwitch.hovered ? "#22ffffff" : "#12ffffff")
+                            bottomColor: "#08ffffff"
+                            edgeColor: providerSwitch.isAgy
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.54) : "#50ffffff")
+                                : (providerSwitch.hovered ? "#44ffffff" : "#26ffffff")
+                        }
+                    }
                     Text {
                         objectName: "chatActiveModel"
                         Layout.preferredWidth: Math.min(implicitWidth, parent.width * 0.4)
@@ -311,8 +359,10 @@ GlassPanel {
                         HoverHandler { id: modelHover }
                         ToolTip.visible: visible && modelHover.hovered
                         ToolTip.delay: 400
-                        ToolTip.text: composer.bridge.modelName + " · Esfuerzo: "
-                            + ChatCommands.effortLabel(composer.bridge.reasoningEffort || "auto") + " · Cambia con /modelos"
+                        ToolTip.text: composer.bridge.provider === "agy"
+                            ? composer.bridge.modelName + " · Antigravity (agy) · Cambia con /modelos"
+                            : composer.bridge.modelName + " · Esfuerzo: "
+                              + ChatCommands.effortLabel(composer.bridge.reasoningEffort || "auto") + " · Cambia con /modelos"
                     }
                     Text {
                         visible: composer.activeModelLabel !== "" && composer.statusText !== ""
@@ -390,7 +440,10 @@ GlassPanel {
                     Text {
                         Layout.fillWidth: true
                         visible: !composer.completions.length
-                        text: composer.bridge.availableModels.count ? "Sin coincidencias" : "Conecta ChatGPT para ver tus modelos"
+                        text: composer.bridge.availableModels.count ? "Sin coincidencias"
+                            : (composer.bridge.provider === "agy"
+                               ? "Cargando modelos de Antigravity (agy)…"
+                               : "Conecta ChatGPT para ver tus modelos")
                         color: "#aaaaaa"
                         font.pixelSize: 11
                         elide: Text.ElideRight
