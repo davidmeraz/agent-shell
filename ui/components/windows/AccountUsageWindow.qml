@@ -43,13 +43,14 @@ FloatingWindow {
         schedulePlacement();
         if (!visible) { placementDelay.stop(); placement.running = false; }
     }
-    // En Work comparte columna con el chat; en Chat conserva la tarjeta libre.
+    // Comparte columna con el chat desde el arranque, tanto en Chat como en Work.
     function schedulePlacement() {
-        if (visible && bridge.activeArea === "work" && mainWindowTitle
+        if (visible && mainWindowTitle
             && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen")
             placementDelay.restart();
     }
     onImplicitHeightChanged: schedulePlacement()
+    onMainWindowTitleChanged: schedulePlacement()
     function refreshWhenAvailable() {
         if (visible && bridge.ready && bridge.authenticated && !hasData
             && !bridge.accountBusy && !bridge.loginBusy && !bridge.usageBusy)
@@ -68,7 +69,7 @@ FloatingWindow {
         id: placementDelay
         interval: 120
         onTriggered: {
-            if (!usage.visible || usage.bridge.activeArea !== "work") return;
+            if (!usage.visible || !usage.mainWindowTitle) return;
             placement.running = false;
             placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
                 Quickshell.shellDir + "/scripts/place-text-viewer.py",

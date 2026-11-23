@@ -137,7 +137,8 @@ están ocupados, aparece un aviso: cierra uno para abrir otro archivo, sin reemp
 los que estás leyendo. Todas las ventanas tienen fondo de vidrio mate translúcido, reflejos suaves y
 desenfoque nativo en compositores compatibles.
 
-En Hyprland, Work usa una distribución calculada de tres columnas del mismo ancho:
+En Hyprland, al iniciar se centran automáticamente el chat y la tarjeta de uso,
+tanto en Chat como en Work. Las ventanas usan una distribución calculada de tres columnas del mismo ancho:
 **carpetas arriba a la izquierda**, **visor 1 alto a la derecha** y
 **visor 2 abajo a la izquierda**, con el **chat centrado** y la tarjeta de uso encima
 cuando está abierta. Los márgenes y separaciones son de 20 píxeles lógicos; el
@@ -153,8 +154,8 @@ un archivo ya abierto no lo mueve. No se modifica la configuración de Hyprland.
 El explorador y los dos visores se abren en el mismo escritorio virtual del chat,
 aunque otro escritorio esté activo cuando la IA los abre. La colocación consulta
 la ubicación actual del chat en cada apertura, sin cambiar el escritorio activo.
-Abrir el explorador alinea también el chat y la tarjeta de uso; abrir la tarjeta en
-Work alinea la columna central. Abrir o cambiar un archivo no recoloca el chat.
+Abrir el explorador alinea también el chat y la tarjeta de uso; abrir la tarjeta
+alinea la columna central. Abrir o cambiar un archivo no recoloca el chat.
 Después puedes mover y redimensionar las ventanas. En pantallas pequeñas, si el
 mosaico no cabe con los tamaños mínimos legibles, las ventanas pueden superponerse.
 Se admiten los dispatchers Lua de Hyprland 0.55+ y las órdenes anteriores.

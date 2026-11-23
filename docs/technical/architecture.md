@@ -326,10 +326,11 @@ altura floor((H − 2m − g) / 2), alineadas con los bordes superior e inferior
 visor derecho. La tarjeta de uso ocupa la cabecera central con su altura nativa
 actual; el chat ocupa el resto, o toda la columna cuando la tarjeta no está abierta.
 Abrir el árbol coloca también el chat y la tarjeta de uso del mismo PID, si está
-mapeada; abrir uso en Work coloca esa tarjeta y el chat. Una variación de altura
+mapeada; abrir uso coloca esa tarjeta y el chat tanto en Chat como en Work,
+incluida su apertura automática al iniciar. Una variación de altura
 del contenido de uso actualiza la columna central con un temporizador de 120 ms.
-Abrir o rotar archivos no recoloca el chat ni los otros visores. En Chat la tarjeta
-no se coloca automáticamente y su ancho inicial sigue siendo 320 píxeles.
+Abrir o rotar archivos no recoloca el chat ni los otros visores. El cambio de título
+del chat vuelve a programar la colocación para seguir la ventana correcta al cambiar de área o proyecto.
 En pantallas donde los mínimos no caben,
 se prioriza la legibilidad y se limita la geometría al área útil, con posible
 superposición. Sólo actúa al abrir o al ajustar la altura de uso; no instala reglas globales ni impide

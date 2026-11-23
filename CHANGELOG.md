@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.16.0] — 2026-11-22
+
+Esta versión añade una suite de benchmarks y auditoría de consumo para medir objetivamente el impacto de cada optimización del harness, y extiende la colocación automática de la tarjeta de uso en Hyprland tanto a Chat como a Work.
+
+- Suite de benchmarks reproducibles (`benchmarks/` y `scripts/bench.sh`) con cinco tareas en repositorios temporales limpios, verificadores deterministas (pruebas ocultas y `unittest`), modo `--mock` offline y modo `--live` contra la cuenta real.
+- Instrumentación transparente por solicitud HTTP (`input_tokens`, `cached_tokens`, `uncached_input_tokens`, `Cache Hit` en pasos 2+, `tools/call`, tamaño de payload y características enviadas) más lectura opcional de delta de cuota Codex antes y después sin guardar PII.
+- Auditoría offline de `.runtime/chats` (`bench.sh audit`) y comparador A/B (`bench.sh compare`) con regla estricta de calidad: cualquier caída en tareas aprobadas se marca como regresión aunque baje el consumo.
+- Colocación automática en Hyprland de la tarjeta de uso junto al chat desde el arranque, tanto en Chat como en Work, reprogramando la alineación al cambiar el título de ventana.
+- Regresiones automáticas de las cinco tareas, verificadores, comparador A/B, auditoría y delta de cuota; conserva NDJSON v2 y el esquema 1 del historial.
+
 ## [0.15.0] — 2026-10-15
 
 Esta versión hace más fiable el harness en tareas largas y reduce el contexto innecesario enviado al modelo. El agente puede continuar con límites configurables, espera a que los procesos de shell terminen realmente y conserva una salida compacta para decidir los siguientes pasos. También mejora la recuperación de respuestas transmitidas por streaming e incorpora una auditoría y una guía práctica para equilibrar continuidad, consumo y control.
