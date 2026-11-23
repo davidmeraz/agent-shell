@@ -48,6 +48,14 @@ FloatingWindow {
         bridge: window.bridge
         mainWindowTitle: window.title
     }
+    readonly property GitFlowWindow gitFlowWindow: GitFlowWindow {
+        bridge: window.bridge
+        mainWindowTitle: window.title
+        onFileRequested: path => {
+            if (!window.bridge.projectId || !path) return;
+            window.explorerWindow.secondFileWindow.openFile(path, false);
+        }
+    }
     readonly property AccountUsageWindow usageWindow: AccountUsageWindow {
         bridge: window.bridge
         mainWindowTitle: window.title
@@ -344,6 +352,27 @@ FloatingWindow {
                         font.pixelSize: 10
                         elide: Text.ElideMiddle
                     }
+                }
+                ActionButton {
+                    objectName: "workGitButton"
+                    text: "⎇ Git"
+                    accent: window.gitFlowWindow.visible
+                    font.pixelSize: 11
+                    verticalPadding: 7
+                    enabled: window.bridge.ready && !!window.bridge.projectId
+                    Accessible.name: window.gitFlowWindow.visible
+                        ? "Cerrar visor de flujo Git"
+                        : "Abrir visor de flujo de commits Git"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 450
+                    ToolTip.text: window.gitFlowWindow.visible
+                        ? "Ocultar el visor de flujo de commits Git."
+                        : "Ver el flujo de commits y ramas Git de este proyecto a la derecha."
+                    onClicked: window.gitFlowWindow.toggleForProject({
+                        project_id: window.bridge.projectId,
+                        name: window.bridge.projectName,
+                        workdir: window.bridge.workspace
+                    })
                 }
                 ActionButton {
                     objectName: "appTestButton"

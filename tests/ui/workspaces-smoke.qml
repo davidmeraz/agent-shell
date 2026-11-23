@@ -122,6 +122,13 @@ ShellRoot {
                     if (!scenario.check(!inspector.findChild(chat, "workProjectDialog").visible
                         && inspector.findChild(chat, "workProjectHeader").visible && agent.projectName === "Proyecto A"
                         && scenario.prompt.text === "" && agent.canSend, "proyecto no abrió limpio")) return;
+                    const gitBtn = inspector.findChild(chat, "workGitButton");
+                    if (!scenario.check(!!gitBtn && gitBtn.visible && gitBtn.enabled, "botón Git ausente en Work")) return;
+                    inspector.mouseClick(gitBtn); inspector.wait(220);
+                    if (!scenario.check(chat.gitFlowWindow.visible && chat.gitFlowWindow.projectId === agent.projectId,
+                        "botón Git no abre el visor de flujo Git para el proyecto")) return;
+                    inspector.mouseClick(gitBtn); inspector.wait(180);
+                    if (!scenario.check(!chat.gitFlowWindow.visible, "segundo clic en Git no cierra el visor")) return;
                     scenario.firstProject = agent.projectId;
                     scenario.prompt.text = "Borrador del proyecto A";
                     agent.submit("/shell mkdir -p 'segundo proyecto'; pwd");

@@ -19,6 +19,7 @@ from ..work.bootstrap import build_work_bootstrap
 from ..work.gema_kit import GEMA_UI_INSTRUCTIONS, scaffold_gema_app
 from ..chat.images import validate_image, user_content
 from ..work.explorer import ProjectExplorer
+from ..work.git_flow import DEFAULT_MAX_COMMITS, GitFlowReader
 from .events import EventEmitter
 from ..chat.context import append_result, close_pending_calls, replay_items, visible_chat
 from ..chat.compaction import (
@@ -1231,6 +1232,44 @@ class HarnessServer:
                            path=path, message="No se pudo leer la ruta. Puede haber desaparecido, ser binaria o no estar permitida.")
         self._spawn(read_project)
 
+    def _git_flow(self, request: dict) -> None:
+        project_id = request.get("project_id")
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+            self._emit("git.flow.error", project_id=project_id, request_id=request_id,
+                       message="Solicitud de flujo Git inválida")
+            return
+        project = self.project
+        if self.active_area == "chat" and project_id and project_id in (self._last_project_id, self._last_app_id):
+            try:
+                project = self.projects.load(project_id)
+            except (OSError, ValueError, KeyError, TypeError):
+                project = None
+        if not project or project_id != project["project_id"]:
+            self._emit("git.flow.error", project_id=project_id, request_id=request_id,
+                       message="Selecciona el proyecto activo en Work o App")
+            return
+        root = Path(project["workdir"])
+        action = request["type"]
+        raw_limit = request.get("max_commits", DEFAULT_MAX_COMMITS)
+        commit_hash = request.get("hash", "")
+
+        def read_git():
+            try:
+                reader = GitFlowReader(root)
+                if action == "git.commit":
+                    detail = reader.commit_detail(commit_hash)
+                    self._emit("git.commit.detail", project_id=project_id, request_id=request_id, **detail)
+                else:
+                    limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else DEFAULT_MAX_COMMITS
+                    summary = reader.summary(limit)
+                    self._emit("git.flow.state", project_id=project_id, request_id=request_id, **summary)
+            except (OSError, ValueError) as error:
+                self._emit("git.flow.error", project_id=project_id, request_id=request_id,
+                           message=str(error) if isinstance(error, ValueError) else
+                           "No se pudo leer el historial Git del proyecto.")
+        self._spawn(read_git)
+
     def _paste_clipboard(self, request_id: str) -> None:
         try:
             self._emit("clipboard.result", request_id=request_id, **read_clipboard())
@@ -1312,6 +1351,9 @@ class HarnessServer:
                 return
             if action in ("explorer.list", "explorer.read"):
                 self._explore(request)
+                return
+            if action in ("git.flow", "git.commit"):
+                self._git_flow(request)
                 return
             if action == "projects.list":
                 self._publish_projects()
