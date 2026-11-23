@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.17.0] — 2026-11-22
+
+Esta versión reduce el consumo real de tokens y viajes al modelo mediante herramientas nativas de archivo, ejecución en paralelo, afinidad de caché de prompts y bootstrap inicial de proyectos en Work, e incorpora la eliminación de cuentas guardadas desde la interfaz.
+
+- Eliminación de cuentas registradas (`auth.remove`) con botón **Quitar** y diálogo de confirmación: intenta revocar el token remoto, borra el registro local conservando `host_id`, historiales y proyectos, evita etiquetas duplicadas y promueve automáticamente otra cuenta conectada cuando se quita la activa.
+- Herramientas nativas dedicadas (`apply_patch`, `read_file` y `grep_files`) junto a `shell`, estrictamente confinadas al workspace (rechazan rutas absolutas, `..` y enlaces simbólicos): `apply_patch` valida y aplica cambios multi-archivo de forma atómica con seguimiento `inotify` en Work.
+- Llamadas paralelas (`parallel_tool_calls: true`) con ejecución concurrente (`ThreadPoolExecutor`) para lotes de solo lectura (`read_file`/`grep_files`) preservando el orden de resultados, más limpieza de códigos ANSI (`strip_ansi`) en la vista compactada del modelo.
+- Afinidad de caché de prompts mediante `prompt_cache_key` estable por conversación, cabecera `session_id` y propagación en memoria de `x-codex-turn-state`, más bootstrap estático inicial en Work (`AGENTS.md` + mapa acotado de archivos excluyendo secretos `.env` y enlaces simbólicos) para evitar viajes iniciales de exploración sin romper el prefijo cacheable.
+- Validación en vivo con el benchmark (`opt3-bootstrap` frente a `baseline-v0.16` en `gpt-6.2-sol`): `-26,4 %` en tokens de salida, `-8,8 %` en entrada no cacheada, `+23,3 pp` en caché de pasos 2+ y `-13,2 %` de duración manteniendo `100 %` de tareas aprobadas; 276 pruebas Python, `qmllint` y 12 escenarios Qt.
+
 ## [0.16.0] — 2026-11-22
 
 Esta versión añade una suite de benchmarks y auditoría de consumo para medir objetivamente el impacto de cada optimización del harness, y extiende la colocación automática de la tarjeta de uso en Hyprland tanto a Chat como a Work.

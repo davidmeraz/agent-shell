@@ -54,6 +54,8 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(request["body"]["store"])
         self.assertTrue(request["body"]["stream"])
         self.assertEqual(request["body"]["tools"][0]["name"], "shell")
+        self.assertEqual(request["body"]["prompt_cache_key"], "chat-" + self.server.conversation["chat_id"])
+        self.assertEqual(self.service.requests[-2]["body"]["prompt_cache_key"], request["body"]["prompt_cache_key"])
         self.assertEqual([item["role"] for item in request["body"]["input"]], ["user", "assistant", "user"])
         self.assertEqual(request["body"]["input"][1]["content"][0]["text"], "Hola desde ChatGPT. 🎵")
         self.assertEqual(len(self.server.conversation["messages"]), 4)

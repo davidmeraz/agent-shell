@@ -29,9 +29,12 @@ class ChatGPTClient:
         return result
 
     def stream(self, model: str, messages: list[dict], instructions: str, control: StreamControl,
-               tools: list[dict] | None = None, reasoning_effort: str = ""):
+               tools: list[dict] | None = None, reasoning_effort: str = "",
+               prompt_cache_key: str = "", parallel_tool_calls: bool = False):
         if not isinstance(reasoning_effort, str) or (reasoning_effort and reasoning_effort not in EFFORTS):
             raise ValueError("Esfuerzo de razonamiento inválido")
+        if not isinstance(prompt_cache_key, str) or len(prompt_cache_key) > 128:
+            raise ValueError("Clave de caché de prompt inválida")
         control.check()
         control.mark("session_start")
         token = self.session.access_token()
@@ -40,16 +43,26 @@ class ChatGPTClient:
         # El contexto es local. store=false impide depender de threads o respuestas remotas guardadas.
         payload = {"model": model, "instructions": instructions, "input": messages,
                    "store": False, "stream": True}
+        extra_headers: dict[str, str] = {}
+        if prompt_cache_key:
+            payload["prompt_cache_key"] = prompt_cache_key
+            extra_headers["session_id"] = prompt_cache_key
+        if getattr(control, "turn_state", ""):
+            extra_headers["x-codex-turn-state"] = control.turn_state
         if reasoning_effort:
             payload["reasoning"] = {"effort": reasoning_effort}
         if tools is not None:
-            payload.update(tools=tools, parallel_tool_calls=False, include=["reasoning.encrypted_content"])
+            payload.update(tools=tools, parallel_tool_calls=bool(parallel_tool_calls),
+                           include=["reasoning.encrypted_content"])
         # Algunos streams del plan entregan los elementos completos en
         # output_item.done y dejan vacío o parcial el output del resumen final.
         # Sólo reconstruimos después de recibir response.completed; un item
         # completo por sí solo nunca autoriza la ejecución de herramientas.
         finished_items = {}
-        stream = self.http.stream(self.base_url + "/responses", payload, token, control)
+        stream = (self.http.stream(self.base_url + "/responses", payload, token, control,
+                                   extra_headers=extra_headers)
+                  if extra_headers else
+                  self.http.stream(self.base_url + "/responses", payload, token, control))
         try:
             for event in stream:
                 if tools is not None and event["type"] == "response.output_item.done":

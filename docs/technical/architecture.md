@@ -166,10 +166,19 @@ Se muestran entradas con `visibility: list`, se conserva su orden y se envía el
 `slug` del modelo seleccionado. No hay un modelo de pago independiente como fallback.
 
 Cada turno envía instrucciones y los mensajes locales mediante
-`POST https://api.openai.com/v1/responses`, con `store: false` y `stream: true`.
-La función `shell` se anuncia en todas las solicitudes. Tras recibir una llamada
-completa y validada, el backend la guarda y ejecuta automáticamente, devolviendo
-el resultado con su `call_id` para continuar. La IA confirma brevemente comandos
+`POST https://api.openai.com/v1/responses`, con `store: false`, `stream: true`,
+`parallel_tool_calls: true` y afinidad de caché (`prompt_cache_key` estable por
+conversación, cabecera `session_id` y propagación en memoria de `x-codex-turn-state`).
+En conversaciones nuevas de Work se añade una sola vez al inicio del contexto un
+bootstrap estático acotado (`AGENTS.md` y mapa de archivos excluyendo `.env` y
+enlaces simbólicos) para ahorrar viajes de descubrimiento sin mutar el prefijo.
+Las herramientas nativas anunciadas son `shell`, `read_file`, `grep_files` y
+`apply_patch` (confinadas al workspace; `apply_patch` valida y aplica cambios
+multi-archivo atómicamente bajo observación `inotify` en Work, y los lotes de
+sólo lectura `read_file`/`grep_files` se ejecutan en paralelo conservando orden).
+Tras recibir una llamada completa y validada, el backend la guarda y ejecuta
+automáticamente, devolviendo el resultado (sin secuencias ANSI en la vista del
+modelo) con su `call_id` para continuar. La IA confirma brevemente comandos
 simples sin duplicar la salida de la tarjeta, o interpreta los resultados cuando
 la tarea requiere análisis. `/shell` utiliza el mismo ejecutor sin inferencia;
 sus resultados se conservan localmente y no entran en el contexto del modelo.

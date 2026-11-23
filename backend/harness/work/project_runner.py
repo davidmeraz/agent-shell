@@ -214,7 +214,8 @@ class ProjectRunner:
                 run.control.check()
                 completed = None
                 stream = client.stream(run.model, messages, instructions, run.control,
-                                       tools=[SHELL_TOOL, LAUNCH_TOOL], reasoning_effort=run.reasoning_effort)
+                                       tools=[SHELL_TOOL, LAUNCH_TOOL], reasoning_effort=run.reasoning_effort,
+                                       prompt_cache_key="run-" + run.execution_id)
                 try:
                     for event in stream:
                         run.control.check()

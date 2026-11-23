@@ -80,7 +80,8 @@ class InstrumentedHttp:
     def json(self, *args, **kwargs):
         return self._inner.json(*args, **kwargs)
 
-    def stream(self, url: str, payload: dict[str, Any], token: str, control):
+    def stream(self, url: str, payload: dict[str, Any], token: str, control,
+               extra_headers: dict[str, str] | None = None):
         raw_bytes = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         tools = payload.get("tools") or []
         wire = {
@@ -93,7 +94,7 @@ class InstrumentedHttp:
         }
         with self._lock:
             self.last_wire = wire
-        return self._inner.stream(url, payload, token, control)
+        return self._inner.stream(url, payload, token, control, extra_headers=extra_headers)
 
 
 class InstrumentedClient:
@@ -113,7 +114,8 @@ class InstrumentedClient:
         return self._inner.models()
 
     def stream(self, model: str, messages: list[dict], instructions: str, control,
-               tools: list[dict] | None = None, reasoning_effort: str = ""):
+               tools: list[dict] | None = None, reasoning_effort: str = "",
+               prompt_cache_key: str = "", parallel_tool_calls: bool = False):
         started = time.perf_counter()
         first_event: float | None = None
         record: dict[str, Any] = {
@@ -131,7 +133,9 @@ class InstrumentedClient:
             "tool_calls_returned": 0,
         }
         stream = self._inner.stream(
-            model, messages, instructions, control, tools=tools, reasoning_effort=reasoning_effort,
+            model, messages, instructions, control, tools=tools,
+            reasoning_effort=reasoning_effort, prompt_cache_key=prompt_cache_key,
+            parallel_tool_calls=parallel_tool_calls,
         )
         try:
             for event in stream:
@@ -649,14 +653,20 @@ def _run_single_task(
         workspace.mkdir()
         baseline = task.setup(workspace)
 
+        seen_running_calls: set[str] = set()
+
         def _on_event(ev: dict[str, Any]) -> None:
             if not on_progress:
                 return
             kind = ev.get("type")
             data = ev.get("data") or {}
-            if kind == "tool.updated" and data.get("call", {}).get("status") == "running":
-                cmd = (data["call"].get("command") or "").replace("\n", " ")[:68]
-                on_progress(f"  [{task.task_id}] shell → {cmd}")
+            if kind == "tool.updated":
+                call = data.get("call") or {}
+                call_id = call.get("id") or ""
+                if call.get("status") == "running" and call_id not in seen_running_calls:
+                    seen_running_calls.add(call_id)
+                    cmd = (call.get("command") or "").replace("\n", " ")[:68]
+                    on_progress(f"  [{task.task_id}] shell → {cmd}")
 
         collector = EventCollector(on_event=_on_event)
         server = HarnessServer(

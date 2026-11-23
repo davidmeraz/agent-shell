@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, TextIO
@@ -15,6 +16,7 @@ from typing import Any, TextIO
 from ..tools.clipboard import read_clipboard
 from ..account.codex_usage import CodexUsageReader, UsageError
 from ..work.activity import ProjectActivity
+from ..work.bootstrap import build_work_bootstrap
 from ..chat.images import validate_image, user_content
 from ..work.explorer import ProjectExplorer
 from .events import EventEmitter
@@ -27,23 +29,32 @@ from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
 from .limits import AgentLimits, FailureTracker
 from ..chat.performance import TurnPerformance
+from ..tools.files import (
+    GREP_TOOL, READ_FILE_TOOL, execute_grep_files, execute_read_file, summarize_file_tool_command,
+)
+from ..tools.patch import APPLY_PATCH_TOOL, execute_apply_patch, summarize_patch_command
 from ..tools.shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
 from .version import get_version
+
+AGENT_TOOLS = [SHELL_TOOL, READ_FILE_TOOL, GREP_TOOL, APPLY_PATCH_TOOL]
+READ_ONLY_TOOLS = frozenset({"read_file", "grep_files"})
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_PROMPT_LENGTH = 16000
 AGENT_INSTRUCTIONS = (
     "You are the assistant in Agent Shell. Respond in the user's language. "
-    "The shell tool is always available and is a core part of this application. "
-    "Use it to complete local tasks, inspect files, run programs and make requested changes. "
+    "You have native tools: read_file, grep_files, apply_patch, and shell. "
+    "Prefer read_file for bounded file reads, grep_files for searching code/logs, and apply_patch for all "
+    "file edits (creating, updating, moving or deleting files) instead of shell heredocs or Python one-liners. "
+    "Batch independent read_file and grep_files calls in parallel in a single response to save round-trips. "
+    "Use shell for running tests, builds, git, and system commands. "
     "Continue implementing and checking until the requested outcome is reached. "
     "A plan or progress message is not task completion. Do not ask the user to say 'continue'. "
     "Recover from command failures using the evidence and a changed approach; do not repeat identical failures. "
     "Stop for user cancellation, a real blocker requiring user input, or a harness budget limit. "
-    "Prefer targeted searches (rg), bounded file reads and concise test output. "
-    "Batch related inspections in one command; use && for dependent steps so failures remain visible. "
+    "Batch dependent shell commands with && so failures remain visible. "
     "Do not reread unchanged files or rerun passing checks without a reason. "
-    "For ordinary conversation, reply directly when no command is needed. "
+    "For ordinary conversation, reply directly when no tool is needed. "
     "Commands execute automatically with the user's permissions through /bin/sh -c, "
     "without interactive stdin or a login profile. All shell commands are permitted; "
     "do not ask for execution approval. Use actual results; do not invent command output. "
@@ -98,6 +109,7 @@ class HarnessServer:
         self.shell_enabled = True
         self._shell_control = ShellControl(self._stream.cancelled)
         self._local_call: dict | None = None
+        self._turn_states: dict[str, str] = {}
         self.project_runner = ProjectRunner(self._emit, LaunchCache(self.projects))
 
     def _emit(self, event_type: str, **data) -> None:
@@ -617,15 +629,39 @@ class HarnessServer:
                 if time.monotonic() - self._last_saved >= 0.5:
                     self._save()
 
-    def _run_tool(self, item: dict, control: StreamControl, generation: int) -> dict:
-        error = ""
-        command = ""
+    def _describe_tool(self, item: dict) -> tuple[str, str]:
+        name = item.get("name", "")
+        arguments = item.get("arguments", "")
         try:
-            if item["name"] != "shell":
-                raise ValueError("Herramienta desconocida; no se ejecutó ningún comando")
-            command = parse_command(item["arguments"])
+            if name == "shell":
+                return parse_command(arguments), ""
+            if name == "apply_patch":
+                return summarize_patch_command(arguments), ""
+            if name in READ_ONLY_TOOLS:
+                return summarize_file_tool_command(name, arguments), ""
+            raise ValueError("Herramienta desconocida; no se ejecutó ningún comando")
         except (ValueError, TypeError) as invalid:
-            error = str(invalid)
+            return "", str(invalid)
+
+    def _execute_non_shell_tool(self, name: str, arguments: str, workspace: Path) -> dict:
+        started = time.monotonic()
+        try:
+            if name == "read_file":
+                result = execute_read_file(workspace, arguments)
+            elif name == "grep_files":
+                result = execute_grep_files(workspace, arguments)
+            elif name == "apply_patch":
+                result = execute_apply_patch(workspace, arguments)
+            else:
+                raise ValueError("Herramienta desconocida; no se ejecutó ningún comando")
+        except (ValueError, TypeError, OSError, UnicodeError) as err:
+            result = {"status": "error", "output": str(err), "exit_code": 1, "truncated": False}
+        result["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
+        return result
+
+    def _run_tool(self, item: dict, control: StreamControl, generation: int) -> dict:
+        name = item.get("name", "")
+        command, error = self._describe_tool(item)
         with self._lock:
             if not self._current_turn(generation):
                 raise Cancelled()
@@ -641,31 +677,80 @@ class HarnessServer:
             if error:
                 return {"status": "error", "output": error}
             shell_control = self._shell_control
-            executor = ShellExecutor(self.workspace, timeout=self.limits.shell_timeout)
+            workspace = self.workspace
             project_id = self.project["project_id"] if self.active_area == "work" and self.project else ""
-            if project_id:
+            observe_work = bool(project_id and name in ("shell", "apply_patch"))
+            if observe_work:
                 self._emit("work.activity", project_id=project_id, call_id=call["id"],
                            turn_id=call["turn_id"], status="running")
         control.check()
-        try:
-            observer = ProjectActivity(executor.workspace, lambda change:
+        if name == "shell":
+            executor = ShellExecutor(workspace, timeout=self.limits.shell_timeout)
+            try:
+                observer = ProjectActivity(executor.workspace, lambda change:
+                    self._work_changed(change, project_id, call, generation),
+                    ignored=(self.history.root,)) if observe_work else nullcontext()
+                with observer:
+                    result = executor.execute(command, shell_control,
+                                              lambda output: self._tool_output(call, output, generation))
+            except OSError:
+                result = {"status": "error", "output": "No se pudo iniciar el proceso shell.", "exit_code": None}
+        else:
+            observer = ProjectActivity(workspace, lambda change:
                 self._work_changed(change, project_id, call, generation),
-                ignored=(self.history.root,)) if project_id else nullcontext()
+                ignored=(self.history.root,)) if observe_work else nullcontext()
             with observer:
-                result = executor.execute(command, shell_control,
-                                          lambda output: self._tool_output(call, output, generation))
-        except OSError:
-            result = {"status": "error", "output": "No se pudo iniciar el proceso shell.", "exit_code": None}
+                result = self._execute_non_shell_tool(name, item["arguments"], workspace)
         with self._lock:
             if not self._current_turn(generation):
                 raise Cancelled()
-            call.update(result)
+            call.update({k: v for k, v in result.items() if k != "files"})
             self._performance.tool_ms += result.get("duration_ms", 0)
             self._emit("tool.updated", call=call)
-            if project_id:
+            if observe_work:
                 self._emit("work.activity", project_id=project_id, call_id=call["id"],
                            turn_id=call["turn_id"], status=result["status"])
         return result
+
+    def _run_read_only_batch(self, calls: list[dict], control: StreamControl, generation: int) -> list[dict]:
+        """Ejecuta lecturas/búsquedas independientes en paralelo preservando el orden de resultados."""
+        records: list[tuple[dict, dict]] = []
+        with self._lock:
+            if not self._current_turn(generation):
+                raise Cancelled()
+            workspace = self.workspace
+            for item in calls:
+                command, error = self._describe_tool(item)
+                call = {"id": uuid.uuid4().hex, "call_id": item["call_id"],
+                        "turn_id": self._performance.turn_id, "command": command,
+                        "workdir": str(workspace), "status": "error" if error else "running",
+                        "output": error, "exit_code": None, "truncated": False,
+                        "message_index": len(self.conversation["messages"])}
+                self.conversation.setdefault("tool_calls", []).append(call)
+                self._performance.tool_calls += 1
+                self._emit("tool.updated", call=call)
+                records.append((item, call))
+            self.history.save(self.conversation)
+        control.check()
+
+        def _worker(entry: tuple[dict, dict]) -> dict:
+            item, call = entry
+            if call["status"] == "error":
+                return {"status": "error", "output": call["output"]}
+            control.check()
+            return self._execute_non_shell_tool(item["name"], item["arguments"], workspace)
+
+        with ThreadPoolExecutor(max_workers=min(8, len(records))) as pool:
+            results = list(pool.map(_worker, records))
+
+        with self._lock:
+            if not self._current_turn(generation):
+                raise Cancelled()
+            for (_, call), result in zip(records, results):
+                call.update({k: v for k, v in result.items() if k != "files"})
+                self._performance.tool_ms += result.get("duration_ms", 0)
+                self._emit("tool.updated", call=call)
+        return results
 
     def _work_changed(self, change: dict, project_id: str, call: dict, generation: int) -> None:
         with self._lock:
@@ -676,7 +761,8 @@ class HarnessServer:
                            turn_id=call["turn_id"], **change)
 
     def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
-                    generation: int, reasoning_effort: str = "") -> None:
+                    generation: int, reasoning_effort: str = "",
+                    prompt_cache_key: str = "") -> None:
         failures = FailureTracker(self.limits.repeated_failures)
         continuation = {
             "role": "developer", "content":
@@ -713,8 +799,10 @@ class HarnessServer:
                         raise ServiceError("Se alcanzó el presupuesto de tokens reportados del turno. "
                                            "El trabajo se conserva, pero la tarea no está confirmada como terminada.")
                     self._performance.begin_model_call()
-                stream = self.client.stream(model, messages, instructions, control, tools=[SHELL_TOOL],
-                                            reasoning_effort=reasoning_effort)
+                stream = self.client.stream(model, messages, instructions, control, tools=AGENT_TOOLS,
+                                            reasoning_effort=reasoning_effort,
+                                            prompt_cache_key=prompt_cache_key,
+                                            parallel_tool_calls=True)
                 try:
                     for event in stream:
                         if event["type"] in ("response.output_text.delta", "response.output_text.done"):
@@ -729,6 +817,9 @@ class HarnessServer:
                     close = getattr(stream, "close", None)
                     if close:
                         close()
+                    if control.turn_state and prompt_cache_key:
+                        with self._lock:
+                            self._turn_states[prompt_cache_key] = control.turn_state
                 if completed is None:
                     control.check()
                     raise ServiceError("La transmisión terminó antes de confirmar la respuesta completa")
@@ -763,18 +854,33 @@ class HarnessServer:
                     if intermediate and not calls:
                         self.conversation["context"].append(continuation.copy())
                         self.history.save(self.conversation)
-                for item in calls:
-                    result = self._run_tool(item, control, generation)
+                if len(calls) > 1 and all(item.get("name") in READ_ONLY_TOOLS for item in calls):
+                    results = self._run_read_only_batch(calls, control, generation)
                     with self._lock:
                         if not self._current_turn(generation):
                             return
-                        append_result(self.conversation, item["call_id"], result,
-                                      self.limits.context_output_chars)
+                        for item, result in zip(calls, results):
+                            append_result(self.conversation, item["call_id"], result,
+                                          self.limits.context_output_chars)
                         self.history.save(self.conversation)
-                        if failures.observe(item, result):
-                            raise ServiceError("El mismo comando falló repetidamente con el mismo resultado. "
-                                               "Se detuvo el turno para evitar gastar cuota sin progreso; "
-                                               "revisa el último error antes de continuar.")
+                        for item, result in zip(calls, results):
+                            if failures.observe(item, result):
+                                raise ServiceError("El mismo comando falló repetidamente con el mismo resultado. "
+                                                   "Se detuvo el turno para evitar gastar cuota sin progreso; "
+                                                   "revisa el último error antes de continuar.")
+                else:
+                    for item in calls:
+                        result = self._run_tool(item, control, generation)
+                        with self._lock:
+                            if not self._current_turn(generation):
+                                return
+                            append_result(self.conversation, item["call_id"], result,
+                                          self.limits.context_output_chars)
+                            self.history.save(self.conversation)
+                            if failures.observe(item, result):
+                                raise ServiceError("El mismo comando falló repetidamente con el mismo resultado. "
+                                                   "Se detuvo el turno para evitar gastar cuota sin progreso; "
+                                                   "revisa el último error antes de continuar.")
                 with self._lock:
                     messages = copy.deepcopy(self.conversation["context"])
             raise ServiceError("Se alcanzó el límite de solicitudes al modelo del turno. "
@@ -1050,7 +1156,12 @@ class HarnessServer:
                     turn_performance.input_characters = sum(len(row["text"]) for row in self.conversation["messages"])
                     turn_performance.context_messages = len(messages)
                     if "context" not in self.conversation:
-                        self.conversation["context"] = copy.deepcopy(messages)
+                        bootstrap = (
+                            build_work_bootstrap(self.workspace, ignored=(self.history.root,))
+                            if self.active_area == "work" else ""
+                        )
+                        prefix = [{"role": "developer", "content": bootstrap}] if bootstrap else []
+                        self.conversation["context"] = prefix + copy.deepcopy(messages)
                     elif "context" in self.conversation:
                         self.conversation["context"].append({"role": "user", "content": user_content(prompt.strip(), image)})
                     if "context" in self.conversation:
@@ -1080,7 +1191,10 @@ class HarnessServer:
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)
-                self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort))
+                chat_cache_key = "chat-" + self.conversation["chat_id"]
+                control.turn_state = self._turn_states.get(chat_cache_key, "")
+                self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort,
+                                                     prompt_cache_key=chat_cache_key))
 
     def serve(self, source: TextIO) -> None:
         try:

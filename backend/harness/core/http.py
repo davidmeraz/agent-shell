@@ -51,6 +51,7 @@ class StreamControl:
     def __init__(self, on_phase=None) -> None:
         self.cancelled = threading.Event()
         self.on_phase = on_phase
+        self.turn_state = ""
         self._lock = threading.Lock()
         self._connection: http.client.HTTPConnection | None = None
         self._socket: socket.socket | None = None
@@ -153,14 +154,22 @@ class HttpClient:
             if connection:
                 connection.close()
 
-    def stream(self, url: str, payload: dict, token: str, control: StreamControl):
+    def stream(self, url: str, payload: dict, token: str, control: StreamControl,
+               extra_headers: dict[str, str] | None = None):
         connection = None
         try:
             control.check()
-            connection, response = self._open("POST", url, json.dumps(payload).encode("utf-8"), {
+            headers = {
                 "Content-Type": "application/json", "Accept": "text/event-stream",
                 "Authorization": "Bearer " + token,
-            }, control)
+            }
+            if extra_headers:
+                headers.update(extra_headers)
+            connection, response = self._open("POST", url, json.dumps(payload).encode("utf-8"),
+                                              headers, control)
+            turn_state = response.getheader("x-codex-turn-state")
+            if isinstance(turn_state, str) and turn_state:
+                control.turn_state = turn_state
             content_type = response.getheader("Content-Type", "").split(";")[0].strip().lower()
             # La ruta real puede omitir Content-Type aunque entregue eventos SSE.
             # En ese caso validamos el cuerpo con read_sse y el evento terminal.

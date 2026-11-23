@@ -5,7 +5,14 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.16.0` añade una suite de benchmarks reproducibles y auditoría de
+La versión `0.17.0` añade eliminación de cuentas registradas (`auth.remove` y
+confirmación en el diálogo de cuenta), herramientas nativas de edición y lectura
+(`apply_patch`, `read_file`, `grep_files`), ejecución paralela de lecturas
+(`parallel_tool_calls: true`), afinidad de caché (`prompt_cache_key`, `session_id`,
+`x-codex-turn-state`), limpieza ANSI para el modelo y bootstrap inicial estático
+en Work. Conserva NDJSON v2 y el esquema 1 del historial; incrementa MENOR por
+las nuevas capacidades de cuenta y herramientas del agente.
+La versión anterior `0.16.0` añade una suite de benchmarks reproducibles y auditoría de
 consumo (`benchmarks/` y `scripts/bench.sh`) con verificadores deterministas,
 métricas por paso HTTP, delta de cuota Codex y comparador A/B, y extiende la
 colocación automática de la tarjeta de uso en Hyprland a Chat y Work. Conserva

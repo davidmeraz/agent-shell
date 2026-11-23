@@ -68,3 +68,17 @@ class StreamTests(unittest.TestCase):
         next(stream)
         stream.close()
         self.assertEqual(closed, [True])
+
+    def test_prompt_cache_key_is_included_only_when_provided_and_validated(self):
+        self.http.stream.return_value = iter(self.events([self.call]))
+        list(self.client.stream("test-model", [], "Instructions", StreamControl(),
+                                tools=[SHELL_TOOL], prompt_cache_key="chat-abc123"))
+        self.assertEqual(self.http.stream.call_args.args[1]["prompt_cache_key"], "chat-abc123")
+
+        self.http.stream.return_value = iter(self.events([self.call]))
+        list(self.stream())
+        self.assertNotIn("prompt_cache_key", self.http.stream.call_args.args[1])
+
+        with self.assertRaises(ValueError):
+            list(self.client.stream("test-model", [], "Instructions", StreamControl(),
+                                    prompt_cache_key="x" * 129))

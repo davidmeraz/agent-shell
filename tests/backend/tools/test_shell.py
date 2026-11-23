@@ -330,7 +330,7 @@ class AgentShellTests(unittest.TestCase):
         self.assertFalse(any(event["type"].startswith("tool.approval") for event in events))
         request = self.service.requests[-1]["body"]
         self.assertFalse(request["store"])
-        self.assertFalse(request["parallel_tool_calls"])
+        self.assertTrue(request["parallel_tool_calls"])
         self.assertEqual(request["tools"][0]["name"], "shell")
         calls = [item for item in request["input"] if item.get("type") == "function_call"]
         results = [item for item in request["input"] if item.get("type") == "function_call_output"]

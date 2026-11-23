@@ -43,8 +43,11 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertGreater(summary["uncached_input_tokens"], 0)
         self.assertIsNotNone(summary["followup_cache_hit_rate"])
         self.assertIn("shell", summary["tools_offered"])
-        self.assertFalse(summary["has_prompt_cache_key"])
-        self.assertFalse(summary["parallel_tool_calls"])
+        self.assertIn("apply_patch", summary["tools_offered"])
+        self.assertIn("read_file", summary["tools_offered"])
+        self.assertIn("grep_files", summary["tools_offered"])
+        self.assertTrue(summary["has_prompt_cache_key"])
+        self.assertTrue(summary["parallel_tool_calls"])
 
         rendered = format_run_report(report)
         self.assertIn("t1_inspect_answer", rendered)
