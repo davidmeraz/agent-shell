@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.25.0] — 2026-11-22
+
+Esta versión renueva las ventanas de código (`ProjectFileWindow.qml`) y carpetas (`ProjectExplorerWindow.qml`) con resaltado de sintaxis multi-lenguaje adaptado dinámicamente al tema principal Gema y una animación fluida de generación de código en vivo.
+
+- Nuevo motor ligero de sintaxis y armonía cromática `ui/js/CodeSyntax.js` conectado a `GemaTheme.codePalette`: genera automáticamente una paleta armónica (análogos, complementarios divididos y compensación de luminosidad perceptual para vidrio oscuro y `darkText`) a partir del color de acento activo de Hyprland/Gema, con soporte para QML, JS/TS, Python, Rust, Shell, JSON, Markdown (incluidos bloques cercados), HTML/XML/SVG, CSS/QSS, TOML/YAML/CONF, C/C++/Go/Java y SQL manteniendo `TextEdit.PlainText` para selección y copia exactas.
+- Animación de escritura progresiva mejorada en `FileWriteReveal.qml` y `ProjectFileWindow.qml`: refresco a 60 fps (`16 ms`) con curva en S y duración sublineal (`460 ms`–`2650 ms`), barra de progreso luminosa sobre el separador especular, numeración de líneas sincronizada con el ajuste de línea (`Canvas` anclado al viewport), haz de luz sobre la línea activa, cursor con halo y estela luminosa en el acento del tema, e insignias de lenguaje y estado `GENERANDO`.
+- Explorador de carpetas refinado en `ProjectExplorerWindow.qml`, `ViewerMotion.qml` y `WorkStatusNote.qml`: cabecera con gema activa e indicador `EN VIVO` / contador de visores, guías verticales de jerarquía, iconos vectoriales de carpeta y puntos de color por lenguaje, píldoras coloreadas para cambios (`Creado`, `Nuevo`, `Modificado`), entrada con escala cristalina e indicador de actividad con halo pulsante.
+- Verificación completa con 295 pruebas Python, `qmllint` y los 12 escenarios reales de Qt/Quickshell (`./scripts/smoke.sh`).
+
 ## [0.24.0] — 2026-11-22
 
 Esta versión sincroniza en tiempo real el diseño Matte Transparent Glassmorphism de Agent Shell y del generador Gema UI Kit (`App`) con el tema Gema de Hyprland (`~/.config/gema/preferences.json`), unificando superficies translúcidas, reflejos de agua, tipografía en relieve y micro-interacciones.

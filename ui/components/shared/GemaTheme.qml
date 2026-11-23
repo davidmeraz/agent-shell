@@ -2,11 +2,13 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "../../js/CodeSyntax.js" as CodeSyntax
 
 // Sincronización en vivo con el tema Gema de Hyprland (~/.config/gema/preferences.json).
 QtObject {
     id: gemaTheme
     property color accent: "#c4dcff"
+    property string accentHex: "#c4dcff"
     property int rounding: 18
     property bool blur: true
     property bool animations: true
@@ -20,6 +22,8 @@ QtObject {
     readonly property color textShadow: darkText ? Qt.rgba(1, 1, 1, 0.8) : Qt.rgba(0, 0, 0, 0.72)
     readonly property color accentInk: darkText ? Qt.darker(accent, 1.8) : accent
     readonly property int animDuration: animations ? 180 : 0
+    // Paleta armónica de código y explorador derivada del acento Gema activo.
+    readonly property var codePalette: CodeSyntax.buildPalette(accentHex, darkText, synced)
     readonly property string gemName: {
         const names = [
             "Rubí Birmano", "Esmeralda de Muzo", "Amatista Siberiana", "Zafiro Padparadscha",
@@ -59,8 +63,10 @@ QtObject {
             const raw = prefsFile.text();
             if (!raw) return;
             const data = JSON.parse(raw);
-            if (typeof data.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(data.accent))
-                accent = data.accent.toLowerCase();
+            if (typeof data.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(data.accent)) {
+                accentHex = data.accent.toLowerCase();
+                accent = accentHex;
+            }
             if (typeof data.rounding === "number" && isFinite(data.rounding))
                 rounding = Math.max(8, Math.min(28, Math.round(data.rounding)));
             if (typeof data.blur === "boolean")

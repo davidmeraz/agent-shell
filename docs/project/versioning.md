@@ -5,7 +5,15 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.24.0` sincroniza en vivo el diseño Matte Transparent Glassmorphism de
+La versión `0.25.0` incorpora resaltado de sintaxis multi-lenguaje armonizado en vivo
+con el acento activo de `GemaTheme` (`ui/js/CodeSyntax.js`), numeración de líneas
+sincronizada con el ajuste de línea, una animación de generación de código más pausada
+y fluida a 60 fps (`FileWriteReveal.qml`, `ProjectFileWindow.qml`) con cursor, estela
+y progreso luminoso, y un explorador de carpetas enriquecido con iconos vectoriales,
+guías de jerarquía e insignias de estado (`ProjectExplorerWindow.qml`). Conserva NDJSON
+v2 y el esquema lógico 1; incrementa MENOR por las nuevas capacidades visuales y de
+sintaxis en los visores.
+La versión anterior `0.24.0` sincroniza en vivo el diseño Matte Transparent Glassmorphism de
 Agent Shell y del generador Gema UI Kit (`App`) con el tema Gema de Hyprland
 (`GemaTheme.qml`), unificando el cristal esmerilado translúcido, reflejos de agua,
 tipografía con relieve (`Text.Raised`) y tarjetas interactivas en todas las ventanas.

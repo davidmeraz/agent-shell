@@ -1,13 +1,14 @@
 import QtQuick
 
-// Entrada del contenido: no retrasa el cierre nativo ni mueve la ventana.
+// Entrada fluida del contenido: combina opacidad, elevación y sutil escala cristalina sin mover la ventana.
 Item {
     id: motion
     objectName: "projectViewerMotion"
     required property bool shown
     property real progress: 0
     opacity: progress
-    transform: Translate { y: 8 * (1 - motion.progress) }
+    scale: 0.978 + 0.022 * motion.progress
+    transform: Translate { y: 12 * (1 - motion.progress) }
     function reveal() { entrance.restart(); }
     onShownChanged: {
         if (shown) reveal();
@@ -20,7 +21,7 @@ Item {
         property: "progress"
         from: 0
         to: 1
-        duration: 240
+        duration: 300
         easing.type: Easing.OutCubic
     }
 }
