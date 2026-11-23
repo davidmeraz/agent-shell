@@ -1017,3 +1017,226 @@ function highlightToHtml(text, langId, palette) {
     const inner = highlightInner(text, langId, palette);
     return '<pre style="margin:0;white-space:pre-wrap;color:' + plainColor + ';">' + inner + "</pre>";
 }
+
+// Analiza indentación y bloques de función/ámbito (estilo VS Code) para dibujar guías verticales
+// y breadcrumbs sin alterar el documento PlainText.
+function detectIndentSize(lines) {
+    const counts = { 2: 0, 4: 0 };
+    let prev = 0;
+    const limit = Math.min(lines.length, 240);
+    for (let i = 0; i < limit; ++i) {
+        const line = lines[i];
+        if (!line || !line.trim()) continue;
+        if (line[0] === "\t") return 4;
+        let spaces = 0;
+        while (spaces < line.length && line[spaces] === " ") spaces++;
+        const diff = Math.abs(spaces - prev);
+        if (diff === 2) counts[2]++;
+        else if (diff === 4) counts[4]++;
+        prev = spaces;
+    }
+    return counts[2] > counts[4] * 1.4 ? 2 : 4;
+}
+
+function leadingColumns(line, tabWidth) {
+    let col = 0;
+    for (let i = 0; i < line.length; ++i) {
+        const ch = line[i];
+        if (ch === " ") col += 1;
+        else if (ch === "\t") col += tabWidth - (col % tabWidth);
+        else break;
+    }
+    return col;
+}
+
+function classifyScopeHeader(trimmed, langId) {
+    if (!trimmed) return { label: "", kind: "block" };
+    // Python / Rust / JS / TS / QML / C-like
+    let m = /^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/.exec(trimmed);
+    if (m) return { label: m[1] + "()", kind: "func" };
+    m = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_$][\w$]*)\s*\(/.exec(trimmed);
+    if (m) return { label: m[1] + "()", kind: "func" };
+    m = /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)/.exec(trimmed);
+    if (m) return { label: m[1] + "()", kind: "func" };
+    m = /^(?:export\s+)?(?:abstract\s+)?(?:class|struct|enum|trait|interface|impl)\s+([A-Za-z_$][\w$:<>]*)/.exec(trimmed);
+    if (m) return { label: m[1], kind: "type" };
+    if (langId === "qml") {
+        m = /^(on[A-Z]\w*)\s*:/.exec(trimmed);
+        if (m) return { label: m[1], kind: "func" };
+        m = /^component\s+([A-Z]\w*)\s*:/.exec(trimmed);
+        if (m) return { label: m[1], kind: "type" };
+        m = /^(?:(?:readonly|required|default)\s+)*property\s+\S+\s+([A-Za-z_]\w*)\s*:/.exec(trimmed);
+        if (m) return { label: m[1], kind: "prop" };
+        m = /^([A-Z][A-Za-z0-9_.]*)\s*\{/.exec(trimmed);
+        if (m) return { label: m[1], kind: "type" };
+    }
+    m = /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(trimmed);
+    if (m) return { label: m[1] + "()", kind: "func" };
+    m = /^([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/.exec(trimmed);
+    if (m && !NON_FUNC_KEYWORDS.has(m[1])) return { label: m[1] + "()", kind: "func" };
+    m = /^(if|else\s+if|else|for|while|switch|try|catch|finally|with|match)\b/.exec(trimmed);
+    if (m) return { label: m[1], kind: "control" };
+    return { label: "", kind: "block" };
+}
+
+function stripStringsAndCommentsForBraces(line, langId, state) {
+    const hashComments = langId === "python" || langId === "shell" || langId === "config";
+    const slashComments = !hashComments && langId !== "sql";
+    let out = "";
+    let i = 0;
+    const n = line.length;
+    while (i < n) {
+        const ch = line[i];
+        const next = i + 1 < n ? line[i + 1] : "";
+        if (state.inBlockComment) {
+            if (ch === "*" && next === "/") {
+                state.inBlockComment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if (slashComments && ch === "/" && next === "/") break;
+        if (slashComments && ch === "/" && next === "*") {
+            state.inBlockComment = true;
+            i += 2;
+            continue;
+        }
+        if (hashComments && ch === "#") break;
+        if (ch === '"' || ch === "'" || ch === "`") {
+            const q = ch;
+            i += 1;
+            while (i < n) {
+                if (line[i] === "\\") { i += 2; continue; }
+                if (line[i] === q) { i += 1; break; }
+                i += 1;
+            }
+            continue;
+        }
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+
+function analyzeCodeStructure(text, langId) {
+    if (!text) return { indentSize: 4, indentCols: [], scopes: [] };
+    const lines = text.split("\n");
+    const n = lines.length;
+    const indentSize = detectIndentSize(lines);
+    const rawIndent = new Array(n);
+    const nonEmpty = new Array(n);
+
+    for (let i = 0; i < n; ++i) {
+        const trimmed = lines[i].trim();
+        nonEmpty[i] = trimmed.length > 0;
+        rawIndent[i] = nonEmpty[i] ? leadingColumns(lines[i], indentSize) : -1;
+    }
+
+    // Rellena líneas vacías con la indentación efectiva entre sus vecinas para no cortar guías.
+    const indentCols = new Array(n);
+    let lastIndent = 0;
+    for (let i = 0; i < n; ++i) {
+        if (nonEmpty[i]) {
+            lastIndent = rawIndent[i];
+            indentCols[i] = lastIndent;
+        } else {
+            indentCols[i] = lastIndent;
+        }
+    }
+    let nextIndent = 0;
+    for (let i = n - 1; i >= 0; --i) {
+        if (nonEmpty[i]) {
+            nextIndent = rawIndent[i];
+        } else {
+            indentCols[i] = Math.min(indentCols[i], nextIndent);
+        }
+    }
+
+    const scopes = [];
+    const indentBased = langId === "python" || langId === "config";
+
+    if (indentBased) {
+        const stack = [];
+        for (let i = 0; i < n; ++i) {
+            if (!nonEmpty[i]) continue;
+            const col = rawIndent[i];
+            const trimmed = lines[i].trim();
+            while (stack.length > 0 && col <= stack[stack.length - 1].indentCol) {
+                const popped = stack.pop();
+                let end = i - 1;
+                while (end > popped.startLine && !nonEmpty[end]) end--;
+                if (end > popped.startLine) {
+                    popped.endLine = end;
+                    scopes.push(popped);
+                }
+            }
+            if (trimmed.endsWith(":") && !trimmed.startsWith("#")) {
+                const info = classifyScopeHeader(trimmed, langId);
+                stack.push({
+                    startLine: i,
+                    endLine: n - 1,
+                    indentCol: col,
+                    label: info.label,
+                    kind: info.kind
+                });
+            }
+        }
+        while (stack.length > 0) {
+            const popped = stack.pop();
+            let end = n - 1;
+            while (end > popped.startLine && !nonEmpty[end]) end--;
+            if (end > popped.startLine) {
+                popped.endLine = end;
+                scopes.push(popped);
+            }
+        }
+    } else {
+        const stack = [];
+        const commentState = { inBlockComment: false };
+        for (let i = 0; i < n; ++i) {
+            const cleaned = stripStringsAndCommentsForBraces(lines[i], langId, commentState);
+            if (!cleaned) continue;
+            const trimmed = lines[i].trim();
+            const col = nonEmpty[i] ? rawIndent[i] : 0;
+            for (let k = 0; k < cleaned.length; ++k) {
+                const ch = cleaned[k];
+                if (ch === "{") {
+                    const info = classifyScopeHeader(trimmed, langId);
+                    stack.push({
+                        startLine: i,
+                        endLine: i,
+                        indentCol: col,
+                        label: info.label,
+                        kind: info.kind
+                    });
+                } else if (ch === "}" && stack.length > 0) {
+                    const popped = stack.pop();
+                    if (i > popped.startLine) {
+                        popped.endLine = i;
+                        scopes.push(popped);
+                    }
+                }
+            }
+        }
+    }
+
+    scopes.sort(function(a, b) {
+        if (a.startLine !== b.startLine) return a.startLine - b.startLine;
+        return b.endLine - a.endLine;
+    });
+
+    return { indentSize: indentSize, indentCols: indentCols, scopes: scopes };
+}
+
+function findActiveScopes(scopes, lineIndex) {
+    if (!scopes || !scopes.length || lineIndex < 0) return [];
+    const matched = [];
+    for (let i = 0; i < scopes.length; ++i) {
+        const s = scopes[i];
+        if (s.startLine <= lineIndex && lineIndex <= s.endLine)
+            matched.push(s);
+    }
+    return matched;
+}

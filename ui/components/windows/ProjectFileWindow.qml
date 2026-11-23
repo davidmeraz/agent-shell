@@ -63,11 +63,62 @@ FloatingWindow {
     property int writingLineIndex: -1
     property int changeStartLine: -1
     property int changeEndLine: -1
+    property bool wordWrap: false
+    property int indentSize: 4
+    property var indentCols: []
+    property var codeScopes: []
+    property int cursorLineIndex: 0
+    property int cursorColumnIndex: 1
+    property int hoveredLineIndex: -1
+    property bool copiedNotice: false
+    readonly property int effectiveLineIndex: writing && writingLineIndex >= 0
+        ? writingLineIndex
+        : (hoveredLineIndex >= 0 ? hoveredLineIndex : cursorLineIndex)
+    readonly property var activeScopeChain: CodeSyntax.findActiveScopes(codeScopes, effectiveLineIndex)
+    readonly property var activeBreadcrumbs: activeScopeChain.filter(s => !!s.label)
+    readonly property var activeScope: activeScopeChain.length > 0 ? activeScopeChain[activeScopeChain.length - 1] : null
+    readonly property var activeFunctionScope: {
+        for (let i = activeScopeChain.length - 1; i >= 0; --i) {
+            if (activeScopeChain[i].kind === "func" || activeScopeChain[i].kind === "type")
+                return activeScopeChain[i];
+        }
+        return null;
+    }
+    readonly property real charWidth: {
+        const text = code.text;
+        const offsets = lineOffsets;
+        if (text && offsets && offsets.length > 0) {
+            for (let i = 0; i < Math.min(offsets.length, 120); ++i) {
+                const start = offsets[i];
+                let spaces = 0;
+                while (start + spaces < text.length && text[start + spaces] === " " && spaces < 16)
+                    spaces++;
+                if (spaces >= 2) {
+                    const x0 = code.positionToRectangle(start).x;
+                    const xN = code.positionToRectangle(start + spaces).x;
+                    if (xN > x0) return (xN - x0) / spaces;
+                }
+            }
+        }
+        return Math.max(5, codeMetrics.advanceWidth("        ") / 8.0);
+    }
     readonly property int liveLineCount: Math.max(1, lineOffsets.length - (code.text.endsWith("\n") ? 1 : 0))
     readonly property int gutterDigits: Math.max(2, String(Math.max(liveLineCount, previewLines, 1)).length)
-    readonly property int gutterWidth: gutterDigits * 8 + 18
+    readonly property int gutterWidth: gutterDigits * 8 + 20
     readonly property bool highlightActive: languageInfo.id !== "plain" && code.text.length > 0
                                             && code.text.length <= (writing ? 28000 : 64000)
+
+    FontMetrics {
+        id: codeMetrics
+        font: code.font
+    }
+
+    Timer {
+        id: copiedResetTimer
+        interval: 1400
+        repeat: false
+        onTriggered: viewer.copiedNotice = false
+    }
 
     onActivityStateChanged: {
         if (["interrupted", "failed", "error", "timeout"].includes(activityState)) writeReveal.finish();
@@ -75,11 +126,41 @@ FloatingWindow {
     onFilePathChanged: syncSyntax()
     onSyntaxPaletteChanged: syncSyntax()
     onHighlightActiveChanged: syncSyntax()
+    onWordWrapChanged: {
+        Qt.callLater(viewer.updateChangeGeometry);
+        Qt.callLater(viewer.repaintCodeOverlays);
+    }
+    onEffectiveLineIndexChanged: repaintCodeOverlays()
     onWritingChanged: {
         syncSyntax();
-        codeGutter.requestPaint();
+        repaintCodeOverlays();
     }
-    onChangeGlowChanged: codeGutter.requestPaint()
+    onChangeGlowChanged: repaintCodeOverlays()
+
+    function repaintCodeOverlays() {
+        codeGutter.requestPaint();
+        codeGuidesCanvas.requestPaint();
+    }
+
+    function updateCursorLocation() {
+        const pos = Math.min(code.cursorPosition, code.text.length);
+        const lineIdx = findLineIndex(pos);
+        const lineStart = lineOffsets[lineIdx] || 0;
+        cursorLineIndex = lineIdx;
+        cursorColumnIndex = Math.max(1, pos - lineStart + 1);
+    }
+
+    function jumpToLine(lineIndex) {
+        if (lineIndex < 0 || lineIndex >= lineOffsets.length) return;
+        const pos = Math.min(lineOffsets[lineIndex], code.text.length);
+        const rect = code.positionToRectangle(pos);
+        if (scroller) {
+            scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height, rect.y - 24));
+        }
+        code.cursorPosition = pos;
+        updateCursorLocation();
+        repaintCodeOverlays();
+    }
 
     function findLineIndex(pos) {
         const offsets = lineOffsets;
@@ -107,7 +188,17 @@ FloatingWindow {
         const canHighlight = languageInfo.id !== "plain" && current.length > 0
             && current.length <= (writing ? 28000 : 64000);
         highlightedHtml = canHighlight ? CodeSyntax.highlightToHtml(current, languageInfo.id, syntaxPalette) : "";
-        codeGutter.requestPaint();
+        if (current.length > 0 && current.length <= (writing ? 20000 : 64000)) {
+            const structure = CodeSyntax.analyzeCodeStructure(current, languageInfo.id);
+            indentSize = structure.indentSize;
+            indentCols = structure.indentCols;
+            codeScopes = structure.scopes;
+        } else {
+            indentCols = [];
+            codeScopes = [];
+        }
+        updateCursorLocation();
+        repaintCodeOverlays();
     }
 
     FileWriteReveal {
@@ -115,7 +206,7 @@ FloatingWindow {
         editor: code
         onAdvanced: {
             viewer.writingLineIndex = viewer.findLineIndex(Math.min(writeReveal.position, code.length));
-            codeGutter.requestPaint();
+            viewer.repaintCodeOverlays();
             Qt.callLater(viewer.followWritingCursor);
         }
     }
@@ -131,8 +222,9 @@ FloatingWindow {
         target: viewer.scroller
         function onMovementStarted() { viewer.followWriting = false; }
         function onMovementEnded() { viewer.followWriting = viewer.scroller.atYEnd; }
-        function onContentYChanged() { codeGutter.requestPaint(); }
-        function onHeightChanged() { codeGutter.requestPaint(); }
+        function onContentXChanged() { viewer.repaintCodeOverlays(); }
+        function onContentYChanged() { viewer.repaintCodeOverlays(); }
+        function onHeightChanged() { viewer.repaintCodeOverlays(); }
     }
 
     function updateChangeGeometry() {
@@ -247,7 +339,7 @@ FloatingWindow {
             fileTransition.stop(); contentProgress = 1;
             ++changeRevision;
         } else {
-            Qt.callLater(codeGutter.requestPaint);
+            Qt.callLater(viewer.repaintCodeOverlays);
         }
     }
     Process {
@@ -298,9 +390,15 @@ FloatingWindow {
         ColumnLayout {
             focus: true
             Keys.onEscapePressed: event => { viewer.visible = false; event.accepted = true; }
+            Shortcut {
+                sequence: "Alt+Z"
+                context: Qt.WindowShortcut
+                enabled: viewer.visible
+                onActivated: viewer.wordWrap = !viewer.wordWrap
+            }
             anchors.fill: parent
             anchors.margins: 16
-            spacing: 10
+            spacing: 8
             // Barra superior arrastrable: lenguaje, ruta destacada y estado de escritura en vivo.
             Item {
                 Layout.fillWidth: true
@@ -394,6 +492,35 @@ FloatingWindow {
                             }
                         }
                     }
+                    Button {
+                        id: copyFileBtn
+                        visible: code.text.length > 0
+                        implicitWidth: copyFileLabel.implicitWidth + 14
+                        implicitHeight: 20
+                        padding: 0
+                        hoverEnabled: true
+                        z: 2
+                        onClicked: {
+                            Quickshell.clipboardText = viewer.preview || code.text;
+                            viewer.copiedNotice = true;
+                            copiedResetTimer.restart();
+                        }
+                        contentItem: Text {
+                            id: copyFileLabel
+                            text: viewer.copiedNotice ? "✓ Copiado" : "Copiar"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            color: viewer.copiedNotice ? GemaTheme.accent : (copyFileBtn.hovered ? GemaTheme.textColor : GemaTheme.subtleColor)
+                            font.pixelSize: 10
+                            font.weight: Font.Medium
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: copyFileBtn.hovered ? GemaTheme.accentAlpha(0.18) : "#12ffffff"
+                            border.width: 1
+                            border.color: viewer.copiedNotice || copyFileBtn.hovered ? GemaTheme.accentAlpha(0.45) : "#24ffffff"
+                        }
+                    }
                     Rectangle {
                         implicitWidth: viewerTag.implicitWidth + 10
                         implicitHeight: 19
@@ -404,7 +531,7 @@ FloatingWindow {
                         Text {
                             id: viewerTag
                             anchors.centerIn: parent
-                            text: "#" + viewer.viewerId
+                            text: (viewer.floatingMode ? "◈ #" : "#") + viewer.viewerId
                             color: GemaTheme.subtleColor
                             font.family: "monospace"
                             font.pixelSize: 10
@@ -414,7 +541,75 @@ FloatingWindow {
                 }
                 MouseArea {
                     anchors.fill: parent
+                    z: -1
                     onPressed: viewer.startSystemMove()
+                }
+            }
+            // Barra de ámbito estilo VS Code (breadcrumbs de clase / función / bloque activo).
+            RowLayout {
+                objectName: "projectCodeBreadcrumbs"
+                Layout.fillWidth: true
+                visible: viewer.activeBreadcrumbs.length > 0
+                spacing: 4
+                Text {
+                    text: "ƒ"
+                    color: GemaTheme.accent
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    font.bold: true
+                    Layout.leftMargin: 2
+                }
+                Repeater {
+                    model: viewer.activeBreadcrumbs.slice(-4)
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        spacing: 4
+                        Text {
+                            visible: index > 0
+                            text: "›"
+                            color: GemaTheme.subtleColor
+                            font.pixelSize: 11
+                        }
+                        Button {
+                            id: scopeChip
+                            implicitWidth: scopeChipLabel.implicitWidth + 10
+                            implicitHeight: 19
+                            padding: 0
+                            hoverEnabled: true
+                            onClicked: viewer.jumpToLine(modelData.startLine)
+                            contentItem: Text {
+                                id: scopeChipLabel
+                                text: modelData.label
+                                textFormat: Text.PlainText
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                color: scopeChip.hovered
+                                    ? GemaTheme.accent
+                                    : (modelData.kind === "func" ? viewer.syntaxPalette.func
+                                       : modelData.kind === "type" ? viewer.syntaxPalette.type : GemaTheme.mutedColor)
+                                font.family: "monospace"
+                                font.pixelSize: 10
+                                font.weight: modelData.kind === "func" || modelData.kind === "type" ? Font.DemiBold : Font.Normal
+                            }
+                            background: Rectangle {
+                                radius: 5
+                                color: scopeChip.hovered ? GemaTheme.accentAlpha(0.16) : "#0effffff"
+                                border.width: scopeChip.hovered ? 1 : 0
+                                border.color: GemaTheme.accentAlpha(0.40)
+                            }
+                        }
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Text {
+                    visible: !!viewer.activeScope
+                    text: viewer.activeScope
+                        ? ("L" + (viewer.activeScope.startLine + 1) + "–" + (viewer.activeScope.endLine + 1))
+                        : ""
+                    color: GemaTheme.subtleColor
+                    font.family: "monospace"
+                    font.pixelSize: 10
                 }
             }
             // Separador especular + barra de progreso luminosa durante la escritura animada.
@@ -450,7 +645,7 @@ FloatingWindow {
                     }
                 }
             }
-            // Superficie principal de código: numeración de líneas sincronizada + sintaxis Gema + efectos en vivo.
+            // Superficie principal de código: numeración + guías de indentación/ámbito VS Code + sintaxis Gema.
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -458,50 +653,219 @@ FloatingWindow {
                 transform: Translate { x: 8 * (1 - viewer.contentProgress) }
                 clip: true
 
+                // Guías verticales de indentación, línea de ámbito de función activa y resaltado de línea actual.
+                Canvas {
+                    id: codeGuidesCanvas
+                    objectName: "projectCodeIndentGuides"
+                    z: 0
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: viewer.gutterWidth
+                    enabled: false
+                    contextType: "2d"
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        if (!viewer.visible || width <= 2 || height <= 2) return;
+                        const ctx = getContext("2d");
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+
+                        const offsets = viewer.lineOffsets;
+                        const totalText = code.text;
+                        if (!offsets || !offsets.length || !totalText.length) return;
+                        const totalLines = (!viewer.writing && totalText.endsWith("\n"))
+                            ? Math.max(1, offsets.length - 1) : offsets.length;
+                        const scrollX = viewer.scroller ? viewer.scroller.contentX : 0;
+                        const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
+                        const viewBottom = scrollY + height + 24;
+                        const padLeft = code.leftPadding;
+                        const cw = viewer.charWidth;
+                        const step = Math.max(2, viewer.indentSize);
+                        const accent = Qt.color(GemaTheme.accent);
+                        const aR = Math.round(accent.r * 255);
+                        const aG = Math.round(accent.g * 255);
+                        const aB = Math.round(accent.b * 255);
+
+                        // Regla vertical discreta en columna 100 (solo sin ajuste de línea).
+                        if (!viewer.wordWrap) {
+                            const rulerX = Math.floor(padLeft + 100 * cw - scrollX) + 0.5;
+                            if (rulerX > 0 && rulerX < width) {
+                                ctx.strokeStyle = "rgba(255,255,255,0.055)";
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.moveTo(rulerX, 0);
+                                ctx.lineTo(rulerX, height);
+                                ctx.stroke();
+                            }
+                        }
+
+                        // Búsqueda binaria de la primera línea visible.
+                        let lo = 0;
+                        let hi = totalLines - 1;
+                        while (lo < hi) {
+                            const mid = (lo + hi) >> 1;
+                            const r = code.positionToRectangle(Math.min(offsets[mid], totalText.length));
+                            if (r.y + r.height < scrollY - 24) lo = mid + 1;
+                            else hi = mid;
+                        }
+
+                        const activeLine = viewer.effectiveLineIndex;
+                        const indents = viewer.indentCols;
+                        const innerScope = viewer.activeScope;
+                        const fnScope = viewer.activeFunctionScope;
+
+                        // 1. Banda sutil de la línea activa / bajo el cursor (estilo VS Code).
+                        if (!viewer.writing && activeLine >= lo && activeLine < totalLines) {
+                            const ar = code.positionToRectangle(Math.min(offsets[activeLine], totalText.length));
+                            const ay = ar.y - scrollY;
+                            if (ay + ar.height >= 0 && ay <= height) {
+                                ctx.fillStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.085)";
+                                ctx.fillRect(2, ay, Math.max(0, width - 4), Math.max(16, ar.height));
+                            }
+                        }
+
+                        // 2. Guías verticales de sangría para todas las líneas visibles.
+                        if (indents && indents.length) {
+                            ctx.lineWidth = 1;
+                            ctx.strokeStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.16)";
+                            for (let i = lo; i < totalLines; ++i) {
+                                const rect = code.positionToRectangle(Math.min(offsets[i], totalText.length));
+                                if (rect.y > viewBottom) break;
+                                const drawY = rect.y - scrollY;
+                                if (drawY + rect.height < -8) continue;
+                                const colCount = indents[i] || 0;
+                                const nextRect = (i + 1 < totalLines)
+                                    ? code.positionToRectangle(Math.min(offsets[i + 1], totalText.length))
+                                    : null;
+                                const rowBottom = nextRect ? Math.min(height, nextRect.y - scrollY) : (drawY + rect.height);
+                                const segH = Math.max(rect.height, rowBottom - drawY);
+
+                                for (let c = step; c <= colCount; c += step) {
+                                    const gx = Math.floor(padLeft + (c - step) * cw - scrollX) + 0.5;
+                                    if (gx < 2 || gx > width) continue;
+                                    ctx.beginPath();
+                                    ctx.moveTo(gx, drawY);
+                                    ctx.lineTo(gx, drawY + segH);
+                                    ctx.stroke();
+                                }
+                            }
+                        }
+
+                        // 3. Guías iluminadas del ámbito de función y del bloque activo (estilo VS Code).
+                        function drawScopeRail(scope, alpha, lineW, drawGlow) {
+                            if (!scope || scope.endLine <= scope.startLine) return;
+                            const firstLine = Math.min(totalLines - 1, scope.startLine + 1);
+                            const lastLine = Math.min(totalLines - 1, scope.endLine);
+                            const rStart = code.positionToRectangle(Math.min(offsets[firstLine], totalText.length));
+                            const rEnd = code.positionToRectangle(Math.min(offsets[lastLine], totalText.length));
+                            const y1 = Math.max(0, rStart.y - scrollY);
+                            const y2 = Math.min(height, rEnd.y + rEnd.height - scrollY);
+                            if (y2 <= 0 || y1 >= height || y2 <= y1) return;
+                            const rx = Math.floor(padLeft + scope.indentCol * cw - scrollX) + 0.5;
+                            if (rx < 2 || rx > width) return;
+
+                            if (drawGlow) {
+                                ctx.strokeStyle = "rgba(" + aR + "," + aG + "," + aB + ",0.20)";
+                                ctx.lineWidth = 4;
+                                ctx.beginPath();
+                                ctx.moveTo(rx, y1);
+                                ctx.lineTo(rx, y2);
+                                ctx.stroke();
+                            }
+
+                            ctx.strokeStyle = "rgba(" + aR + "," + aG + "," + aB + "," + alpha + ")";
+                            ctx.lineWidth = lineW;
+                            ctx.beginPath();
+                            ctx.moveTo(rx, y1);
+                            ctx.lineTo(rx, y2);
+                            ctx.stroke();
+
+                            // Remate discreto en el cierre del bloque si el cierre está visible.
+                            const exactEndY = rEnd.y + rEnd.height * 0.5 - scrollY;
+                            if (exactEndY >= 0 && exactEndY <= height) {
+                                ctx.beginPath();
+                                ctx.moveTo(rx, exactEndY);
+                                ctx.lineTo(rx + 4, exactEndY);
+                                ctx.stroke();
+                            }
+                        }
+
+                        if (fnScope && fnScope !== innerScope)
+                            drawScopeRail(fnScope, 0.44, 1.25, false);
+                        if (innerScope)
+                            drawScopeRail(innerScope, 0.82, 1.5, true);
+                    }
+                }
+
                 ScrollView {
                     id: codeScroll
                     objectName: "projectCodeScroll"
-                    anchors.fill: parent
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: viewer.gutterWidth
                     clip: true
                     ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                    HoverHandler {
+                        onPointChanged: {
+                            const scrollX = viewer.scroller ? viewer.scroller.contentX : 0;
+                            const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
+                            const pos = code.positionAt(point.position.x + scrollX, point.position.y + scrollY);
+                            if (pos >= 0 && code.text.length > 0)
+                                viewer.hoveredLineIndex = viewer.findLineIndex(Math.min(pos, code.text.length));
+                        }
+                        onHoveredChanged: {
+                            if (!hovered) viewer.hoveredLineIndex = -1;
+                        }
+                    }
+
                     // TextEdit conserva el control del desplazamiento y el contrato PlainText en el visor.
                     TextEdit {
                         id: code
                         objectName: "projectExplorerPreview"
                         text: ""
-                        width: codeScroll.availableWidth
+                        width: viewer.wordWrap
+                            ? codeScroll.availableWidth
+                            : Math.max(codeScroll.availableWidth, Math.ceil(implicitWidth) + 28)
                         textFormat: TextEdit.PlainText
                         readOnly: true
                         selectByMouse: true
-                        wrapMode: TextEdit.Wrap
+                        wrapMode: viewer.wordWrap ? TextEdit.Wrap : TextEdit.NoWrap
                         font.family: "monospace"
                         font.pixelSize: 13
+                        tabStopDistance: viewer.charWidth * viewer.indentSize
                         color: viewer.highlightActive && viewer.highlightedHtml.length > 0
                                ? "transparent" : viewer.syntaxPalette.plain
                         selectionColor: viewer.syntaxPalette.selectionBg
                         selectedTextColor: viewer.syntaxPalette.selectionFg
                         padding: 0
-                        topPadding: 4
-                        bottomPadding: 10
-                        rightPadding: 8
-                        leftPadding: viewer.gutterWidth + 14
+                        topPadding: 6
+                        bottomPadding: 14
+                        rightPadding: 14
+                        leftPadding: 14
+                        onCursorPositionChanged: viewer.updateCursorLocation()
                         onTextChanged: {
                             viewer.syncSyntax();
                             Qt.callLater(viewer.updateChangeGeometry);
                         }
                         onWidthChanged: {
                             Qt.callLater(viewer.updateChangeGeometry);
-                            Qt.callLater(codeGutter.requestPaint);
+                            Qt.callLater(viewer.repaintCodeOverlays);
                         }
 
                         // Banda de líneas recién modificadas, teñida con el acento del tema.
                         Rectangle {
                             objectName: "projectCodeChangeBand"
                             z: -3
-                            x: viewer.gutterWidth + 4
+                            x: 4
                             y: viewer.changeTop
-                            width: Math.max(0, code.width - viewer.gutterWidth - 4)
+                            width: Math.max(0, code.width - 8)
                             height: viewer.changeHeight
                             radius: 5
                             opacity: viewer.changeGlow * 2.4
@@ -522,9 +886,9 @@ FloatingWindow {
                                 const currentText = code.text;
                                 return code.positionToRectangle(Math.min(writeReveal.position, currentText.length));
                             }
-                            x: viewer.gutterWidth + 4
+                            x: 4
                             y: lineRect.y
-                            width: Math.max(0, code.width - viewer.gutterWidth - 4)
+                            width: Math.max(0, code.width - 8)
                             height: Math.max(16, lineRect.height)
                             radius: 5
                             opacity: viewer.writing ? 1.0 : 0.0
@@ -581,7 +945,7 @@ FloatingWindow {
                         Rectangle {
                             objectName: "projectCodeChangeMarker"
                             z: 1
-                            x: viewer.gutterWidth + 4
+                            x: 4
                             y: viewer.changeTop
                             width: 2.5
                             height: viewer.changeHeight
@@ -595,7 +959,7 @@ FloatingWindow {
                             id: cursorTrail
                             z: -1
                             visible: viewer.writing && width > 2
-                            readonly property real codeLeft: viewer.gutterWidth + 14
+                            readonly property real codeLeft: code.leftPadding
                             readonly property real trailWidth: Math.min(96, Math.max(0, writingCursor.x - codeLeft))
                             x: writingCursor.x - trailWidth
                             y: writingCursor.y - 1
@@ -654,7 +1018,7 @@ FloatingWindow {
                     }
                 }
 
-                // Canal de numeración de líneas anclado al viewport (nunca crece por encima de la pantalla).
+                // Canal de numeración de líneas anclado al viewport (nunca se superpone con el código al desplazar horizontalmente).
                 Canvas {
                     id: codeGutter
                     objectName: "projectCodeGutter"
@@ -676,7 +1040,7 @@ FloatingWindow {
                         // Separador vertical discreto tintado con el acento.
                         const accent = Qt.color(GemaTheme.accent);
                         ctx.fillStyle = "rgba(" + Math.round(accent.r * 255) + ","
-                            + Math.round(accent.g * 255) + "," + Math.round(accent.b * 255) + ",0.16)";
+                            + Math.round(accent.g * 255) + "," + Math.round(accent.b * 255) + ",0.18)";
                         ctx.fillRect(width - 1, 2, 1, Math.max(0, height - 4));
 
                         const offsets = viewer.lineOffsets;
@@ -687,7 +1051,7 @@ FloatingWindow {
                         const scrollY = viewer.scroller ? viewer.scroller.contentY : 0;
                         const viewBottom = scrollY + height + 24;
 
-                        // Búsqueda binaria de la primera línea visible para soportar archivos grandes con wrap.
+                        // Búsqueda binaria de la primera línea visible para soportar archivos grandes.
                         let lo = 0;
                         let hi = totalLines - 1;
                         while (lo < hi) {
@@ -700,19 +1064,21 @@ FloatingWindow {
                         ctx.textAlign = "right";
                         ctx.textBaseline = "middle";
                         const pal = viewer.syntaxPalette;
-                        const activeIdx = viewer.writingLineIndex;
+                        const activeIdx = viewer.effectiveLineIndex;
                         const chStart = viewer.changeStartLine;
                         const chEnd = viewer.changeEndLine;
+                        const scope = viewer.activeScope;
 
                         for (let i = lo; i < totalLines; ++i) {
                             const rect = code.positionToRectangle(Math.min(offsets[i], totalText.length));
                             if (rect.y > viewBottom) break;
                             const drawY = rect.y - scrollY;
                             if (drawY + rect.height < -8) continue;
-                            const isWritingLine = viewer.writing && i === activeIdx;
+                            const isActiveLine = i === activeIdx;
+                            const isInActiveScope = !!scope && i >= scope.startLine && i <= scope.endLine;
                             const isChangedLine = viewer.changeGlow > 0.005 && chStart >= 0 && i >= chStart && i <= chEnd;
 
-                            if (isWritingLine) {
+                            if (isActiveLine) {
                                 ctx.font = "bold 11px monospace";
                                 ctx.globalAlpha = 1.0;
                                 ctx.fillStyle = pal.lineNumberActive;
@@ -720,18 +1086,24 @@ FloatingWindow {
                                 ctx.font = "11px monospace";
                                 ctx.globalAlpha = 0.92;
                                 ctx.fillStyle = pal.lineNumberActive;
+                            } else if (isInActiveScope) {
+                                ctx.font = "11px monospace";
+                                ctx.globalAlpha = 0.85;
+                                ctx.fillStyle = pal.lineNumber;
                             } else {
                                 ctx.font = "11px monospace";
-                                ctx.globalAlpha = 0.68;
+                                ctx.globalAlpha = 0.56;
                                 ctx.fillStyle = pal.lineNumber;
                             }
-                            ctx.fillText(String(i + 1), width - 8, drawY + rect.height * 0.5);
+                            ctx.fillText(String(i + 1), width - 9, drawY + rect.height * 0.5);
                         }
                     }
                 }
             }
+            // Barra de estado inferior estilo VS Code (posición Ln/Col, indentación, ajuste de línea y total).
             RowLayout {
                 Layout.fillWidth: true
+                spacing: 8
                 WorkStatusNote {
                     Layout.fillWidth: true
                     busy: (viewer.writing || viewer.activityState === "running") && !viewer.deleted
@@ -745,8 +1117,52 @@ FloatingWindow {
                     HoverHandler { id: statusHover }
                     ToolTip {
                         visible: statusHover.hovered
-                        text: "La escritura animada muestra texto ya recibido del archivo. Esc para cerrar."
+                        text: "La escritura animada muestra texto ya recibido del archivo. Alt+Z alterna ajuste de línea · Esc para cerrar."
                         delay: 500
+                    }
+                }
+                Text {
+                    visible: code.text.length > 0
+                    text: "Ln " + (viewer.effectiveLineIndex + 1) + ", Col " + viewer.cursorColumnIndex
+                    color: GemaTheme.subtleColor
+                    font.family: "monospace"
+                    font.pixelSize: 10
+                }
+                Text {
+                    visible: code.text.length > 0
+                    text: "Esp: " + viewer.indentSize
+                    color: GemaTheme.subtleColor
+                    font.family: "monospace"
+                    font.pixelSize: 10
+                }
+                Button {
+                    id: wrapToggleBtn
+                    objectName: "projectCodeWrapToggle"
+                    implicitWidth: wrapToggleLabel.implicitWidth + 12
+                    implicitHeight: 20
+                    padding: 0
+                    hoverEnabled: true
+                    onClicked: viewer.wordWrap = !viewer.wordWrap
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 400
+                    ToolTip.text: viewer.wordWrap
+                        ? "Desactivar ajuste de línea (Alt+Z)"
+                        : "Activar ajuste de línea (Alt+Z)"
+                    contentItem: Text {
+                        id: wrapToggleLabel
+                        text: viewer.wordWrap ? "↩ Ajuste: Sí" : "→ Sin ajuste"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        color: viewer.wordWrap ? GemaTheme.accent : (wrapToggleBtn.hovered ? GemaTheme.textColor : GemaTheme.subtleColor)
+                        font.pixelSize: 10
+                        font.weight: viewer.wordWrap ? Font.DemiBold : Font.Normal
+                    }
+                    background: Rectangle {
+                        radius: 6
+                        color: viewer.wordWrap ? GemaTheme.accentAlpha(0.18)
+                               : (wrapToggleBtn.hovered ? "#18ffffff" : "#10ffffff")
+                        border.width: 1
+                        border.color: viewer.wordWrap ? GemaTheme.accentAlpha(0.50) : "#22ffffff"
                     }
                 }
                 Text {
@@ -754,7 +1170,7 @@ FloatingWindow {
                     text: viewer.previewLines + (viewer.previewLines === 1 ? " línea" : " líneas")
                           + (viewer.previewTruncated ? " · vista parcial (128 KiB)" : "")
                     color: GemaTheme.subtleColor
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     style: Text.Raised
                     styleColor: GemaTheme.textShadow
                 }
