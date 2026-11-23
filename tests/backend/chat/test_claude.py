@@ -17,6 +17,7 @@ from harness.account.codex_usage import UsageError
 from harness.chat.claude import (
     ClaudeClient,
     claude_catalog,
+    model_label,
     normalize_claude_usage,
     parse_claude_auth_status,
     parse_claude_reset_time,
@@ -45,6 +46,7 @@ class _OfflineSession:
 class _FakeClaudeClient:
     def __init__(self, authenticated: bool = True, turns: list[list[dict]] | None = None) -> None:
         self._authenticated = authenticated
+        self.resolved_models: dict[str, str] = {}
         self._turns = list(turns or [])
         self.calls: list[dict] = []
 
@@ -81,7 +83,7 @@ class _FakeClaudeClient:
             "checked_at": "2026-11-23T08:15:00+00:00",
         }
 
-    def stream_turn(self, prompt, model, workspace, control, *, session_id="", effort="", image=""):
+    def stream_turn(self, prompt, model, workspace, control, *, session_id="", effort="", image="", isolated=False):
         self.calls.append({
             "prompt": prompt,
             "model": model,
@@ -89,6 +91,7 @@ class _FakeClaudeClient:
             "workspace": str(workspace),
             "session_id": session_id,
             "image": image,
+            "isolated": isolated,
         })
         control.mark("request")
         control.mark("headers")
@@ -234,6 +237,9 @@ class ClaudeSubprocessTests(unittest.TestCase):
             events = list(client.stream_turn("Hola", "claude-sonnet", root, StreamControl(), effort="low"))
             types = [e["type"] for e in events]
             self.assertIn("init", types)
+            self.assertEqual(client.resolved_models, {"claude-sonnet": "claude-sonnet-5-5"})
+            self.assertEqual(model_label("claude-sonnet-5-5"), "Claude Sonnet 5.5")
+            self.assertEqual(model_label("custom"), "")
             self.assertIn("text_delta", types)
             self.assertIn("tool_start", types)
             self.assertIn("tool_done", types)

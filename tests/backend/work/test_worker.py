@@ -1,292 +1,191 @@
-"""WorkerRouter: delegation across providers with fake clients."""
+"""Workers fed with the events the real CLI parsers produce."""
 
 import json
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
-from harness.core.http import Cancelled, ServiceError, StreamControl
+from tests.support import paths  # noqa: F401
+from harness.chat.agy import parse_stream_line
+from harness.chat.claude import isolation_flags, parse_claude_stream_line
+from harness.core.http import ServiceError, StreamControl
+from harness.work.roster import Candidate
 from harness.work.worker import (
-    DELEGATE_TOOL,
-    WORKER_INSTRUCTIONS,
-    WorkerResult,
-    WorkerRouter,
-    _infer_files_from_tool_event,
-    _is_quota_error,
+    DELEGATE_TOOL, WorkerControl, WorkerRouter, extract_delegations, is_quota_error, parse_delegate_arguments,
 )
 
-
-class FakeStreamControl(StreamControl):
-    def __init__(self):
-        super().__init__()
-
-    def check(self):
-        if self.cancelled.is_set():
-            raise Cancelled()
+CHATGPT = Candidate("chatgpt", "gpt-6-luna", "medium", "fast", "chatgpt")
+AGY = Candidate("agy", "gemini-3.8-flash-medium", "", "fast", "agy:gemini")
+CLAUDE = Candidate("claude", "claude-haiku", "medium", "fast", "claude")
 
 
-class FakeChatGPTStream:
-    """Yields a minimal sequence: one text response or tool calls then text."""
+class ScriptedCli:
+    def __init__(self, parse, lines):
+        self.parse, self.lines, self.calls = parse, lines, []
 
-    def __init__(self, responses):
-        self._responses = responses
-        self._index = 0
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self._index >= len(self._responses):
-            raise StopIteration
-        event = self._responses[self._index]
-        self._index += 1
-        return event
-
-    def close(self):
-        pass
+    def stream_turn(self, prompt, model, workspace, control, **kwargs):
+        self.calls.append({"prompt": prompt, "model": model, **kwargs})
+        for line in self.lines:
+            events = self.parse(json.dumps(line))
+            yield from events if isinstance(events, list) else [events]
 
 
-def _completed_response(output_items, usage=None):
-    return {
-        "type": "response.completed",
-        "response": {
-            "status": "completed",
-            "output": output_items,
-            "usage": usage or {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
-        },
-    }
-
-
-def _text_message(text):
-    return {
-        "type": "message",
-        "role": "assistant",
-        "content": [{"type": "output_text", "text": text}],
-    }
-
-
-def _tool_call(name, arguments, call_id="call_1"):
-    return {
-        "type": "function_call",
-        "name": name,
-        "arguments": json.dumps(arguments),
-        "call_id": call_id,
-    }
-
-
-class FakeChatGPTClient:
-    def __init__(self, stream_responses):
-        self._stream_responses = stream_responses
-        self._call_count = 0
+class ScriptedChatGPT:
+    def __init__(self, *responses):
+        self.responses, self.calls = list(responses), []
 
     def stream(self, model, messages, instructions, control, **kwargs):
-        responses = self._stream_responses[min(self._call_count, len(self._stream_responses) - 1)]
-        self._call_count += 1
-        return FakeChatGPTStream(responses)
+        self.calls.append({"messages": json.loads(json.dumps(messages)), **kwargs})
+        yield self.responses.pop(0)
 
 
-class FakeAgyClient:
-    def __init__(self, events):
-        self._events = events
-
-    def is_available(self):
-        return True
-
-    def stream_turn(self, prompt, model, workspace, control, **kwargs):
-        for event in self._events:
-            yield event
+def completed(*output):
+    return {"type": "response.completed", "response": {"output": list(output), "usage": {"total_tokens": 15}}}
 
 
-class FakeClaudeClient:
-    def __init__(self, events):
-        self._events = events
-
-    def is_available(self):
-        return True
-
-    def stream_turn(self, prompt, model, workspace, control, **kwargs):
-        for event in self._events:
-            yield event
+def text(value):
+    return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": value}]}
 
 
-class WorkerResultTests(unittest.TestCase):
-    def test_to_dict_round_trip(self):
-        r = WorkerResult(status="completed", summary="Done", provider="chatgpt", model="gpt-4.1-mini")
-        d = r.to_dict()
-        self.assertEqual(d["status"], "completed")
-        self.assertEqual(d["summary"], "Done")
-        self.assertEqual(d["provider"], "chatgpt")
-
-    def test_to_tool_output_is_valid_json(self):
-        r = WorkerResult(summary="OK")
-        output = r.to_tool_output()
-        parsed = json.loads(output)
-        self.assertEqual(parsed["summary"], "OK")
+def tool(name, arguments, call_id="c1"):
+    return {"type": "function_call", "name": name, "call_id": call_id, "arguments": json.dumps(arguments)}
 
 
-class DelegateToolTests(unittest.TestCase):
-    def test_delegate_tool_schema(self):
-        self.assertEqual(DELEGATE_TOOL["name"], "delegate")
-        self.assertTrue(DELEGATE_TOOL["strict"])
-        props = DELEGATE_TOOL["parameters"]["properties"]
-        self.assertIn("task", props)
-        self.assertIn("provider", props)
-        self.assertIn("model", props)
-        self.assertIn("max_steps", props)
-        self.assertEqual(DELEGATE_TOOL["parameters"]["required"], ["task"])
-
-
-class ChatGPTWorkerTests(unittest.TestCase):
+class WorkerCase(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.workspace = Path(self.temp.name)
-        self.events = []
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.workspace = Path(temp.name)
+        self.progress = []
 
-    def emit(self, event_type, **data):
-        self.events.append({"type": event_type, **data})
+    def run_worker(self, candidate, client, max_steps=8, control=None):
+        router = WorkerRouter(*(client if candidate.provider == name else None
+                                for name in ("chatgpt", "agy", "claude")))
+        router.workspace = self.workspace
+        return router.run("do it", candidate, control or StreamControl(), max_steps, self.progress.append)
 
-    def test_simple_text_response(self):
-        client = FakeChatGPTClient([
-            [_completed_response([_text_message("Task done.")])]
+
+class ClaudeWorkerTests(WorkerCase):
+    def lines(self, **result):
+        return ScriptedCli(parse_claude_stream_line, [
+            {"type": "assistant", "message": {"id": "m", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": str(self.workspace / "new.py")}},
+                {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "denied.py"}}],
+                "usage": {"input_tokens": 10, "output_tokens": 5}}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+                {"type": "tool_result", "tool_use_id": "t2", "content": "no", "is_error": True}]}},
+            {"type": "result", "usage": {"input_tokens": 30, "output_tokens": 8}, **result},
         ])
-        router = WorkerRouter(client, None, None, None, self.workspace, self.emit)
-        result = router.run("Do something", "chatgpt", "gpt-4.1-mini", FakeStreamControl())
-        self.assertEqual(result.status, "completed")
-        self.assertIn("Task done", result.summary)
-        self.assertEqual(result.provider, "chatgpt")
-        self.assertEqual(result.tool_calls, 0)
 
-    def test_tool_call_then_response(self):
-        step1 = [_completed_response([
-            _tool_call("read_file", {"file_path": "test.py", "offset": 1, "limit": 50}),
-        ])]
-        step2 = [_completed_response([_text_message("Read the file.")])]
-        client = FakeChatGPTClient([step1, step2])
-        router = WorkerRouter(client, None, None, None, self.workspace, self.emit)
-        (self.workspace / "test.py").write_text("print('hello')")
-        result = router.run("Read test.py", "chatgpt", "gpt-4.1-mini", FakeStreamControl())
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.tool_calls, 1)
-        worker_tool_events = [e for e in self.events if e["type"] == "worker.tool"]
-        self.assertEqual(len(worker_tool_events), 1)
+    def test_reports_summary_files_and_tokens_once(self):
+        client = self.lines(is_error=False, result="Created new.py")
+        result = self.run_worker(CLAUDE, client)
+        self.assertEqual((result.status, result.summary, result.files_changed, result.tool_calls, result.tokens_used),
+                         ("completed", "Created new.py", ["new.py"], 2, 38))
+        self.assertEqual((client.calls[0]["effort"], client.calls[0]["isolated"]), ("medium", True))
+        self.assertIn("worker executing one bounded task", client.calls[0]["prompt"])
+        self.assertTrue(self.progress)
 
-    def test_cancelled_returns_interrupted(self):
-        control = FakeStreamControl()
-        control.cancelled.set()
-        client = FakeChatGPTClient([[_completed_response([_text_message("OK")])]])
-        router = WorkerRouter(client, None, None, None, self.workspace, self.emit)
-        result = router.run("Task", "chatgpt", "gpt-4.1-mini", control)
-        self.assertEqual(result.status, "interrupted")
+    def test_error_result_is_never_completed(self):
+        quota = self.run_worker(CLAUDE, self.lines(is_error=True, result="You've hit your session limit"))
+        self.assertEqual(quota.status, "quota_exhausted")
+        other = self.run_worker(CLAUDE, self.lines(is_error=True, result="API error"))
+        self.assertEqual(other.status, "failed")
+
+    def test_empty_report_is_a_failure(self):
+        self.assertEqual(self.run_worker(CLAUDE, self.lines(is_error=False, result="")).status, "failed")
 
 
-class AgyWorkerTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.workspace = Path(self.temp.name)
-        self.events = []
-
-    def emit(self, event_type, **data):
-        self.events.append({"type": event_type, **data})
-
-    def test_text_only_response(self):
-        agy_events = [
-            {"type": "init", "conversation_id": "conv-1"},
-            {"type": "text_delta", "text": "Done.", "done": True,
-             "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}},
-            {"type": "result", "status": "SUCCESS", "response": "Done."},
-        ]
-        agy = FakeAgyClient(agy_events)
-        router = WorkerRouter(None, agy, None, None, self.workspace, self.emit)
-        result = router.run("Do it", "agy", "gemini-2.5-flash", FakeStreamControl())
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.provider, "agy")
-        self.assertIn("Done", result.summary)
-
-    def test_tool_events_counted(self):
-        agy_events = [
-            {"type": "init"},
-            {"type": "tool", "step_index": 0, "tool_name": "apply_patch", "state": "RUNNING",
-             "parameters": {"file_path": "main.py"}},
-            {"type": "tool", "step_index": 0, "tool_name": "apply_patch", "state": "DONE",
-             "parameters": {"file_path": "main.py"}, "output": "patched"},
-            {"type": "text_delta", "text": "Patched main.py", "done": True,
-             "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30}},
-            {"type": "result", "status": "SUCCESS", "response": "Patched main.py"},
-        ]
-        agy = FakeAgyClient(agy_events)
-        router = WorkerRouter(None, agy, None, None, self.workspace, self.emit)
-        result = router.run("Patch it", "agy", "gemini-2.5-flash", FakeStreamControl())
-        self.assertEqual(result.tool_calls, 1)
-        self.assertEqual(len(result.files_changed), 1)
-        self.assertEqual(result.files_changed[0]["path"], "main.py")
+    def test_isolation_keeps_user_permission_settings(self):
+        flags = isolation_flags()
+        self.assertIn("--strict-mcp-config", flags)
+        self.assertNotIn("--setting-sources", flags)
+        self.assertEqual(set(json.loads(flags[-1])), {"claudeMdExcludes", "outputStyle"})
 
 
-class ClaudeWorkerTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.workspace = Path(self.temp.name)
-        self.events = []
+class AgyWorkerTests(WorkerCase):
+    def lines(self, status, error=""):
+        step = {"step_type": "tool", "step_index": 1, "tool_name": "write_to_file",
+                "tool_info": {"parameters": {"TargetFile": str(self.workspace / "a.py")}}}
+        return ScriptedCli(parse_stream_line, [
+            {"event": "step_update", "step_update": {**step, "state": "ACTIVE"}},
+            {"event": "step_update", "step_update": {**step, "state": "DONE"}},
+            {"event": "step_update", "step_update": {"step_type": "agent_response", "step_index": 2, "state": "DONE",
+                                                     "text_delta": "Done.", "usage": {"total_tokens": 30}}},
+            {"event": "result", "result": {"status": status, "response": "Done.", "error": error,
+                                           "usage": {"total_tokens": 30}}},
+        ])
 
-    def emit(self, event_type, **data):
-        self.events.append({"type": event_type, **data})
+    def test_counts_tool_once_and_does_not_double_tokens(self):
+        result = self.run_worker(AGY, self.lines("SUCCESS"))
+        self.assertEqual((result.status, result.files_changed, result.tool_calls, result.tokens_used),
+                         ("completed", ["a.py"], 1, 30))
 
-    def test_text_only_response(self):
-        claude_events = [
-            {"type": "text_delta", "text": "Implemented."},
-            {"type": "usage", "usage": {"input_tokens": 15, "output_tokens": 8}},
-            {"type": "result", "response": "Implemented."},
-        ]
-        claude = FakeClaudeClient(claude_events)
-        router = WorkerRouter(None, None, claude, None, self.workspace, self.emit)
-        result = router.run("Do it", "claude", "claude-haiku", FakeStreamControl())
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.provider, "claude")
-        self.assertEqual(result.tokens_used["input"], 15)
-
-    def test_tool_done_events_counted(self):
-        claude_events = [
-            {"type": "tool_start", "tool_name": "Write", "parameters": {"file_path": "new.py"}},
-            {"type": "tool_done", "tool_name": "Write", "parameters": {"file_path": "new.py"}},
-            {"type": "text_delta", "text": "Created new.py"},
-            {"type": "result", "response": "Created new.py"},
-        ]
-        claude = FakeClaudeClient(claude_events)
-        router = WorkerRouter(None, None, claude, None, self.workspace, self.emit)
-        result = router.run("Write", "claude", "claude-haiku", FakeStreamControl())
-        self.assertEqual(result.tool_calls, 1)
-        self.assertEqual(len(result.files_changed), 1)
+    def test_exhausted_resource_is_quota(self):
+        self.assertEqual(self.run_worker(AGY, self.lines("ERROR", "RESOURCE_EXHAUSTED")).status, "quota_exhausted")
 
 
-class InferFilesTests(unittest.TestCase):
-    def test_apply_patch_infers_modified(self):
-        result = _infer_files_from_tool_event("apply_patch", {"file_path": "a.py"}, Path("/tmp"))
-        self.assertEqual(result, [{"path": "a.py", "action": "modified"}])
+class ChatGPTWorkerTests(WorkerCase):
+    PATCH = {"patch": "*** Begin Patch\n*** Add File: b.txt\n+hi\n*** End Patch"}
 
-    def test_shell_write_infers_created(self):
-        result = _infer_files_from_tool_event("shell", {"command": "echo x > file.txt"}, Path("/tmp"))
-        self.assertEqual(result, [{"path": "(shell write)", "action": "created"}])
+    def test_replays_reasoning_and_reports_real_paths(self):
+        reasoning = {"type": "reasoning", "id": "r1", "summary": [], "encrypted_content": "opaque"}
+        client = ScriptedChatGPT(completed(reasoning, tool("apply_patch", self.PATCH)), completed(text("Added b.txt")))
+        result = self.run_worker(CHATGPT, client)
+        self.assertEqual((result.status, result.files_changed, result.tokens_used), ("completed", ["b.txt"], 30))
+        self.assertEqual((self.workspace / "b.txt").read_text(), "hi\n")
+        kinds = [item.get("type", "message") for item in client.calls[1]["messages"]]
+        self.assertEqual(kinds, ["message", "reasoning", "function_call", "function_call_output"])
+        self.assertEqual(client.calls[0]["reasoning_effort"], "medium")
 
-    def test_read_file_no_inference(self):
-        result = _infer_files_from_tool_event("read_file", {"file_path": "a.py"}, Path("/tmp"))
-        self.assertEqual(result, [])
+    def test_step_limit_is_incomplete(self):
+        client = ScriptedChatGPT(*[completed(tool("shell", {"command": "true"}, f"c{i}")) for i in range(2)])
+        self.assertEqual(self.run_worker(CHATGPT, client, max_steps=2).status, "incomplete")
+
+    def test_failed_response_uses_error_code_for_quota(self):
+        failed = {"type": "response.failed", "response": {"error": {"code": "subscription_sharing_usage_limit_exceeded"}}}
+        self.assertEqual(self.run_worker(CHATGPT, ScriptedChatGPT(failed)).status, "quota_exhausted")
+        self.assertEqual(self.run_worker(CHATGPT, ScriptedChatGPT({"type": "response.incomplete"})).status, "failed")
+
+    def test_cancelled_is_interrupted(self):
+        control = StreamControl()
+        control.cancel()
+        self.assertEqual(self.run_worker(CHATGPT, ScriptedChatGPT(), control=control).status, "interrupted")
 
 
-class QuotaErrorDetectionTests(unittest.TestCase):
-    def test_429_is_quota(self):
-        self.assertTrue(_is_quota_error(ServiceError("too fast", status=429)))
+class ContractTests(unittest.TestCase):
+    def test_strict_schema_requires_every_property(self):
+        schema = DELEGATE_TOOL["parameters"]
+        self.assertEqual(set(schema["required"]), set(schema["properties"]))
 
-    def test_rate_limit_text(self):
-        self.assertTrue(_is_quota_error(ServiceError("rate limit exceeded")))
+    def test_worker_control_shares_only_cancellation(self):
+        phases = []
+        parent = StreamControl(phases.append)
+        parent.turn_state = "architect"
+        child = WorkerControl(parent)
+        child.mark("request")
+        self.assertEqual((phases, child.turn_state), ([], ""))
+        parent.cancel()
+        self.assertTrue(child.cancelled.is_set())
 
-    def test_quota_text(self):
-        self.assertTrue(_is_quota_error(ServiceError("quota exceeded")))
+    def test_arguments_are_validated(self):
+        self.assertEqual(parse_delegate_arguments('{"task": " x ", "level": "hard", "provider": null}'),
+                         {"task": "x", "level": "hard", "provider": ""})
+        for bad in ('[]', '{"task": ""}', '{"task": "x", "level": "epic"}', '{"task": "x", "provider": "other"}', '{'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_delegate_arguments(bad)
 
-    def test_generic_error_not_quota(self):
-        self.assertFalse(_is_quota_error(ServiceError("internal server error")))
+    def test_only_delegate_fences_are_extracted(self):
+        answer = 'Plan\n```json\n{"task": "no"}\n```\n```delegate\n{"task": "a"}\n```\n```delegate\n{"task": "b"}\n```\n'
+        self.assertEqual(extract_delegations(answer), ['{"task": "a"}', '{"task": "b"}'])
+
+    def test_quota_detection(self):
+        for error in (ServiceError("x", status=429), ServiceError("rate limit"), ServiceError("You've hit your weekly limit"),
+                      ServiceError("Alcanzaste un límite de uso."), ServiceError("x", code="usage_limit_reached")):
+            self.assertTrue(is_quota_error(error), error)
+        for message in ("internal server error", "context limit exceeded"):
+            self.assertFalse(is_quota_error(ServiceError(message)), message)
 
 
 if __name__ == "__main__":

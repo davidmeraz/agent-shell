@@ -84,8 +84,16 @@ CLAUDE_MODEL_SPECS = (
         "cli_model": "haiku",
         "display_name": "Claude Haiku",
         "family": "claude",
-        "reasoning_efforts": ["low", "medium", "high"],
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
         "default_reasoning_effort": "medium",
+    },
+    {
+        "slug": "claude-fable",
+        "cli_model": "fable",
+        "display_name": "Claude Fable",
+        "family": "claude",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+        "default_reasoning_effort": "high",
     },
 )
 CLI_MODEL_MAP = {row["slug"]: row["cli_model"] for row in CLAUDE_MODEL_SPECS}
@@ -111,6 +119,22 @@ def _extract_json_object(text: str) -> dict | None:
 def resolve_cli_model(slug: str) -> str:
     cleaned = (slug or "").strip()
     return CLI_MODEL_MAP.get(cleaned, cleaned)
+
+
+def model_label(model_id: str) -> str:
+    """`claude-opus-5-5` → `Claude Opus 5.5`."""
+    match = re.match(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:\D|$)", model_id)
+    if not match:
+        return ""
+    version = match[2] + ("." + match[3] if match[3] else "")
+    return f"Claude {match[1].capitalize()} {version}"
+
+
+def isolation_flags() -> list[str]:
+    """Omite memoria global, estilo y MCP del usuario; conserva sus permisos, hooks y el CLAUDE.md del proyecto."""
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    settings = {"claudeMdExcludes": [str(config_dir / "CLAUDE.md")], "outputStyle": "default"}
+    return ["--strict-mcp-config", "--settings", json.dumps(settings)]
 
 
 def claude_catalog() -> list[dict]:
@@ -539,6 +563,7 @@ class ClaudeClient:
 
     def __init__(self, binary: str = "claude", status_timeout: float = 10.0, usage_timeout: float = 20.0) -> None:
         self.binary = binary
+        self.resolved_models: dict[str, str] = {}
         self.status_timeout = status_timeout
         self.usage_timeout = usage_timeout
         self._lock = threading.Lock()
@@ -699,6 +724,7 @@ class ClaudeClient:
         session_id: str = "",
         effort: str = "",
         image: str = "",
+        isolated: bool = False,
     ) -> Iterator[dict]:
         exe = self._resolve_binary()
         if not exe:
@@ -734,6 +760,8 @@ class ClaudeClient:
             cmd.extend(["--effort", effort])
         if session_id:
             cmd.extend(["--resume", session_id])
+        if isolated:
+            cmd.extend(isolation_flags())
 
         stderr_chunks: list[str] = []
         done = threading.Event()
@@ -794,6 +822,8 @@ class ClaudeClient:
                     saw_headers = True
                     control.mark("headers")
                 for event in events:
+                    if event["type"] == "init" and event.get("model"):
+                        self.resolved_models[model] = event["model"]
                     if event["type"] == "result":
                         saw_result = True
                     yield event

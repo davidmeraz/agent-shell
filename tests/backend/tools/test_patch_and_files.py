@@ -171,7 +171,7 @@ class ParallelToolBatchIntegrationTests(unittest.TestCase):
             self.assertEqual(len(service.requests), 3)
             self.assertTrue(service.requests[0]["body"]["parallel_tool_calls"])
             tool_names = [t["name"] for t in service.requests[0]["body"]["tools"]]
-            self.assertEqual(tool_names, ["shell", "read_file", "grep_files", "apply_patch", "delegate"])
+            self.assertEqual(tool_names, ["shell", "read_file", "grep_files", "apply_patch"])
 
 
 if __name__ == "__main__":

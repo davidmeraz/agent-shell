@@ -44,6 +44,7 @@ GlassPanel {
         if (cmd.startsWith("apply_patch")) return "±";
         if (cmd.startsWith("read_file")) return "≡";
         if (cmd.startsWith("grep_files")) return "⌕";
+        if (cmd.startsWith("delegate")) return "⬡";
         return "$";
     }
     readonly property string durationLabel: {

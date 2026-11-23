@@ -17,6 +17,12 @@ QtObject {
     property string claudePlan: ""
     property bool claudeLoginBusy: false
     property bool providerBusy: false
+    property bool unifiedMode: false
+    property var unifiedTeam: []
+    property var resolvedModels: ({})
+    property var activeWorker: null
+    property var providerUsage: ({})
+    property bool teamUsageBusy: false
     readonly property bool engineReady: (provider === "agy" && agyAvailable)
                                         || (provider === "claude" && claudeAvailable && claudeAuthenticated)
                                         || (provider === "chatgpt" && authenticated)
@@ -373,6 +379,21 @@ QtObject {
         sendCommand(request);
     }
 
+    function refreshTeamUsage() {
+        if (!ready || !unifiedMode || teamUsageBusy) return;
+        teamUsageBusy = true;
+        sendCommand({ type: "unified.usage" });
+    }
+
+    function storeProviderUsage(providerId, data) {
+        providerUsage = Object.assign({}, providerUsage, { [providerId]: data });
+    }
+
+    function toggleUnifiedMode() {
+        if (!ready || busy) return;
+        sendCommand({ type: "unified.toggle" });
+    }
+
     function selectProvider(nextProvider) {
         if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing) return;
         if (nextProvider !== "chatgpt" && nextProvider !== "agy" && nextProvider !== "claude") return;
@@ -581,6 +602,9 @@ QtObject {
             claudeAuthenticated = nextClaudeAuth;
             claudeEmail = data.claude_email || "";
             claudePlan = data.claude_plan || "";
+            if (typeof data.unified_mode === "boolean") unifiedMode = data.unified_mode;
+            unifiedTeam = data.unified_team || [];
+            resolvedModels = data.resolved_models || {};
             if (!busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy) {
                 if (provider === "agy")
                     status = availableModels.count > 0 ? "Conectado con Antigravity (agy)." : "Antigravity (agy) listo.";
@@ -607,6 +631,15 @@ QtObject {
                     ? ("Conectado con Claude Code" + (claudePlan ? " (" + claudePlan + ")" : "") + ".")
                     : "Inicia sesión en Claude Code para conversar.";
             maybeRetryUsage();
+        } else if (event.type === "usage.provider") {
+            // Un fallo temporal conserva la última medición válida.
+            const previous = providerUsage[data.provider];
+            storeProviderUsage(data.provider, data.error && previous && previous.checked_at
+                ? Object.assign({}, previous, { error: data.error }) : data);
+        } else if (event.type === "unified.usage.finished") {
+            teamUsageBusy = false;
+        } else if (event.type === "unified.worker") {
+            activeWorker = data.active ? data : null;
         } else if (event.type === "provider.rejected") {
             providerBusy = false;
             status = data.message;
@@ -676,6 +709,7 @@ QtObject {
             const identity = (data.authenticated ? "connected:" : "offline:") + (active ? active.id : "") + ":" + (data.email || "");
             if (identity !== usageAccountKey) {
                 usageAccountKey = identity;
+                storeProviderUsage("chatgpt", undefined);
                 accountUsage = ({});
                 usageError = "";
                 usageRequestId = "";
@@ -702,6 +736,7 @@ QtObject {
         } else if (event.type === "usage.state" && (data.request_id === usageRequestId || data.auto === true)) {
             accountUsage = data;
             usageError = "";
+            storeProviderUsage(data.source === "codex" ? "chatgpt" : data.source, Object.assign({ error: "" }, data));
         } else if (event.type === "chat.quota.updated") {
             if (!currentChatId || data.chat_id === currentChatId) {
                 chatQuota = data.quota_spent || ({});
@@ -802,6 +837,8 @@ QtObject {
                 messages.append({ author: "SISTEMA", body: status, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
         } else if (event.type === "chat.finished") {
             busy = false;
+            activeWorker = null;
+            refreshTeamUsage();
             status = data.status === "completed" ? "Respuesta completada."
                      : data.status === "interrupted" ? data.message || "Respuesta detenida."
                      : data.message || "No se pudo completar la respuesta.";
@@ -869,6 +906,8 @@ QtObject {
             bridge.projectRun = ({});
             bridge.projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             bridge.usageBusy = false;
+            bridge.teamUsageBusy = false;
+            bridge.activeWorker = null;
             bridge.backendUsageBusy = false;
             bridge.activeBackendUsageId = "";
             bridge.usageRetryPending = false;

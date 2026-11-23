@@ -12,7 +12,11 @@ import time
 # 0: carpetas; 1: texto derecho; 2: texto izquierdo; 3: chat; 4: uso; 5..20: visores flotantes extra.
 ROLES = (0, 1, 2, 3, 4)
 FLOATING_ROLES = tuple(range(5, 21))
+# 21: cualquiera de las tarjetas de uso por proveedor; se alinean todas juntas.
+PROVIDER_USAGE_ROLE = 21
 USAGE_TITLE = "Agent Shell · Uso del plan"
+PROVIDER_USAGE_TITLES = tuple(f"Agent Shell · Uso · {name}" for name in ("ChatGPT", "Gemini", "Claude"))
+PROVIDER_USAGE_GAP = 10
 
 
 def geometry(monitor: dict, viewer_id: int, usage_height: int = 140) -> tuple[int, int, int, int]:
@@ -60,6 +64,16 @@ def geometry(monitor: dict, viewer_id: int, usage_height: int = 140) -> tuple[in
     return x, y, w, h
 
 
+def provider_usage_geometry(monitor: dict, index: int, count: int, height: int) -> tuple[int, int, int, int]:
+    """Reparte el ancho de la columna del chat entre las tarjetas visibles."""
+    x, _, total, _ = geometry(monitor, 3, height)
+    _, y, _, _ = geometry(monitor, 4, height)
+    usable = total - PROVIDER_USAGE_GAP * (count - 1)
+    start = usable * index // count
+    end = usable * (index + 1) // count
+    return x + start + PROVIDER_USAGE_GAP * index, y, end - start, height
+
+
 def hyprctl(*args: str) -> str:
     return subprocess.check_output(["hyprctl", *args], text=True, timeout=1)
 
@@ -99,14 +113,17 @@ def place(pid: int, title: str, viewer_id: int, main_title: str = "") -> bool:
                 quotas = [c for c in clients if c.get("pid") == pid and c.get("title") == USAGE_TITLE
                           and c.get("mapped", True)]
                 usage = quotas[0] if len(quotas) == 1 else None
-                usage_height = usage.get("size", [0, 140])[1] if usage else 0
-                targets = [(client, viewer_id)]
+                cards = [c for name in PROVIDER_USAGE_TITLES for c in clients
+                         if c.get("pid") == pid and c.get("title") == name and c.get("mapped", True)]
+                usage_height = max((c.get("size", [0, 140])[1] for c in ([usage] if usage else []) + cards), default=0)
+                targets = [] if viewer_id == PROVIDER_USAGE_ROLE else [(client, viewer_id)]
                 # Al abrir el árbol o la tarjeta de uso se alinea el centro.
                 # Abrir/rotar un archivo no recoloca un chat movido manualmente.
-                if main and viewer_id in (0, 4):
+                if main and viewer_id in (0, 4, PROVIDER_USAGE_ROLE):
                     targets.append((main, 3))
                     if usage and usage is not client:
                         targets.append((usage, 4))
+                    targets.extend((card, PROVIDER_USAGE_ROLE) for card in cards)
                 # Valida todas las direcciones antes de construir cualquier orden.
                 for window, _ in targets:
                     if not re.fullmatch(r"0x[0-9a-fA-F]+", window.get("address", "")):
@@ -117,7 +134,9 @@ def place(pid: int, title: str, viewer_id: int, main_title: str = "") -> bool:
                 lua = bool(match and tuple(map(int, match.groups())) >= (0, 55))
                 commands = []
                 for window, role in targets:
-                    x, y, width, height = geometry(monitor, role, usage_height)
+                    x, y, width, height = (
+                        provider_usage_geometry(monitor, cards.index(window), len(cards), usage_height)
+                        if role == PROVIDER_USAGE_ROLE else geometry(monitor, role, usage_height))
                     target = "address:" + window["address"]
                     move_workspace = bool(main and (window.get("workspace", {}).get("id") != main["workspace"]["id"]
                                                    or window["monitor"] != main["monitor"]))
@@ -152,7 +171,7 @@ def main() -> int:
     try:
         pid, title, viewer_id = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
         main_title = sys.argv[4] if len(sys.argv) > 4 else ""
-        if viewer_id not in ROLES and viewer_id not in FLOATING_ROLES:
+        if viewer_id not in (*ROLES, *FLOATING_ROLES, PROVIDER_USAGE_ROLE):
             raise ValueError("Identificador de visor inválido")
         if not place(pid, title, viewer_id, main_title):
             raise RuntimeError("No se encontró el visor o su ventana principal en el compositor")

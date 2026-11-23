@@ -60,14 +60,38 @@ FloatingWindow {
         bridge: window.bridge
         mainWindowTitle: window.title
     }
-    // Apertura inicial informativa: conserva el foco en el prompt del chat.
-    Component.onCompleted: Qt.callLater(function() {
-        if (!window.visible) return;
-        window.usageWindow.visible = true;
+    readonly property UnifiedUsageWindows unifiedUsage: UnifiedUsageWindows {
+        bridge: window.bridge
+        mainWindowTitle: window.title
+    }
+    function openUsage() {
+        if (bridge.unifiedMode) unifiedUsage.open();
+        else usageWindow.open();
+    }
+    function keepChatFocus() {
         Qt.callLater(function() {
             const nativeWindow = window.contentItem.Window.window;
             if (window.visible && nativeWindow) nativeWindow.requestActivate();
         });
+    }
+    Connections {
+        target: window.bridge
+        function onUnifiedModeChanged() {
+            if (window.bridge.unifiedMode) {
+                window.usageWindow.close();
+                window.unifiedUsage.open();
+            } else {
+                window.unifiedUsage.close();
+                window.usageWindow.visible = true;
+            }
+            window.keepChatFocus();
+        }
+    }
+    // Apertura inicial informativa: conserva el foco en el prompt del chat.
+    Component.onCompleted: Qt.callLater(function() {
+        if (!window.visible) return;
+        window.usageWindow.visible = true;
+        window.keepChatFocus();
     })
 
     Shortcut {
@@ -279,6 +303,89 @@ FloatingWindow {
             }
 
             GlassPanel {
+            Button {
+                id: unifiedToggle
+                objectName: "unifiedModeButton"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: -8
+                visible: window.bridge.agyAvailable || window.bridge.claudeAvailable
+                implicitWidth: 32
+                implicitHeight: 32
+                padding: 0
+                hoverEnabled: true
+                enabled: window.bridge.ready && !window.bridge.busy
+                scale: down ? 0.90 : (hovered ? 1.08 : 1.0)
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+                ToolTip.visible: hovered
+                ToolTip.delay: 300
+                ToolTip.text: window.bridge.unifiedMode
+                    ? "Modo unificado activo: pulsa para volver a un solo motor"
+                    : "Activar modo unificado: el modelo actual planifica y delega en las demás IA"
+                onClicked: window.bridge.toggleUnifiedMode()
+                contentItem: Item {
+                    Canvas {
+                        id: hexIcon
+                        anchors.centerIn: parent
+                        width: 20
+                        height: 20
+                        readonly property bool active: window.bridge.unifiedMode
+                        readonly property bool hover: unifiedToggle.hovered
+                        readonly property color strokeColor: active
+                            ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
+                            : (hover ? "#d0d8e4" : "#78849a")
+                        readonly property color fillColor: active
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1860d4ff")
+                            : "transparent"
+                        readonly property color dotColor: active
+                            ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
+                            : (hover ? "#aab4c4" : "#606c80")
+                        onStrokeColorChanged: requestPaint()
+                        onFillColorChanged: requestPaint()
+                        onDotColorChanged: requestPaint()
+                        onPaint: {
+                            var ctx = getContext("2d");
+                            ctx.clearRect(0, 0, width, height);
+                            var cx = width / 2, cy = height / 2, r = 8.5;
+                            ctx.beginPath();
+                            for (var i = 0; i < 6; i++) {
+                                var angle = Math.PI / 6 + i * Math.PI / 3;
+                                var px = cx + r * Math.cos(angle);
+                                var py = cy + r * Math.sin(angle);
+                                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                            }
+                            ctx.closePath();
+                            ctx.fillStyle = fillColor;
+                            ctx.fill();
+                            ctx.strokeStyle = strokeColor;
+                            ctx.lineWidth = 1.5;
+                            ctx.stroke();
+                            var dotR = 2;
+                            ctx.fillStyle = dotColor;
+                            var positions = [[cx, cy - 4.5], [cx - 4, cy + 2], [cx + 4, cy + 2]];
+                            for (var d = 0; d < 3; d++) {
+                                ctx.beginPath();
+                                ctx.arc(positions[d][0], positions[d][1], dotR, 0, 2 * Math.PI);
+                                ctx.fill();
+                            }
+                        }
+                    }
+                }
+                background: GlassPanel {
+                    radius: 16
+                    reflective: true
+                    highlighted: unifiedToggle.hovered || window.bridge.unifiedMode
+                    topColor: window.bridge.unifiedMode
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#30ffffff")
+                        : unifiedToggle.hovered ? "#1effffff" : "#14ffffff"
+                    bottomColor: "#0affffff"
+                    edgeColor: window.bridge.unifiedMode
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#5cffffff")
+                        : unifiedToggle.hovered ? "#40ffffff" : "#28ffffff"
+                }
+                Accessible.name: "Modo unificado"
+                Accessible.description: window.bridge.unifiedMode ? "Activo" : "Inactivo"
+            }
+
                 Layout.fillWidth: true
                 implicitHeight: loginRow.implicitHeight + 20
                 visible: window.bridge.loginBusy
@@ -464,7 +571,16 @@ FloatingWindow {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: -6
                 Layout.bottomMargin: -4
-                visible: window.bridge.workspaceSelected && (window.bridge.agyAvailable || window.bridge.claudeAvailable)
+                visible: window.bridge.workspaceSelected && (window.bridge.agyAvailable || window.bridge.claudeAvailable) && !window.bridge.unifiedMode
+                bridge: window.bridge
+            }
+
+            UnifiedTeam {
+                Layout.fillWidth: true
+                Layout.topMargin: -6
+                Layout.bottomMargin: -4
+                visible: window.bridge.workspaceSelected && window.bridge.unifiedMode && window.bridge.engineReady
+                compact: window.height < 680
                 bridge: window.bridge
             }
 
@@ -770,7 +886,7 @@ FloatingWindow {
         onLimitsRequested: limitsDialog.open()
         onShellRequested: shellSettings.open()
         onAccountRequested: accountPanel.open()
-        onUsageRequested: window.usageWindow.open()
+        onUsageRequested: window.openUsage()
         onCommandsRequested: commandHelp.open()
     }
 
@@ -919,7 +1035,7 @@ FloatingWindow {
                 text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)"
                     : window.bridge.provider === "claude" ? "Ver uso de Claude"
                     : "Ver uso del plan"
-                onClicked: { accountPanel.close(); window.usageWindow.open(); }
+                onClicked: { accountPanel.close(); window.openUsage(); }
             }
             Text {
                 Layout.fillWidth: true

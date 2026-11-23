@@ -225,6 +225,36 @@ class ViewerPlacementTests(unittest.TestCase):
                             self.assertTrue(a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]
                                             or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1])
 
+    def test_provider_usage_windows_share_the_chat_column(self):
+        for width in (2560, 1920, 1366):
+            for count in (1, 2, 3):
+                with self.subTest(width=width, count=count):
+                    monitor = {**self.monitor(), "width": width}
+                    chat = placement.geometry(monitor, 3, 160)
+                    row = [placement.provider_usage_geometry(monitor, i, count, 160) for i in range(count)]
+                    self.assertEqual(row[0][0], chat[0])
+                    self.assertEqual(row[-1][0] + row[-1][2], chat[0] + chat[2])
+                    self.assertTrue(all(a[0] + a[2] < b[0] for a, b in zip(row, row[1:])))
+                    self.assertTrue(all(rect[1] + rect[3] <= chat[1] and rect[3] == 160 for rect in row))
+
+    @patch.object(placement, "hyprctl")
+    def test_placing_one_provider_usage_window_aligns_all_and_the_chat(self, ctl):
+        import json
+        titles = placement.PROVIDER_USAGE_TITLES
+        clients = [dict(pid=123, title="Chat", address="0xabcd", monitor=0, workspace={"id": 2})]
+        clients += [dict(pid=123, title=title, address=f"0xa{i}", monitor=0, workspace={"id": 2}, size=[260, 140 + i])
+                    for i, title in enumerate(titles)]
+        clients.append(dict(pid=999, title=titles[0], address="0xdead", monitor=0, size=[260, 400]))
+        ctl.side_effect = [json.dumps(clients), json.dumps([self.monitor()]), '{"version":"0.56.2"}', "ok\n"]
+        self.assertTrue(placement.place(123, titles[2], placement.PROVIDER_USAGE_ROLE, "Chat"))
+        code = ctl.call_args.args[1]
+        for i in range(3):
+            x, y, w, h = placement.provider_usage_geometry(self.monitor(), i, 3, 142)
+            self.assertIn(f'resize({{x={w}, y={h}, relative=false, window="address:0xa{i}"}})', code)
+            self.assertIn(f'move({{x={x}, y={y}, relative=false, window="address:0xa{i}"}})', code)
+        self.assertIn('move({x=870, y=242, relative=false, window="address:0xabcd"})', code)
+        self.assertNotIn("dead", code)
+
     def test_hidden_usage_leaves_full_height_chat(self):
         self.assertEqual(placement.geometry(self.monitor(), 3, 0), (870, 80, 820, 1330))
 

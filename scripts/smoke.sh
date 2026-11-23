@@ -10,7 +10,7 @@ trap 'rm -rf -- "$smoke_runtime"' EXIT
 smoke_config_root="$smoke_runtime/config"
 mkdir -p "$smoke_config_root"
 cp -R "$project_root/ui" "$smoke_config_root/ui"
-for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-smoke.qml shell-command-smoke.qml workspaces-smoke.qml explorer-smoke.qml images-smoke.qml activity-smoke.qml writing-smoke.qml usage-smoke.qml project-run-smoke.qml; do
+for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-smoke.qml shell-command-smoke.qml workspaces-smoke.qml explorer-smoke.qml images-smoke.qml activity-smoke.qml writing-smoke.qml usage-smoke.qml project-run-smoke.qml unified-smoke.qml; do
     smoke_marker=SMOKE_OK
     if [[ "$smoke_config" == commands-smoke.qml ]]; then smoke_marker=COMMANDS_OK; fi
     if [[ "$smoke_config" == models-smoke.qml ]]; then smoke_marker=MODELS_OK; fi
@@ -19,6 +19,7 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
     if [[ "$smoke_config" == workspaces-smoke.qml ]]; then smoke_marker=WORKSPACES_OK; fi
     if [[ "$smoke_config" == explorer-smoke.qml ]]; then smoke_marker=EXPLORER_OK; fi
     if [[ "$smoke_config" == usage-smoke.qml ]]; then smoke_marker=USAGE_OK; fi
+    if [[ "$smoke_config" == unified-smoke.qml ]]; then smoke_marker=UNIFIED_OK; fi
     if [[ "$smoke_config" == project-run-smoke.qml ]]; then smoke_marker=PROJECT_RUN_OK; fi
     smoke_clipboard=0
     smoke_activity=0
@@ -51,7 +52,7 @@ for smoke_config in smoke.qml commands-smoke.qml models-smoke.qml conversation-s
     if ! rg -q "$smoke_marker" "$smoke_run/output.log"; then exit 1; fi
     # Algunos entornos restringidos impiden crear el socket IPC auxiliar de qs.
     # El arnés usa stdio: se tolera sólo ese diagnóstico, nunca errores de QML.
-    if rg 'SMOKE_FAILED|COMMANDS_FAILED|MODELS_FAILED|CONVERSATION_FAILED|SHELL_COMMAND_FAILED|WORKSPACES_FAILED|EXPLORER_FAILED|IMAGES_FAILED|ACTIVITY_FAILED|WRITING_FAILED|USAGE_FAILED|PROJECT_RUN_FAILED|FATAL|ERROR|TypeError|ReferenceError|Binding loop' "$smoke_run/output.log" \
+    if rg 'SMOKE_FAILED|COMMANDS_FAILED|MODELS_FAILED|CONVERSATION_FAILED|SHELL_COMMAND_FAILED|WORKSPACES_FAILED|EXPLORER_FAILED|IMAGES_FAILED|ACTIVITY_FAILED|WRITING_FAILED|USAGE_FAILED|PROJECT_RUN_FAILED|UNIFIED_FAILED|FATAL|ERROR|TypeError|ReferenceError|Binding loop' "$smoke_run/output.log" \
         | rg -v 'ERROR quickshell.ipc: Failed to start IPC server on path'; then
         exit 1
     fi
