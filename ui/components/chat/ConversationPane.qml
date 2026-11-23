@@ -297,12 +297,20 @@ GlassPanel {
             readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
             readonly property int userHeaderHeight: 26
             readonly property int userBubbleTop: userHeaderHeight + 7
-            readonly property real cardWidth: fromUser ? Math.min(width * 0.84, 640,
-                Math.max(imageUrl ? 320 : 72, Math.ceil(userTextSize.implicitWidth) + 32)) : width
+            property bool initialized: false
+            readonly property real cardWidth: {
+                if (!fromUser) return width;
+                const maxWidth = Math.min(width * 0.84, 640);
+                const textWidth = userTextSize.implicitWidth;
+                // Evita que ListView mida el texto en una burbuja estrecha antes de conocer su ancho.
+                if (!initialized && body.length && textWidth <= 0) return maxWidth;
+                return Math.min(maxWidth, Math.max(imageUrl ? 320 : 72, Math.ceil(textWidth) + 32));
+            }
             width: conversation.width
             implicitHeight: isTool
                 ? toolCard.implicitHeight
                 : (fromUser ? userBubbleTop + messageContent.implicitHeight + 22 : messageContent.implicitHeight + 20)
+            Component.onCompleted: initialized = true
             onStreamingChanged: {
                 if (streaming) {
                     wasStreaming = true;

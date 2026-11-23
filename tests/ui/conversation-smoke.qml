@@ -136,7 +136,37 @@ ShellRoot {
             if (!scenario.check(!thinking.visible, "indicador de espera sigue después del primer texto")) return;
             agent.busy = false;
             if (!scenario.check(send.text.startsWith("Enviar"), "el botón no recupera Enviar al terminar la IA")) return;
-            console.log("CONVERSATION_OK: burbujas compactas, Markdown, código, copia original, métricas, espera y lectura sin saltos");
+
+            const nativeWindow = chat.contentItem.Window.window;
+            nativeWindow.width = 826;
+            nativeWindow.height = 1208;
+            agent.createProject("Proyecto de prueba", agent.workspace);
+            inspector.tryCompare(agent, "areaBusy", false, 1500);
+            if (!scenario.check(agent.activeArea === "work" && !!agent.projectId,
+                "no se abrió el proyecto para probar su historial")) return;
+            inspector.mouseClick(inspector.findChild(chat, "chatSidebarButton"));
+            if (!scenario.check(chat.overlayVisible, "el panel lateral no se abrió")) return;
+            const toolCalls = Array.from({ length: 273 }, (_, i) => ({
+                id: "tool-" + i,
+                message_index: i < 263 ? 1 : i < 270 ? 2 : 3,
+                command: "git status",
+                output: "Salida de prueba.",
+                status: "completed"
+            }));
+            agent.receive(JSON.stringify({ version: 2, type: "chat.loaded", data: { chat: {
+                chat_id: "long-work-history",
+                title: "Historial del proyecto",
+                messages: [
+                    { role: "user", text: "Revisa el estado del proyecto." },
+                    { role: "user", text: "Revisión detallada del estado del proyecto. ".repeat(8) },
+                    { role: "assistant", id: "last-response", text: "La revisión está completa. ".repeat(10) }
+                ],
+                tool_calls: toolCalls
+            } } }));
+            inspector.wait(250);
+            if (!scenario.check(list.count === 276 && list.atYEnd && !!list.itemAtIndex(275),
+                "el historial largo del proyecto no llega al final")) return;
+            console.log("CONVERSATION_OK: burbujas compactas, Markdown, código, copia original, métricas, espera y reapertura de historial largo");
             Qt.callLater(Qt.quit);
         }
     }
