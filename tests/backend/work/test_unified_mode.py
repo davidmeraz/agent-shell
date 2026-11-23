@@ -96,6 +96,8 @@ class UnifiedModeTests(unittest.TestCase):
             claude = _FakeClaudeClient(turns=[claude_turn("", is_error=True, error="API error")])
             client = ChatGPTClient(FakeSession(), HttpClient(allow_loopback=True, timeout=5), service.url)
             server = self.start("chatgpt", FakeSession(), client, claude=claude)
+            server.track_chat_quota = False
+            server._last_quota_snapshots["claude"] = {"session_used": 98}
             server.handle({"type": "unified.toggle"})
             self.assertEqual(self.send(server, "shell delegate")["status"], "completed")
             body = service.requests[0]["body"]
@@ -164,6 +166,49 @@ class UnifiedModeTests(unittest.TestCase):
         while state["unified_mode"]:
             state = self.output.wait_for("provider.state")
         self.assertEqual(state["unified_team"], [])
+
+    def test_manual_selection_is_locked_and_restored(self):
+        server = self.start("claude", claude=_FakeClaudeClient())
+        original = (server.provider, server.model)
+        server.handle({"type": "unified.toggle"})
+        server.handle({"type": "provider.select", "provider": "chatgpt"})
+        self.output.wait_for("provider.rejected")
+        server.handle({"type": "model.select", "model": "claude-haiku"})
+        self.output.wait_for("error")
+        self.assertEqual((server.provider, server.model), original)
+        server.handle({"type": "unified.toggle"})
+        self.assertEqual((server.provider, server.model), original)
+        server.handle({"type": "model.select", "model": "claude-haiku"})
+        self.assertEqual(self.output.wait_for("model.selected")["model"], "claude-haiku")
+
+    def test_provider_state_announces_architect_only_when_unified(self):
+        server = self.start("claude", claude=_FakeClaudeClient())
+        server.handle({"type": "unified.toggle"})
+        state = {}
+        while not state.get("unified_mode"):
+            state = self.output.wait_for("provider.state")
+        architect = state["unified_architect"]
+        self.assertTrue(all(architect.get(key) for key in ("provider", "model", "name")))
+        server.handle({"type": "unified.toggle"})
+        while state.get("unified_mode"):
+            state = self.output.wait_for("provider.state")
+        self.assertEqual(state["unified_architect"], {})
+
+    def test_unified_turn_records_actual_architect(self):
+        claude = _FakeClaudeClient(turns=[claude_turn("Done.")])
+        server = self.start("claude", claude=claude)
+        server.handle({"type": "model.select", "model": "claude-haiku"})
+        self.output.wait_for("model.selected")
+        server.handle({"type": "unified.toggle"})
+        self.assertEqual(self.send(server)["status"], "completed")
+        self.assertEqual((server.conversation["provider"], server.conversation["model"]),
+                         ("claude", claude.calls[0]["model"]))
+        self.assertEqual(claude.calls[0]["model"], "claude-opus")
+        events = [json.loads(line)["type"] for line in self.output.getvalue().splitlines()]
+        started = events.index("chat.busy")
+        finished = events.index("chat.finished", started)
+        self.assertIn("provider.state", events[started:finished - 1])  # Arquitecto durante el turno.
+        self.assertEqual(events[finished - 1], "provider.state")     # Arquitecto previsto para el próximo turno.
 
     def test_team_reports_quota_resolved_version_and_skips_exhausted(self):
         claude = _FakeClaudeClient()

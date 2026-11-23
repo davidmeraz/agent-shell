@@ -26,24 +26,59 @@ ShellRoot {
         return { error: "", checked_at: "now", limits: [{ id: id, name: name, description: "",
             primary: limit(used, 300), secondary: limit(used + 10, 10080) }] };
     }
+    function receive(type, data) {
+        agent.receive(JSON.stringify({ version: 2, type: type, data: data }));
+    }
+    function publishTeam(architect) {
+        receive("provider.state", { provider: "chatgpt", agy_available: true,
+            claude_available: true, claude_authenticated: true, unified_mode: true,
+            unified_architect: architect,
+            unified_team: [{ level: "simple", workers: [worker("chatgpt", "GPT-6-Luna", 74)] },
+                { level: "standard", workers: [worker("agy", "Claude Sonnet 5.5", 98)] },
+                { level: "hard", workers: [] }] });
+    }
     Timer {
         id: steps
         interval: 300; running: true; repeat: true
         onTriggered: {
             if (stage === 0) {
                 if (!agent.canSend || !chat.usageWindow.visible) return;
-                agent.agyAvailable = true;
-                agent.claudeAvailable = true;
-                agent.unifiedTeam = [{ level: "simple", workers: [worker("chatgpt", "GPT-6-Luna", 74)] },
-                    { level: "standard", workers: [worker("agy", "Claude Sonnet 5.5", 98)] }, { level: "hard", workers: [] }];
                 // La consulta real devolvería el estado del backend de prueba, que no tiene CLIs.
                 agent.teamUsageBusy = true;
-                agent.unifiedMode = true;
+                publishTeam(worker("claude", "Claude Opus", 90));
                 const both = usage("gemini", "Gemini Models", 85);
                 both.limits.push(usage("claude-gpt", "Claude and GPT models", 2).limits[0]);
                 agent.providerUsage = { chatgpt: usage("codex", "codex", 3), agy: both };
             } else if (stage === 1) {
                 const cards = chat.unifiedUsage.cards;
+                const pill = inspector.findChild(chat, "chatUnifiedArchitect");
+                const label = inspector.findChild(chat, "chatUnifiedArchitectName");
+                if (!check(pill && pill.visible && label && label.text.indexOf(agent.unifiedArchitect.name) >= 0
+                    && label.text.indexOf("Claude") >= 0 && label.text.indexOf(agent.unifiedArchitect.effort) >= 0, "arquitecto o motor incorrecto")) return;
+                const composer = inspector.findChild(chat, "chatComposer");
+                const prompt = inspector.findChild(chat, "chatPrompt");
+                const send = inspector.findChild(chat, "chatSendButton");
+                prompt.text = "/mode";
+                if (!check(!composer.completions.some(option => option.value === "/modelos"), "/modelos ofrecido en modo unificado")) return;
+                prompt.text = "/modelos";
+                composer.send();
+                if (!check(!composer.modelMode && prompt.text === "/modelos"
+                    && agent.status.indexOf("solo lectura") >= 0, "/modelos abre el selector")) return;
+                prompt.text = "";
+                if (!check(!send.enabled, "permite enviar sin contenido")) return;
+                prompt.text = "Un borrador";
+                agent.availableModels.clear();
+                if (!check(send.enabled, "exige el catálogo manual aunque hay arquitecto")) return;
+                const architect = agent.unifiedArchitect;
+                agent.unifiedArchitect = ({});
+                if (!check(!send.enabled, "permite enviar sin arquitecto")) return;
+                agent.unifiedArchitect = architect;
+                prompt.text = "";
+                receive("chat.delta", { item_id: "test", text: "Respuesta de prueba" });
+                if (!check(agent.status.indexOf("Claude") >= 0, "atribuye la respuesta al motor manual")) return;
+                receive("chat.finished", { status: "completed" });
+                publishTeam(worker("claude", "Claude Opus", 89));
+                if (!check(agent.status === "Respuesta completada.", "el sondeo borra el estado del turno")) return;
                 if (!check(!chat.usageWindow.visible && cards.every(card => card.visible), "no hay tres tarjetas")) return;
                 if (!check(new Set(cards.map(card => card.implicitHeight)).size === 1, "alturas distintas")) return;
                 if (!check(inspector.findChild(chat, "unifiedWorkerName_simple").text.indexOf("GPT-6-Luna") >= 0
@@ -68,7 +103,10 @@ ShellRoot {
                 agent.unifiedMode = false;
             } else {
                 if (!check(chat.usageWindow.visible && chat.unifiedUsage.cards.every(card => !card.visible), "no vuelve la ventana única")) return;
-                console.log("UNIFIED_OK: equipo, tres tarjetas alineadas, expansión, errores aislados, cierre y regreso");
+                const composer = inspector.findChild(chat, "chatComposer");
+                composer.openModels();
+                if (!check(composer.modelMode, "no vuelve el selector de modelos manual")) return;
+                console.log("UNIFIED_OK: arquitecto automático, selector bloqueado, envío, equipo y tarjetas de uso");
                 steps.stop(); Qt.quit();
             }
             ++stage;

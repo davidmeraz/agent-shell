@@ -20,7 +20,7 @@ FloatingWindow {
     readonly property int naturalHeight: Math.max(120, Math.min(420, stats.implicitHeight + 28))
     readonly property var usage: bridge.providerUsage[providerId] || null
     readonly property bool hasData: !!usage && !!usage.checked_at
-    readonly property bool architect: bridge.provider === providerId
+    readonly property bool architect: bridge.unifiedArchitect.provider === providerId
     readonly property bool working: !!bridge.activeWorker && bridge.activeWorker.worker.provider === providerId
     readonly property var limits: {
         const rows = hasData ? usage.limits || [] : [];
@@ -66,6 +66,7 @@ FloatingWindow {
         Item {
             anchors.fill: parent
             focus: true
+            GlassToolTipTheme {}
             Shortcut {
                 sequence: "Esc"
                 context: Qt.WindowShortcut

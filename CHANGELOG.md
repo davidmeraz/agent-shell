@@ -3,6 +3,10 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## Sin publicar
+
+- Botón **Archivos** junto a **Git** en **Work** y **App** para abrir o cerrar el explorador del proyecto seleccionado.
+
 ## [0.26.0] — 2026-11-22
 
 Esta versión incorpora la vista de iconos grandes como modo predeterminado del explorador de archivos junto al selector rápido para alternar entre iconos grandes y vista en árbol.

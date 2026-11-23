@@ -4,6 +4,8 @@ FileWriteReveal 1.0 FileWriteReveal.qml
 GlassComboBox 1.0 GlassComboBox.qml
 GlassDialog 1.0 GlassDialog.qml
 GlassPanel 1.0 GlassPanel.qml
+GlassToolTip 1.0 GlassToolTip.qml
+GlassToolTipTheme 1.0 GlassToolTipTheme.qml
 MattePanel 1.0 MattePanel.qml
 UsageLimit 1.0 UsageLimit.qml
 UserAvatar 1.0 UserAvatar.qml

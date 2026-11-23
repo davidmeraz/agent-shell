@@ -11,6 +11,7 @@ ShellRoot {
     property bool stepping: false
     property var prompt: null
     property string root: ""
+    readonly property string secondFolder: "segundo proyecto con una ruta lo bastante larga para probar la elisión en la cabecera"
     property string chatId: ""
     property string workId: ""
     property string firstProject: ""
@@ -35,6 +36,33 @@ ShellRoot {
         inspector.findChild(chat, "workProjectName").text = name;
         inspector.findChild(chat, "workProjectDirectory").text = workdir;
         return click("workCreateProject");
+    }
+    function checkProjectLayout() {
+        const switcher = inspector.findChild(chat, "workspaceSwitcher");
+        const position = switcher.mapToItem(chat.contentItem, 0, 0);
+        if (!check(agent.workspace === root + "/" + secondFolder && switcher.visible
+            && Math.abs(position.x + switcher.width / 2 - chat.width / 2) < 1,
+            "la ruta larga desplaza el selector de espacios")) return false;
+        const actions = inspector.findChild(chat, "workProjectActions");
+        const conversation = inspector.findChild(chat, "chatConversation");
+        const railPosition = actions.mapToItem(chat.contentItem, 0, 0);
+        const conversationPosition = conversation.mapToItem(chat.contentItem, 0, 0);
+        if (!check(actions.visible && conversation.visible
+            && railPosition.x >= conversationPosition.x + conversation.width,
+            "la barra de acciones no está a la derecha de la conversación")) return false;
+        let previousX = -1;
+        let previousY = -1;
+        for (const name of ["workExplorerButton", "workGitButton", "workRunButton", "workProjectsButton"]) {
+            const button = inspector.findChild(actions, name);
+            if (!check(button && button.visible && button.width === 32 && button.height === 32,
+                "el grupo no contiene el botón compacto " + name)) return false;
+            const buttonPosition = button.mapToItem(chat.contentItem, 0, 0);
+            if (!check(previousX < 0 || (Math.abs(buttonPosition.x - previousX) < 1 && buttonPosition.y > previousY),
+                "las acciones no forman una columna: " + name)) return false;
+            previousX = buttonPosition.x;
+            previousY = buttonPosition.y;
+        }
+        return true;
     }
     function requestRename(projectId, newName) {
         const list = inspector.findChild(chat, "workProjectList");
@@ -120,7 +148,7 @@ ShellRoot {
                     if (agent.areaBusy || !agent.projectId) return;
                     inspector.wait(200);
                     if (!scenario.check(!inspector.findChild(chat, "workProjectDialog").visible
-                        && inspector.findChild(chat, "workProjectHeader").visible && agent.projectName === "Proyecto A"
+                        && inspector.findChild(chat, "workProjectActions").visible && agent.projectName === "Proyecto A"
                         && scenario.prompt.text === "" && agent.canSend, "proyecto no abrió limpio")) return;
                     const gitBtn = inspector.findChild(chat, "workGitButton");
                     if (!scenario.check(!!gitBtn && gitBtn.visible && gitBtn.enabled, "botón Git ausente en Work")) return;
@@ -131,7 +159,7 @@ ShellRoot {
                     if (!scenario.check(!chat.gitFlowWindow.visible, "segundo clic en Git no cierra el visor")) return;
                     scenario.firstProject = agent.projectId;
                     scenario.prompt.text = "Borrador del proyecto A";
-                    agent.submit("/shell mkdir -p 'segundo proyecto'; pwd");
+                    agent.submit("/shell mkdir -p '" + scenario.secondFolder + "'; pwd");
                     scenario.stage = 5;
                 } else if (scenario.stage === 5) {
                     if (agent.busy) return;
@@ -151,7 +179,7 @@ ShellRoot {
                     if (agent.areaBusy || agent.activeArea !== "chat") return;
                     if (!scenario.check(agent.currentChatId === scenario.chatId && agent.messages.count === 2
                         && scenario.prompt.text === "Borrador de Chat" && agent.workspace === scenario.root
-                        && agent.conversations.count === 1 && !inspector.findChild(chat, "workProjectHeader").visible,
+                        && agent.conversations.count === 1 && !inspector.findChild(chat, "workProjectActions").visible,
                         "Chat no recupera mensajes, borrador e historial propios")) return;
                     if (!scenario.click("workAreaButton")) return;
                     scenario.stage = 8;
@@ -167,20 +195,21 @@ ShellRoot {
                     if (!scenario.check(inspector.findChild(chat, "workProjectList").count === 1, "lista de proyectos vacía")) return;
                     if (!scenario.click("workNewProject")) return;
                     inspector.wait(160);
-                    if (!scenario.fillProject("Proyecto B", scenario.root + "/segundo proyecto")) return;
+                    if (!scenario.fillProject("Proyecto B", scenario.root + "/" + scenario.secondFolder)) return;
                     scenario.stage = 10;
                 } else if (scenario.stage === 10) {
                     if (agent.areaBusy || !agent.projectId) return;
                     if (!scenario.check(agent.projectName === "Proyecto B" && agent.projectId !== scenario.firstProject
                         && !agent.messages.count && scenario.prompt.text === "" && !agent.conversations.count,
                         "el segundo proyecto comparte mensajes o borradores")) return;
+                    if (!scenario.checkProjectLayout()) return;
                     scenario.secondProject = agent.projectId;
                     agent.submit("/shell pwd");
                     scenario.stage = 11;
                 } else if (scenario.stage === 11) {
                     if (agent.busy) return;
                     if (!scenario.check(agent.messages.count === 1
-                        && JSON.parse(agent.messages.get(0).toolJson).output.trim() === scenario.root + "/segundo proyecto",
+                        && JSON.parse(agent.messages.get(0).toolJson).output.trim() === scenario.root + "/" + scenario.secondFolder,
                         "el segundo proyecto ejecuta comandos en la carpeta anterior")) return;
                     agent.selectArea("work", scenario.firstProject);
                     scenario.stage = 12;
@@ -241,7 +270,7 @@ ShellRoot {
                     if (agent.areaBusy || agent.activeArea !== "chat") return;
                     if (!scenario.check(agent.currentChatId === scenario.chatId && agent.messages.count === 2
                         && scenario.prompt.text === "Borrador de Chat", "eliminar proyectos afecta Chat")) return;
-                    console.log("WORKSPACES_OK: selector centrado, proyectos, contextos e historial separados, shell, papelera, cancelación y eliminación sin afectar otros espacios ni conservar borradores o métricas");
+                    console.log("WORKSPACES_OK: selector, cabecera compacta con ruta larga, proyectos, shell, historiales y borradores aislados, cancelación y eliminación");
                     steps.stop(); Qt.callLater(Qt.quit);
                 }
             } catch (error) {

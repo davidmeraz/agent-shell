@@ -25,6 +25,7 @@ TIER_EFFORTS = {
 LOW_QUOTA_PERCENT = 5.0
 UNKNOWN_QUOTA_PERCENT = 50.0
 EFFORT_SUFFIX_RE = re.compile(r"-(low|medium|high|xhigh|max)$")
+ARCHITECT_EFFORTS = ("high", "xhigh", "max", "ultra", "medium", "low")
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,35 @@ def _pick_effort(rows: list[dict], preferred: tuple[str, ...]) -> tuple[dict, st
             if effort in row.get("reasoning_efforts", []):
                 return row, effort
     return rows[0], ""
+
+
+def architect_candidate(catalogs: dict[str, list[dict]], remaining: dict[str, float],
+                        preferred_provider: str) -> Candidate | None:
+    """Prefer flagships with quota. Versions are comparable only within a model family."""
+    def capability(slug: str) -> int:
+        tier = model_tier(slug)
+        if tier:
+            return {"fast": 0, "balanced": 1, "strong": 3}[tier]
+        parts = EFFORT_SUFFIX_RE.sub("", slug.lower()).split("-")
+        # Sin línea rápida o equilibrada, las familias conocidas son buques insignia.
+        return 3 if parts[0] in {"gpt", "gemini", "claude"} else 1
+
+    groups: dict[tuple, list[dict]] = {}
+    for provider, rows in catalogs.items():
+        for row in rows:
+            slug = row["slug"]
+            family = slug.split("-", 1)[0].lower()
+            key = (provider, quota_bucket(provider, slug), family, capability(slug))
+            groups.setdefault(key, []).append(row)
+
+    ranked = []
+    for (provider, bucket, _, strength), rows in groups.items():
+        newest = max(model_version(row["slug"]) for row in rows)
+        row, effort = _pick_effort([row for row in rows if model_version(row["slug"]) == newest], ARCHITECT_EFFORTS)
+        left = remaining.get(bucket, UNKNOWN_QUOTA_PERCENT)
+        priority = (left > 0, left >= LOW_QUOTA_PERCENT, strength, left, provider == preferred_provider)
+        ranked.append((priority, Candidate(provider, row["slug"], effort, "architect", bucket)))
+    return max(ranked, key=lambda entry: entry[0])[1] if ranked else None
 
 
 def rank(roster: list[Candidate], level: str, remaining: dict[str, float],

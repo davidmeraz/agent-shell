@@ -415,6 +415,7 @@ FloatingWindow {
                 opacity: viewer.changeGlow * 0.72
             }
         }
+        GlassToolTipTheme {}
         ColumnLayout {
             focus: true
             Keys.onEscapePressed: event => { viewer.visible = false; event.accepted = true; }
@@ -481,11 +482,10 @@ FloatingWindow {
                             styleColor: GemaTheme.textShadow
                         }
                         HoverHandler { id: pathHover }
-                        ToolTip {
+                        GlassToolTip {
                             id: pathTip
                             visible: pathHover.hovered
                             text: viewer.bridge.workspace + "/" + viewer.filePath
-                            contentItem: Text { text: pathTip.text; textFormat: Text.PlainText; color: pathTip.palette.toolTipText; font: pathTip.font }
                             delay: 500
                         }
                     }
@@ -1177,7 +1177,7 @@ FloatingWindow {
                           : viewer.activityState === "interrupted" ? "Detenido · solo lectura"
                           : "Solo lectura"
                     HoverHandler { id: statusHover }
-                    ToolTip {
+                    GlassToolTip {
                         visible: statusHover.hovered
                         text: "La escritura animada muestra texto ya recibido del archivo. Alt+Z alterna ajuste de línea · Esc para cerrar."
                         delay: 500

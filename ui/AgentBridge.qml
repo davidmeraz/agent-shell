@@ -18,12 +18,13 @@ QtObject {
     property bool claudeLoginBusy: false
     property bool providerBusy: false
     property bool unifiedMode: false
+    property var unifiedArchitect: ({})
     property var unifiedTeam: []
     property var resolvedModels: ({})
     property var activeWorker: null
     property var providerUsage: ({})
     property bool teamUsageBusy: false
-    readonly property bool engineReady: (provider === "agy" && agyAvailable)
+    readonly property bool engineReady: unifiedMode ? !!unifiedArchitect.model : (provider === "agy" && agyAvailable)
                                         || (provider === "claude" && claudeAvailable && claudeAuthenticated)
                                         || (provider === "chatgpt" && authenticated)
     property bool busy: false
@@ -106,7 +107,7 @@ QtObject {
     property int activeAccountIndex: -1
     readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !claudeLoginBusy && !openingChat && !deletingChatId && !areaBusy
     readonly property bool canSelectArea: ready && canBrowseHistory && !accountBusy && !providerBusy
-    readonly property bool canSend: ready && engineReady && availableModels.count > 0
+    readonly property bool canSend: ready && engineReady && (unifiedMode || availableModels.count > 0)
                                    && !busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy
                                       && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
@@ -156,6 +157,10 @@ QtObject {
         const text = prompt.trim();
         const command = ChatCommands.parse(prompt);
         if (command) {
+            if (unifiedMode && command.name === "/modelos") {
+                status = "El modo unificado elige automáticamente el modelo del arquitecto.";
+                return false;
+            }
             const reason = command.error || ChatCommands.blockedReason(command.name, bridge);
             if (reason) { status = reason; return false; }
             if (command.name === "/shell") {
@@ -373,7 +378,7 @@ QtObject {
     }
 
     function selectModel(slug, effort) {
-        if (!canSend) return;
+        if (unifiedMode || !canSend) return;
         const request = { type: "model.select", model: slug };
         if (effort !== undefined) request.reasoning_effort = effort;
         sendCommand(request);
@@ -395,6 +400,7 @@ QtObject {
     }
 
     function selectProvider(nextProvider) {
+        if (unifiedMode) return;
         if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing) return;
         if (nextProvider !== "chatgpt" && nextProvider !== "agy" && nextProvider !== "claude") return;
         if (nextProvider === "agy" && !agyAvailable) return;
@@ -589,6 +595,8 @@ QtObject {
         } else if (event.type === "provider.state") {
             const nextProvider = (data.provider === "agy" || data.provider === "claude") ? data.provider : "chatgpt";
             const nextClaudeAuth = !!data.claude_authenticated;
+            const wasUnified = unifiedMode;
+            const hadArchitect = !!unifiedArchitect.model;
             if (typeof data.refreshing === "boolean") providerBusy = data.refreshing;
             if (nextProvider !== provider || (nextProvider === "claude" && nextClaudeAuth !== claudeAuthenticated)) {
                 accountUsage = ({});
@@ -603,10 +611,15 @@ QtObject {
             claudeEmail = data.claude_email || "";
             claudePlan = data.claude_plan || "";
             if (typeof data.unified_mode === "boolean") unifiedMode = data.unified_mode;
+            unifiedArchitect = data.unified_architect || ({});
             unifiedTeam = data.unified_team || [];
             resolvedModels = data.resolved_models || {};
             if (!busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy) {
-                if (provider === "agy")
+                if (unifiedMode) {
+                    // El sondeo de cuotas no debe borrar el resultado del último turno.
+                    if (!wasUnified || hadArchitect !== engineReady)
+                        status = engineReady ? "Arquitecto automático listo." : "Buscando modelos para el arquitecto…";
+                } else if (provider === "agy")
                     status = availableModels.count > 0 ? "Conectado con Antigravity (agy)." : "Antigravity (agy) listo.";
                 else if (provider === "claude")
                     status = claudeAuthenticated
@@ -819,13 +832,15 @@ QtObject {
             if (messages.count && messages.get(messages.count - 1).author === "TÚ")
                 messages.setProperty(messages.count - 1, "turnId", activeTurnId);
         } else if (event.type === "chat.thread") {
-            modelName = data.model || "";
+            if (!unifiedMode) modelName = data.model || "";
         } else if (event.type === "chat.delta") {
             recordFirstText(data.turn_id, data.text);
             updateMessage(data.item_id, data.text, true, data.turn_id);
-            status = provider === "agy" ? "Antigravity está respondiendo…"
-                   : provider === "claude" ? "Claude está respondiendo…"
-                   : "ChatGPT está respondiendo…";
+            const respondingProvider = unifiedMode ? unifiedArchitect.provider : provider;
+            status = respondingProvider === "agy" ? "Antigravity está respondiendo…"
+                   : respondingProvider === "claude" ? "Claude está respondiendo…"
+                   : respondingProvider === "chatgpt" ? "ChatGPT está respondiendo…"
+                   : "El arquitecto está respondiendo…";
         } else if (event.type === "chat.message") {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
             recordFirstText(data.turn_id, data.text);

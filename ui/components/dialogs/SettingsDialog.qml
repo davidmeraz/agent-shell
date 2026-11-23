@@ -161,7 +161,7 @@ GlassDialog {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    readonly property bool canSwitch: dialog.bridge.ready && !dialog.bridge.busy
+                    readonly property bool canSwitch: !dialog.bridge.unifiedMode && dialog.bridge.ready && !dialog.bridge.busy
                         && !dialog.bridge.loginBusy && !dialog.bridge.claudeLoginBusy && !dialog.bridge.accountBusy
                         && !dialog.bridge.providerBusy && !dialog.bridge.projectRunPreparing
                     Button {
@@ -171,6 +171,8 @@ GlassDialog {
                         implicitHeight: 34
                         hoverEnabled: true
                         enabled: parent.canSwitch
+                        opacity: dialog.bridge.unifiedMode ? 0.5 : 1
+                        Accessible.description: dialog.bridge.unifiedMode ? "El modo unificado elige el motor automáticamente" : ""
                         readonly property bool active: dialog.bridge.provider === "chatgpt"
                         onClicked: dialog.bridge.selectProvider("chatgpt")
                         contentItem: Text {
@@ -204,6 +206,8 @@ GlassDialog {
                         implicitHeight: 34
                         hoverEnabled: true
                         enabled: parent.canSwitch && dialog.bridge.agyAvailable
+                        opacity: dialog.bridge.unifiedMode ? 0.5 : 1
+                        Accessible.description: dialog.bridge.unifiedMode ? "El modo unificado elige el motor automáticamente" : ""
                         readonly property bool active: dialog.bridge.provider === "agy"
                         onClicked: dialog.bridge.selectProvider("agy")
                         ToolTip.visible: hovered && !dialog.bridge.agyAvailable
@@ -242,6 +246,8 @@ GlassDialog {
                         implicitHeight: 34
                         hoverEnabled: true
                         enabled: parent.canSwitch && dialog.bridge.claudeAvailable
+                        opacity: dialog.bridge.unifiedMode ? 0.5 : 1
+                        Accessible.description: dialog.bridge.unifiedMode ? "El modo unificado elige el motor automáticamente" : ""
                         readonly property bool active: dialog.bridge.provider === "claude"
                         onClicked: dialog.bridge.selectProvider("claude")
                         ToolTip.visible: hovered && !dialog.bridge.claudeAvailable

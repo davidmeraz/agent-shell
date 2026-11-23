@@ -100,7 +100,8 @@ GlassPanel {
                 objectName: "chatHeroUseAgy"
                 visible: pane.bridge.provider !== "claude" && pane.bridge.agyAvailable
                 text: "✦ Usar Gemini (agy)"
-                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                enabled: !pane.bridge.unifiedMode && pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                Accessible.description: pane.bridge.unifiedMode ? "El modo unificado elige el motor automáticamente" : ""
                 onClicked: pane.bridge.selectProvider("agy")
             }
             ActionButton {

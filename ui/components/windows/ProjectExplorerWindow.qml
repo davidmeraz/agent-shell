@@ -480,6 +480,7 @@ FloatingWindow {
             edgeColor: "#4cffffff"
             highlighted: explorer.activityState === "running"
         }
+        GlassToolTipTheme {}
         ColumnLayout {
             focus: true
             Keys.onEscapePressed: event => { explorer.visible = false; event.accepted = true; }
@@ -549,11 +550,10 @@ FloatingWindow {
                                 style: Text.Raised
                                 styleColor: GemaTheme.textShadow
                                 HoverHandler { id: pathHover }
-                                ToolTip {
+                                GlassToolTip {
                                     id: pathTip
                                     visible: pathHover.hovered
                                     text: explorer.projectWorkdir
-                                    contentItem: Text { text: pathTip.text; textFormat: Text.PlainText; color: pathTip.palette.toolTipText; font: pathTip.font }
                                     delay: 500
                                 }
                             }
@@ -1130,7 +1130,7 @@ FloatingWindow {
                           : explorer.activityState === "error" || explorer.activityState === "failed" || explorer.activityState === "timeout" ? "Revisar resultado"
                           : "Actualización automática"
                     HoverHandler { id: statusHover }
-                    ToolTip {
+                    GlassToolTip {
                         visible: statusHover.hovered
                         text: "Actualiza cada 1,5 s. Ctrl+1 iconos grandes, Ctrl+2 árbol. Esc para cerrar."
                         delay: 500

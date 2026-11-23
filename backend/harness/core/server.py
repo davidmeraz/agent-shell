@@ -48,7 +48,7 @@ from ..tools.files import (
 from ..tools.patch import APPLY_PATCH_TOOL, execute_apply_patch, summarize_patch_command
 from ..tools.shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
 from ..work.quota_router import QuotaAwareRouter
-from ..work.roster import EFFORT_SUFFIX_RE, LEVEL_TIERS, build_roster, quota_bucket
+from ..work.roster import Candidate, EFFORT_SUFFIX_RE, LEVEL_TIERS, architect_candidate, build_roster, quota_bucket
 from ..work.worker import (
     ARCHITECT_INSTRUCTIONS, CLI_ARCHITECT_INSTRUCTIONS, DELEGATE_TOOL, MAX_DELEGATIONS_PER_ROUND,
     WorkerRouter, extract_delegations, parse_delegate_arguments,
@@ -175,6 +175,7 @@ class HarnessServer:
         self._compacting = False
         self._turn_states: dict[str, str] = {}
         self.unified_mode = False
+        self._active_architect: Candidate | None = None
         self.team_usage_pending = False
         self.worker_router = QuotaAwareRouter(WorkerRouter(client, agy_client, claude_client))
         self.project_runner = ProjectRunner(self._emit, LaunchCache(self.projects))
@@ -245,8 +246,14 @@ class HarnessServer:
             chatgpt_authenticated=self.authenticated,
             unified_mode=self.unified_mode,
             unified_team=self._unified_team() if self.unified_mode else [],
+            unified_architect=self._architect_info() if self.unified_mode else {},
             resolved_models=self._resolved_names(),
         )
+
+    def _architect_info(self) -> dict:
+        catalogs, remaining = self._known_catalogs(), self._remaining_quota()
+        candidate = self._active_architect or architect_candidate(catalogs, remaining, self.provider)
+        return self._worker_info(candidate, catalogs, remaining) if candidate else {}
 
     def _resolved_names(self) -> dict[str, str]:
         """Versión concreta que el CLI informó para cada alias de Claude ya usado."""
@@ -476,6 +483,9 @@ class HarnessServer:
                     self._spawn(self._load_claude_status)
 
     def _select_provider(self, request: dict) -> None:
+        if self.unified_mode:
+            self._emit("provider.rejected", message="El modo unificado elige automáticamente el motor del arquitecto.")
+            return
         if (self.busy or self.login_pending or self.account_pending
                 or self.provider_pending or self.claude_login_pending or self.project_runner.preparing):
             self._emit("provider.rejected", message="Espera a que termine la operación actual antes de cambiar de motor.")
@@ -605,6 +615,8 @@ class HarnessServer:
         return next((row for row in self.models if row["slug"] == (self.model if slug is None else slug)), {})
 
     def _restore_model(self, record):
+        if self.unified_mode:
+            return
         self.reasoning_effort = ""
         if record.get("model") in {row["slug"] for row in self.models}:
             self.model = record["model"]
@@ -615,6 +627,8 @@ class HarnessServer:
         self._emit("model.selected", model=self.model, reasoning_effort=self.reasoning_effort)
 
     def _select_model(self, request):
+        if self.unified_mode:
+            raise ValueError("El modo unificado elige automáticamente el modelo del arquitecto.")
         if not isinstance(request.get("model"), str) or not request["model"]:
             raise ValueError("Selecciona un modelo disponible en tu cuenta")
         model = self._model_options(request.get("model"))
@@ -1141,6 +1155,8 @@ class HarnessServer:
 
     def _finish(self, status: str, message: str = "") -> None:
         self.busy = False
+        had_architect = self._active_architect is not None
+        self._active_architect = None
         turn_quota = self._active_turn_quota
         self._active_turn_quota = None
         if self._performance and self._performance.status == "streaming":
@@ -1180,6 +1196,9 @@ class HarnessServer:
             self._save()
             if turn_quota and will_measure:
                 self._spawn(lambda: self._measure_turn_quota(turn_quota))
+        # El puente aún está ocupado: actualiza el arquitecto sin sustituir el estado final del turno.
+        if had_architect:
+            self._publish_provider()
         self._emit("chat.finished", status=status, message=message,
                    turn_id=self._performance.turn_id if self._performance else "")
         self._publish_history()
@@ -2659,6 +2678,10 @@ class HarnessServer:
                 return
             prompt = request.get("prompt")
             image = request.get("image", "")
+            architect = (architect_candidate(self._known_catalogs(), self._remaining_quota(), self.provider)
+                         if self.unified_mode else None)
+            provider, model, reasoning_effort = ((architect.provider, architect.model, architect.effort)
+                                                 if architect else (self.provider, self.model, self.reasoning_effort))
             try:
                 if not isinstance(image, str):
                     raise ValueError("Imagen inválida")
@@ -2669,11 +2692,13 @@ class HarnessServer:
                 return
             if not isinstance(prompt, str) or (not prompt.strip() and not image) or len(prompt) > MAX_PROMPT_LENGTH:
                 self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
-            elif self.provider == "agy" and (not self.agy_available or not self.models):
+            elif self.unified_mode and not architect:
+                self._emit("chat.finished", status="failed", message="No hay modelos disponibles para el arquitecto automático.")
+            elif not architect and provider == "agy" and (not self.agy_available or not self.models):
                 self._emit("chat.finished", status="failed", message="Antigravity (agy) no tiene modelos disponibles. Comprueba tu sesión en `agy`.")
-            elif self.provider == "claude" and (not self.claude_available or not self.claude_authenticated or not self.models):
+            elif not architect and provider == "claude" and (not self.claude_available or not self.claude_authenticated or not self.models):
                 self._emit("chat.finished", status="failed", message="Inicia sesión en Claude Code (botón 'Conectar Claude' o `claude auth login`) para conversar.")
-            elif self.provider == "chatgpt" and (not self.authenticated or not self.models):
+            elif not architect and provider == "chatgpt" and (not self.authenticated or not self.models):
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
             elif self.active_area in ("work", "app") and self.project is None:
                 self._emit("chat.finished", status="failed",
@@ -2692,7 +2717,13 @@ class HarnessServer:
                                                          "turn_id": turn_id, **({"image": image} if image else {})})
                     messages = [{"role": row["role"], "content": user_content(row["text"], row.get("image", ""))}
                                 for row in self.conversation["messages"] if row["text"] or row.get("image")]
-                    turn_performance = TurnPerformance(turn_id, self.model, received)
+                    previous_provider = self.conversation.get("provider")
+                    if previous_provider and (previous_provider != provider
+                                              or (architect and self.conversation.get("model") != model)):
+                        self.conversation.pop("agy_conversation_id", None)
+                        self.conversation.pop("claude_session_id", None)
+                        self._turn_states.pop("chat-" + self.conversation["chat_id"], None)
+                    turn_performance = TurnPerformance(turn_id, model, received)
                     turn_performance.input_characters = sum(len(row["text"]) for row in self.conversation["messages"])
                     turn_performance.context_messages = len(messages)
                     if "context" not in self.conversation:
@@ -2707,9 +2738,9 @@ class HarnessServer:
                     if "context" in self.conversation:
                         messages = copy.deepcopy(self.conversation["context"])
                     self.conversation.setdefault("performance", []).append(turn_performance.snapshot())
-                    self.conversation["model"] = self.model
-                    self.conversation["reasoning_effort"] = self.reasoning_effort
-                    self.conversation["provider"] = self.provider
+                    self.conversation["model"] = model
+                    self.conversation["reasoning_effort"] = reasoning_effort
+                    self.conversation["provider"] = provider
                     self.history.save(self.conversation)
                 except (OSError, sqlite3.Error):
                     if "snapshot" in locals():
@@ -2721,28 +2752,30 @@ class HarnessServer:
                 self._publish_history()
                 self.busy = True
                 self._generation += 1
-                generation, model = self._generation, self.model
-                reasoning_effort = self.reasoning_effort
+                generation = self._generation
+                self._active_architect = architect
                 self._performance = turn_performance
                 self._last_metrics_emitted = 0.0
                 self._stream = StreamControl(lambda phase: self._mark_phase(phase, generation))
                 control = self._stream
                 self._shell_control = ShellControl(control.cancelled)
                 self._emit("chat.busy", turn_id=turn_id)
+                if architect:
+                    self._publish_provider()
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)
-                bucket_key = self._quota_bucket_key(self.provider, model)
+                bucket_key = self._quota_bucket_key(provider, model)
                 turn_quota = {
                     "chat_id": self.conversation["chat_id"],
-                    "provider": self.provider,
+                    "provider": provider,
                     "model": model,
                     "bucket_key": bucket_key,
-                    "identity": self._usage_identity(),
+                    "identity": self._usage_identity(provider),
                     "before": self._last_quota_snapshots.get(bucket_key),
                 }
                 self._active_turn_quota = turn_quota
-                if self.provider == "agy":
+                if provider == "agy":
                     agy_conv_id = self.conversation.get("agy_conversation_id") or ""
                     agy_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(agy_conv_id))
                     if self.unified_mode:
@@ -2757,7 +2790,7 @@ class HarnessServer:
                         )
 
                     self._spawn(_run_agy)
-                elif self.provider == "claude":
+                elif provider == "claude":
                     claude_sess_id = self.conversation.get("claude_session_id") or ""
                     claude_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(claude_sess_id))
                     if self.unified_mode:

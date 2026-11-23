@@ -25,7 +25,7 @@ FloatingWindow {
     onClosed: usage.visible = false
     BackgroundEffect.blurRegion: Region { item: matteSurface; radius: matteSurface.radius }
     property double nowMs: Date.now()
-    property bool geminiOnly: false
+    property bool geminiOnly: true
     readonly property bool hasData: !!bridge.accountUsage.checked_at
     readonly property bool isAgyUsage: hasData && bridge.accountUsage.source === "agy"
     readonly property bool isLoading: !hasData && !bridge.usageError
@@ -142,6 +142,7 @@ FloatingWindow {
             objectName: "usageContent"
             anchors.fill: parent
             focus: true
+            GlassToolTipTheme {}
             Shortcut {
                 sequence: "Esc"
                 context: Qt.WindowShortcut
@@ -236,33 +237,33 @@ FloatingWindow {
                             Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
                             onClicked: usage.geminiOnly = !usage.geminiOnly
                             Accessible.name: usage.geminiOnly
-                                ? "Mostrando solo modelos Gemini. Pulsar para ver Gemini y Claude"
-                                : "Filtrar para mostrar solo el uso de los modelos Gemini"
+                                ? "Mostrando solo modelos Gemini. Pulsar para expandir y ver también Claude y GPT"
+                                : "Mostrando todos los modelos de Antigravity. Pulsar para contraer a solo Gemini"
                             ToolTip.visible: hovered
                             ToolTip.delay: 350
                             ToolTip.text: usage.geminiOnly
-                                ? "Mostrando solo Gemini · Clic para ver todos"
-                                : "Mostrar solo el uso de Gemini"
+                                ? "Expandir para ver también Claude · GPT"
+                                : "Contraer para mostrar solo Gemini"
                             contentItem: Text {
-                                text: usage.geminiOnly ? "✦ Gemini" : "Solo Gemini"
+                                text: usage.geminiOnly ? "Todos ▾" : "Solo Gemini ▴"
                                 textFormat: Text.PlainText
-                                color: usage.geminiOnly
+                                color: !usage.geminiOnly
                                     ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
                                     : (geminiFilterButton.hovered ? "#ffffff" : "#b8c4d2")
                                 font.pixelSize: 10
-                                font.weight: usage.geminiOnly ? Font.DemiBold : Font.Medium
+                                font.weight: !usage.geminiOnly ? Font.DemiBold : Font.Medium
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
                             background: GlassPanel {
                                 radius: 6
                                 reflective: false
-                                highlighted: usage.geminiOnly || geminiFilterButton.hovered
-                                topColor: usage.geminiOnly
+                                highlighted: !usage.geminiOnly || geminiFilterButton.hovered
+                                topColor: !usage.geminiOnly
                                     ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
                                     : (geminiFilterButton.hovered ? "#22ffffff" : "#14ffffff")
                                 bottomColor: "#08ffffff"
-                                edgeColor: usage.geminiOnly
+                                edgeColor: !usage.geminiOnly
                                     ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.58) : "#58ffffff")
                                     : (geminiFilterButton.hovered ? "#44ffffff" : "#28ffffff")
                             }

@@ -124,6 +124,9 @@ antes de cambiar de espacio.
 
 ## Explorador del proyecto
 
+En **Work** y **App**, el botón **Archivos**, junto a **Git**, abre o cierra el
+explorador del proyecto seleccionado. No hace falta esperar a que la IA trabaje.
+
 En **Work**, los visores acompañan automáticamente el trabajo de la IA: cuando
 ejecuta una herramienta shell se abre el árbol; las carpetas afectadas se expanden
 y los archivos de texto que crea o modifica aparecen en los dos visores. Si hay

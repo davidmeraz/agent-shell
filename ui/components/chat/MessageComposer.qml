@@ -22,16 +22,28 @@ GlassPanel {
     property bool areaTransition: false
     signal performanceRequested(var measurement)
     readonly property var contextMeasurement: bridge.latestPerformance
+    readonly property string contextModel: unified ? (architect.model || "") : bridge.modelName
     readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
         && contextMeasurement.chat_id === bridge.currentChatId
-        && (!bridge.modelName || contextMeasurement.model === bridge.modelName)
+        && (!contextModel || contextMeasurement.model === contextModel)
         && typeof contextMeasurement.context_tokens === "number"
         && isFinite(contextMeasurement.context_tokens) && contextMeasurement.context_tokens >= 0
     readonly property var commandMatches: ChatCommands.suggestions(prompt.text)
-    readonly property var modelQuery: ChatCommands.modelQuery(prompt.text)
+    readonly property bool unified: !!bridge.unifiedMode
+    readonly property var architect: bridge.unifiedArchitect || ({})
+    readonly property string architectName: String(architect.name || architect.model || "Sin modelo disponible")
+    readonly property string architectEngine: architect.provider === "chatgpt" ? "ChatGPT"
+        : architect.provider === "agy" ? "Gemini/Antigravity"
+        : architect.provider === "claude" ? "Claude" : String(architect.provider || "")
+    readonly property string architectDetail: (architectEngine ? " · " + architectEngine : "")
+        + (architect.effort ? " · " + architect.effort : "")
+    readonly property string unifiedModelNotice: "Modo unificado: el arquitecto (" + architectName
+        + ") es de solo lectura; el selector de modelos está desactivado."
+    readonly property var modelQuery: unified ? null : ChatCommands.modelQuery(prompt.text)
     readonly property bool modelMode: modelQuery !== null
+    readonly property bool narrow: width < 520
     readonly property var completions: {
-        if (!modelMode) return commandMatches.map(command => ({
+        if (!modelMode) return commandMatches.filter(command => !unified || command.name !== "/modelos").map(command => ({
             label: command.label || command.name, value: command.name, description: command.description
         }));
         const models = [];
@@ -45,7 +57,7 @@ GlassPanel {
     readonly property bool showCommands: prompt.activeFocus && !commandsDismissed && (completions.length > 0 || modelMode)
     readonly property bool canSubmit: !pendingPasteId && (prompt.text.trim().startsWith("/") || bridge.canSend)
     readonly property string activeModelLabel: {
-        if (bridge.shellRunning || !bridge.engineReady || !bridge.modelName) return "";
+        if (unified || bridge.shellRunning || !bridge.engineReady || !bridge.modelName) return "";
         for (let i = 0; i < bridge.availableModels.count; ++i) {
             const model = bridge.availableModels.get(i);
             if (model.slug === bridge.modelName) return (model.displayName || model.slug)
@@ -54,10 +66,10 @@ GlassPanel {
         return "";
     }
     implicitHeight: editorLayout.implicitHeight + 24
-    radius: 16
-    topColor: "#1cffffff"
-    bottomColor: "#24060a10"
-    edgeColor: "#42ffffff"
+    radius: 18
+    topColor: promptHover.hovered || prompt.activeFocus ? "#24ffffff" : "#1cffffff"
+    bottomColor: "#28060a10"
+    edgeColor: prompt.activeFocus ? "#70ffffff" : promptHover.hovered ? "#52ffffff" : "#42ffffff"
     highlighted: prompt.activeFocus
 
     function prepare(text) {
@@ -65,7 +77,12 @@ GlassPanel {
         prompt.forceActiveFocus();
         prompt.cursorPosition = prompt.length;
     }
+    function blockUnifiedModels() {
+        bridge.status = unifiedModelNotice;
+        prompt.forceActiveFocus();
+    }
     function send() {
+        if (unified && ChatCommands.modelQuery(prompt.text) !== null) { blockUnifiedModels(); return; }
         if (pendingPasteId || (!prompt.text.trim() && !attachedImage)) return;
         if (showCommands && completions.length) { executeSelected(); return; }
         const command = ChatCommands.parse(prompt.text);
@@ -87,6 +104,7 @@ GlassPanel {
     function executeSelected() {
         const option = completions[completionList.currentIndex];
         if (!option) return;
+        if (unified && option.value === "/modelos") { blockUnifiedModels(); return; }
         if (modelMode && ChatCommands.blockedReason("/modelos", bridge)) {
             bridge.submit(prompt.text);
             return;
@@ -110,6 +128,7 @@ GlassPanel {
         if (bridge.submit(modelMode ? option.command : option.value)) prompt.clear();
     }
     function openModels(command) {
+        if (unified) { blockUnifiedModels(); return; }
         prepare(command ? command.trim() + " " : "/modelos ");
         commandsDismissed = false;
     }
@@ -191,8 +210,10 @@ GlassPanel {
             Text {
                 Layout.fillWidth: true
                 text: composer.pendingPasteId ? "Pegando imagen…" : "Imagen adjunta"
-                color: "#bbbbbb"
+                color: "#d0d0d0"
                 font.pixelSize: 12
+                font.weight: Font.Medium
+                elide: Text.ElideRight
             }
             Button {
                 objectName: "chatRemoveAttachment"
@@ -210,10 +231,12 @@ GlassPanel {
             }
         }
         ScrollView {
+            HoverHandler { id: promptHover }
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Layout.fillWidth: true
-            Layout.preferredHeight: composer.compact ? 64 : 88
+            Layout.preferredHeight: composer.compact || composer.narrow ? 64 : 88
+            Layout.minimumHeight: 48
             clip: true
             TextArea {
                 selectionColor: "#ffffff"
@@ -257,6 +280,7 @@ GlassPanel {
                         }
                         if (event.key === Qt.Key_Tab && composer.completions.length) {
                             const option = composer.completions[completionList.currentIndex];
+                            if (composer.unified && option.value === "/modelos") { composer.blockUnifiedModels(); event.accepted = true; return; }
                             prompt.text = composer.modelMode ? option.command : option.value + (option.value === "/shell" ? " " : "");
                             prompt.cursorPosition = prompt.length;
                             composer.commandsDismissed = !(option.final === false || option.value === "/modelos");
@@ -278,7 +302,7 @@ GlassPanel {
                 }
             }
         }
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
+        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: prompt.activeFocus ? "#30ffffff" : "#18ffffff" }
         RowLayout {
             objectName: "chatComposerActions"
             Layout.fillWidth: true
@@ -286,6 +310,21 @@ GlassPanel {
             Layout.maximumHeight: 40
             Layout.preferredHeight: 40
             spacing: 8
+            ActionButton {
+                objectName: "chatPasteImageButton"
+                implicitWidth: 36
+                implicitHeight: 36
+                horizontalPadding: 0
+                verticalPadding: 0
+                font.pixelSize: 16
+                text: "＋"
+                enabled: composer.bridge.ready && !composer.bridge.busy && !composer.pendingPasteId
+                Accessible.name: "Pegar imagen del portapapeles"
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "Pegar imagen del portapapeles"
+                onClicked: composer.pasteImage()
+            }
             // Este espacio permanece reservado cuando las sugerencias se ocultan.
             Item {
                 objectName: "chatCommandSlot"
@@ -297,10 +336,48 @@ GlassPanel {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: !composer.showCommands
                     spacing: 6
+                    Rectangle {
+                        objectName: "chatUnifiedArchitect"
+                        Layout.preferredWidth: Math.min(architectRow.implicitWidth + 16, parent.width * 0.6)
+                        Layout.preferredHeight: 22
+                        visible: composer.unified
+                        radius: 11
+                        color: "#14ffffff"
+                        border.width: 1
+                        border.color: architectHover.hovered ? "#50ffffff" : "#28ffffff"
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: "Arquitecto unificado, solo lectura: " + composer.architectName
+                            + composer.architectDetail
+                        Accessible.description: "No se puede cambiar el modelo en modo unificado."
+                        HoverHandler { id: architectHover }
+                        ToolTip.visible: architectHover.hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "El sistema elige automáticamente el mejor modelo con cuota disponible; no se puede cambiar en modo unificado."
+                        RowLayout {
+                            id: architectRow
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 5
+                            Text { text: "◆"; color: "#cccccc"; font.pixelSize: 9 }
+                            Text {
+                                objectName: "chatUnifiedArchitectName"
+                                Layout.fillWidth: true
+                                text: composer.architectName + composer.architectDetail
+                                textFormat: Text.PlainText
+                                color: "#e6e6e6"
+                                font.pixelSize: 11
+                                font.weight: Font.Medium
+                                elide: Text.ElideRight
+                            }
+                            Text { text: "auto"; color: "#aaaaaa"; font.pixelSize: 9; opacity: 0.7 }
+                        }
+                    }
                     Text {
                         objectName: "chatActiveModel"
                         Layout.preferredWidth: Math.min(implicitWidth, parent.width * 0.4)
-                        visible: composer.activeModelLabel !== ""
+                        visible: composer.activeModelLabel !== "" && !composer.narrow
                         text: composer.activeModelLabel
                         textFormat: Text.PlainText
                         color: "#aaaaaa"
@@ -320,7 +397,7 @@ GlassPanel {
                                 + ChatCommands.effortLabel(composer.bridge.reasoningEffort || "auto") + " · Cambia con /modelos"
                     }
                     Text {
-                        visible: composer.activeModelLabel !== "" && composer.statusText !== ""
+                        visible: (composer.activeModelLabel !== "" || composer.unified) && composer.statusText !== "" && !composer.narrow
                         text: "·"
                         color: "#888888"
                         font.pixelSize: 11
@@ -330,7 +407,7 @@ GlassPanel {
                         Layout.fillWidth: true
                         text: composer.statusText
                         textFormat: Text.PlainText
-                        color: composer.bridge.busy || composer.bridge.loginBusy ? "#cccccc" : "#aaaaaa"
+                        color: composer.bridge.busy || composer.bridge.loginBusy ? "#d6d6d6" : "#aaaaaa"
                         font.pixelSize: 11
                         elide: Text.ElideRight
                         HoverHandler { id: statusHover }
@@ -417,7 +494,8 @@ GlassPanel {
                 id: contextButton
                 objectName: "chatComposerContext"
                 visible: composer.hasContext
-                text: "Contexto: " + Performance.tokens(composer.contextMeasurement.context_tokens) + " tokens"
+                text: composer.narrow ? Performance.tokens(composer.contextMeasurement.context_tokens)
+                                      : "Contexto: " + Performance.tokens(composer.contextMeasurement.context_tokens) + " tokens"
                 hoverEnabled: true
                 padding: 4
                 Accessible.name: "Ver contexto de la última llamada: " + composer.contextMeasurement.context_tokens + " tokens"
@@ -444,14 +522,30 @@ GlassPanel {
                     border.color: "#60ffffff"
                 }
             }
+            Text {
+                objectName: "chatCharCounter"
+                visible: prompt.text.length > 14000
+                text: prompt.text.length + (composer.narrow ? "" : " / 16000")
+                color: prompt.text.length > 16000 ? "#ff8a80" : "#aaaaaa"
+                font.pixelSize: 10
+                Accessible.name: prompt.text.length + " de 16000 caracteres"
+            }
             ActionButton {
+                id: sendButton
                 objectName: "chatSendButton"
-                implicitWidth: 90
-                text: composer.bridge.busy ? "Detener  ◼" : "Enviar  ↑"
+                implicitWidth: composer.narrow ? 42 : 108
+                implicitHeight: 38
+                horizontalPadding: composer.narrow ? 0 : 14
+                Layout.alignment: Qt.AlignVCenter
+                font.pixelSize: 13
+                text: composer.bridge.busy ? (composer.narrow ? "◼" : "Detener  ◼") : (composer.narrow ? "↑" : "Enviar  ↑")
                 accent: true
                 enabled: composer.bridge.busy || (composer.canSubmit
                     && (!!prompt.text.trim() || !!composer.attachedImage) && prompt.text.length <= 16000)
                 Accessible.name: composer.bridge.busy ? "Detener ejecución" : "Enviar mensaje"
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: composer.bridge.busy ? "Detener ejecución" : "Enviar (Enter) · Salto de línea: Shift+Enter"
                 onClicked: {
                     if (composer.bridge.busy) composer.bridge.cancel();
                     else composer.send();

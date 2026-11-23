@@ -13,8 +13,9 @@ ShellRoot {
     property string savedProjectId: ""
     readonly property var viewer: explorer ? explorer.activeFileWindow : null
     AgentBridge { id: agent }
-    ChatWindow { id: chat; bridge: agent; implicitWidth: 700; implicitHeight: 680 }
+    ChatWindow { id: chat; bridge: agent; implicitWidth: 560; implicitHeight: 680 }
     TestCase { id: inspector; parent: chat.contentItem; when: false }
+    readonly property var explorerButton: inspector.findChild(chat, "workExplorerButton")
     function check(value, message) {
         if (value) return true;
         console.error("EXPLORER_FAILED: " + message);
@@ -29,6 +30,8 @@ ShellRoot {
         onTriggered: {
             if (scenario.stage === 0) {
                 if (!agent.canRunShell) return;
+                if (!scenario.check(scenario.explorerButton && !scenario.explorerButton.visible,
+                    "el botón de archivos aparece en Chat")) return;
                 agent.createProject("Explorador de prueba", agent.workspace);
                 scenario.stage = 1;
             } else if (scenario.stage === 1) {
@@ -38,12 +41,20 @@ ShellRoot {
             } else if (scenario.stage === 2) {
                 if (agent.busy) return;
                 scenario.explorer = chat.explorerWindow;
-                if (!scenario.check(!!scenario.explorer && !inspector.findChild(chat, "workExplorerButton"), "ventana ausente o botón manual conservado")) return;
+                const button = scenario.explorerButton;
+                if (!scenario.check(scenario.explorer && button.visible && button.enabled && !button.accent,
+                    "explorador o botón de archivos no disponible en Work")) return;
                 if (!scenario.check(scenario.explorer.mainWindowTitle === chat.title
                     && scenario.explorer.firstFileWindow.mainWindowTitle === chat.title
                     && scenario.explorer.secondFileWindow.mainWindowTitle === chat.title,
                     "el explorador o los visores no siguen la identidad de la ventana principal")) return;
-                scenario.explorer.visible = true;
+                inspector.mouseClick(button);
+                if (!scenario.check(scenario.explorer.visible && button.accent,
+                    "el botón de Work no abre ni resalta el explorador")) return;
+                inspector.mouseClick(button);
+                if (!scenario.check(!scenario.explorer.visible && !button.accent,
+                    "el botón de Work no cierra el explorador")) return;
+                inspector.mouseClick(button);
                 const surface = inspector.findChild(scenario.explorer, "projectExplorerMatteSurface");
                 if (!scenario.check(!!surface && surface.waterReflection && surface.radius === 20
                     && surface.topColor.a < 1 && surface.bottomColor.a < 1
@@ -168,12 +179,13 @@ ShellRoot {
                 for (const viewer of scenario.explorer.fileWindows) viewer.refresh();
                 scenario.explorer.closed();
                 for (const viewer of scenario.explorer.fileWindows) viewer.closed();
-                if (!scenario.check(!scenario.explorer.visible && !Object.keys(scenario.explorer.pending).length
+                if (!scenario.check(!scenario.explorer.visible && !scenario.explorerButton.accent
+                    && !Object.keys(scenario.explorer.pending).length
                     && scenario.explorer.fileWindows.every(viewer => !viewer.visible && !viewer.pendingId),
                     "cierre nativo conserva visibilidad o lecturas pendientes")) return;
                 scenario.stage = 16;
             } else if (scenario.stage === 16) {
-                scenario.explorer.visible = true;
+                scenario.explorerButton.click();
                 if (!scenario.check(scenario.explorer.visible && scenario.explorer.fileWindows.every(viewer => !viewer.visible),
                     "el explorador no reabre independientemente tras cierre nativo")) return;
                 scenario.stage = 17;
@@ -244,7 +256,35 @@ ShellRoot {
                 if (!scenario.check(!scenario.explorer.visible && !scenario.explorer.projectId
                     && scenario.explorer.fileWindows.every(viewer => !viewer.visible && !viewer.preview),
                     "eliminar en Chat conserva los visores del proyecto retirado")) return;
-                console.log("EXPLORER_OK: dos visores, límite, lectura viva en Chat, vuelta a Work sin perder carpetas/archivos, aislamiento al cambiar de proyecto, eliminación desde Chat, cierre nativo y reapertura");
+                agent.selectArea("app", "");
+                scenario.stage = 28;
+            } else if (scenario.stage === 28) {
+                if (agent.areaBusy || agent.activeArea !== "app") return;
+                if (!scenario.check(!scenario.explorerButton.visible, "el botón aparece en App sin proyecto")) return;
+                agent.createApp("App de prueba", agent.workspace + "/explorer-app");
+                scenario.stage = 29;
+            } else if (scenario.stage === 29) {
+                if (agent.areaBusy) return;
+                const button = scenario.explorerButton;
+                const switcher = inspector.findChild(chat, "workspaceSwitcher");
+                const position = switcher.mapToItem(chat.contentItem, 0, 0);
+                if (!scenario.check(switcher.visible
+                    && Math.abs(position.x + switcher.width / 2 - chat.width / 2) < 1
+                    && inspector.findChild(chat, "appProjectBadge").visible
+                    && inspector.findChild(chat, "appTestButton").visible,
+                    "App perdió el selector centrado, el indicador de motor o el control Probar")) return;
+                if (!scenario.check(agent.projectId && button.visible && button.enabled && !button.accent,
+                    "botón de archivos no disponible en App")) return;
+                inspector.mouseClick(button);
+                if (!scenario.check(scenario.explorer.visible && button.accent
+                    && scenario.explorer.projectId === agent.projectId, "el botón no abre el explorador de App")) return;
+                scenario.stage = 30;
+            } else if (scenario.stage === 30) {
+                if (!scenario.row("shell.qml")) return;
+                inspector.mouseClick(scenario.explorerButton);
+                if (!scenario.check(!scenario.explorer.visible && !scenario.explorerButton.accent,
+                    "el botón de App no cierra el explorador")) return;
+                console.log("EXPLORER_OK: botón en Work y App, visores, lectura viva en Chat, aislamiento de proyectos, cierre nativo y reapertura");
                 steps.stop(); Qt.callLater(Qt.quit);
             }
         }

@@ -326,6 +326,8 @@ FloatingWindow {
             anchors.fill: parent
             focus: true
 
+            GlassToolTipTheme {}
+
             Shortcut {
                 sequence: "Esc"
                 context: Qt.WindowShortcut

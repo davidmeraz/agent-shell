@@ -39,6 +39,7 @@ FloatingWindow {
                                            || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
+    readonly property bool projectOpen: (bridge.activeArea === "work" || bridge.activeArea === "app") && !!bridge.projectId
     property bool sidebarKeyboardOpen: false
     readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy && !bridge.projectRunPreparing
     property string performanceModel: ""
@@ -157,6 +158,7 @@ FloatingWindow {
         bottomColor: "#680c121a"
         edgeColor: "#4cffffff"
     }
+    GlassToolTipTheme {}
 
     RowLayout {
         id: mainLayout
@@ -183,6 +185,7 @@ FloatingWindow {
 
             Item {
                 id: topHeaderBar
+                objectName: "chatTopHeader"
                 Layout.fillWidth: true
                 implicitHeight: 38
 
@@ -300,92 +303,93 @@ FloatingWindow {
                             : "#36ffffff"
                     }
                 }
-            }
 
-            GlassPanel {
-            Button {
-                id: unifiedToggle
-                objectName: "unifiedModeButton"
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: -8
-                visible: window.bridge.agyAvailable || window.bridge.claudeAvailable
-                implicitWidth: 32
-                implicitHeight: 32
-                padding: 0
-                hoverEnabled: true
-                enabled: window.bridge.ready && !window.bridge.busy
-                scale: down ? 0.90 : (hovered ? 1.08 : 1.0)
-                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
-                ToolTip.visible: hovered
-                ToolTip.delay: 300
-                ToolTip.text: window.bridge.unifiedMode
-                    ? "Modo unificado activo: pulsa para volver a un solo motor"
-                    : "Activar modo unificado: el modelo actual planifica y delega en las demás IA"
-                onClicked: window.bridge.toggleUnifiedMode()
-                contentItem: Item {
-                    Canvas {
-                        id: hexIcon
-                        anchors.centerIn: parent
-                        width: 20
-                        height: 20
-                        readonly property bool active: window.bridge.unifiedMode
-                        readonly property bool hover: unifiedToggle.hovered
-                        readonly property color strokeColor: active
-                            ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
-                            : (hover ? "#d0d8e4" : "#78849a")
-                        readonly property color fillColor: active
-                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1860d4ff")
-                            : "transparent"
-                        readonly property color dotColor: active
-                            ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
-                            : (hover ? "#aab4c4" : "#606c80")
-                        onStrokeColorChanged: requestPaint()
-                        onFillColorChanged: requestPaint()
-                        onDotColorChanged: requestPaint()
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            ctx.clearRect(0, 0, width, height);
-                            var cx = width / 2, cy = height / 2, r = 8.5;
-                            ctx.beginPath();
-                            for (var i = 0; i < 6; i++) {
-                                var angle = Math.PI / 6 + i * Math.PI / 3;
-                                var px = cx + r * Math.cos(angle);
-                                var py = cy + r * Math.sin(angle);
-                                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-                            }
-                            ctx.closePath();
-                            ctx.fillStyle = fillColor;
-                            ctx.fill();
-                            ctx.strokeStyle = strokeColor;
-                            ctx.lineWidth = 1.5;
-                            ctx.stroke();
-                            var dotR = 2;
-                            ctx.fillStyle = dotColor;
-                            var positions = [[cx, cy - 4.5], [cx - 4, cy + 2], [cx + 4, cy + 2]];
-                            for (var d = 0; d < 3; d++) {
+                Button {
+                    id: unifiedToggle
+                    objectName: "unifiedModeButton"
+                    anchors.right: profileHeaderButton.left
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: window.bridge.agyAvailable || window.bridge.claudeAvailable
+                    implicitWidth: 32
+                    implicitHeight: 32
+                    padding: 0
+                    hoverEnabled: true
+                    enabled: window.bridge.ready && !window.bridge.busy
+                    scale: down ? 0.90 : (hovered ? 1.08 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 300
+                    ToolTip.text: window.bridge.unifiedMode
+                        ? "Modo unificado activo: pulsa para volver a un solo motor"
+                        : "Activar modo unificado: el modelo actual planifica y delega en las demás IA"
+                    onClicked: window.bridge.toggleUnifiedMode()
+                    contentItem: Item {
+                        Canvas {
+                            id: hexIcon
+                            anchors.centerIn: parent
+                            width: 20
+                            height: 20
+                            readonly property bool active: window.bridge.unifiedMode
+                            readonly property bool hover: unifiedToggle.hovered
+                            readonly property color strokeColor: active
+                                ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
+                                : (hover ? "#d0d8e4" : "#78849a")
+                            readonly property color fillColor: active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1860d4ff")
+                                : "transparent"
+                            readonly property color dotColor: active
+                                ? (GemaTheme.synced ? GemaTheme.accent : "#60d4ff")
+                                : (hover ? "#aab4c4" : "#606c80")
+                            onStrokeColorChanged: requestPaint()
+                            onFillColorChanged: requestPaint()
+                            onDotColorChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                var cx = width / 2, cy = height / 2, r = 8.5;
                                 ctx.beginPath();
-                                ctx.arc(positions[d][0], positions[d][1], dotR, 0, 2 * Math.PI);
+                                for (var i = 0; i < 6; i++) {
+                                    var angle = Math.PI / 6 + i * Math.PI / 3;
+                                    var px = cx + r * Math.cos(angle);
+                                    var py = cy + r * Math.sin(angle);
+                                    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                                }
+                                ctx.closePath();
+                                ctx.fillStyle = fillColor;
                                 ctx.fill();
+                                ctx.strokeStyle = strokeColor;
+                                ctx.lineWidth = 1.5;
+                                ctx.stroke();
+                                var dotR = 2;
+                                ctx.fillStyle = dotColor;
+                                var positions = [[cx, cy - 4.5], [cx - 4, cy + 2], [cx + 4, cy + 2]];
+                                for (var d = 0; d < 3; d++) {
+                                    ctx.beginPath();
+                                    ctx.arc(positions[d][0], positions[d][1], dotR, 0, 2 * Math.PI);
+                                    ctx.fill();
+                                }
                             }
                         }
                     }
+                    background: GlassPanel {
+                        radius: 16
+                        reflective: true
+                        highlighted: unifiedToggle.hovered || window.bridge.unifiedMode
+                        topColor: window.bridge.unifiedMode
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#30ffffff")
+                            : unifiedToggle.hovered ? "#1effffff" : "#14ffffff"
+                        bottomColor: "#0affffff"
+                        edgeColor: window.bridge.unifiedMode
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#5cffffff")
+                            : unifiedToggle.hovered ? "#40ffffff" : "#28ffffff"
+                    }
+                    Accessible.name: "Modo unificado"
+                    Accessible.description: window.bridge.unifiedMode ? "Activo" : "Inactivo"
                 }
-                background: GlassPanel {
-                    radius: 16
-                    reflective: true
-                    highlighted: unifiedToggle.hovered || window.bridge.unifiedMode
-                    topColor: window.bridge.unifiedMode
-                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#30ffffff")
-                        : unifiedToggle.hovered ? "#1effffff" : "#14ffffff"
-                    bottomColor: "#0affffff"
-                    edgeColor: window.bridge.unifiedMode
-                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#5cffffff")
-                        : unifiedToggle.hovered ? "#40ffffff" : "#28ffffff"
-                }
-                Accessible.name: "Modo unificado"
-                Accessible.description: window.bridge.unifiedMode ? "Activo" : "Inactivo"
             }
 
+            GlassPanel {
                 Layout.fillWidth: true
                 implicitHeight: loginRow.implicitHeight + 20
                 visible: window.bridge.loginBusy
@@ -412,28 +416,24 @@ FloatingWindow {
             }
 
             RowLayout {
-                objectName: "workProjectHeader"
                 Layout.fillWidth: true
-                visible: (window.bridge.activeArea === "work" || window.bridge.activeArea === "app") && !!window.bridge.projectId
-                spacing: 10
+                Layout.fillHeight: true
+                visible: window.bridge.workspaceSelected
+                spacing: 6
+
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
                     Layout.minimumWidth: 0
-                    spacing: 3
+                    spacing: 6
+
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
-                        Text {
-                            Layout.fillWidth: true
-                            text: (window.bridge.activeArea === "app" ? "App · " : "Work · ") + window.bridge.projectName
-                            textFormat: Text.PlainText
-                            color: "#dddddd"
-                            font.pixelSize: 13
-                            font.bold: true
-                            elide: Text.ElideRight
-                        }
+                        visible: window.projectOpen && window.bridge.activeArea === "app"
+                        spacing: 6
+
                         GlassPanel {
-                            visible: window.bridge.activeArea === "app"
+                            objectName: "appProjectBadge"
                             implicitWidth: gemaBadge.implicitWidth + 14
                             implicitHeight: 20
                             radius: 6
@@ -447,90 +447,130 @@ FloatingWindow {
                                 font.pixelSize: 10
                             }
                         }
+                        Item { Layout.fillWidth: true }
+                        ActionButton {
+                            objectName: "appTestButton"
+                            text: "Probar"
+                            font.pixelSize: 11
+                            verticalPadding: 5
+                            enabled: window.bridge.canTestApp
+                            Accessible.name: "Probar sintaxis QML y motor de la aplicación Gema UI Kit"
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 450
+                            ToolTip.text: "Valida los componentes QML Glassmorphism (qmllint) y la conexión IPC del motor."
+                            onClicked: window.bridge.testApp()
+                        }
                     }
                     Text {
                         objectName: "workRunStatus"
+                        // Los resultados normales siguen en el tooltip de Ejecutar.
+                        visible: window.projectOpen && text.length > 0
+                            && (window.bridge.projectRunPending || !!window.bridge.projectRunNotice
+                                || (window.bridge.projectRunHere && (window.bridge.projectRunActive
+                                    || window.bridge.projectRun.phase === "failed")))
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         text: window.bridge.projectRunPending ? "Detectando cómo ejecutar…"
                               : window.bridge.projectRunHere ? window.bridge.projectRunNotice || window.bridge.projectRun.message
-                              : window.bridge.projectRunNotice || window.bridge.workspace
+                              : window.bridge.projectRunNotice
                         textFormat: Text.PlainText
                         color: "#888888"
                         font.pixelSize: 10
                         elide: Text.ElideMiddle
                     }
-                }
-                ActionButton {
-                    objectName: "workGitButton"
-                    text: "⎇ Git"
-                    accent: window.gitFlowWindow.visible
-                    font.pixelSize: 11
-                    verticalPadding: 7
-                    enabled: window.bridge.ready && !!window.bridge.projectId
-                    Accessible.name: window.gitFlowWindow.visible
-                        ? "Cerrar visor de flujo Git"
-                        : "Abrir visor de flujo de commits Git"
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 450
-                    ToolTip.text: window.gitFlowWindow.visible
-                        ? "Ocultar el visor de flujo de commits Git."
-                        : "Ver el flujo de commits y ramas Git de este proyecto a la derecha."
-                    onClicked: window.gitFlowWindow.toggleForProject({
-                        project_id: window.bridge.projectId,
-                        name: window.bridge.projectName,
-                        workdir: window.bridge.workspace
-                    })
-                }
-                ActionButton {
-                    objectName: "appTestButton"
-                    visible: window.bridge.activeArea === "app"
-                    text: "Probar"
-                    font.pixelSize: 11
-                    verticalPadding: 7
-                    enabled: window.bridge.canTestApp
-                    Accessible.name: "Probar sintaxis QML y motor de la aplicación Gema UI Kit"
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 450
-                    ToolTip.text: "Valida los componentes QML Glassmorphism (qmllint) y la conexión IPC del motor."
-                    onClicked: window.bridge.testApp()
-                }
-                ActionButton {
-                    objectName: "workRunButton"
-                    text: window.bridge.projectRunHere && window.bridge.projectRunActive
-                          ? "Detener"
-                          : (window.bridge.activeArea === "app" ? "Iniciar" : "Ejecutar")
-                    accent: window.bridge.activeArea === "app" && !(window.bridge.projectRunHere && window.bridge.projectRunActive)
-                    font.pixelSize: 11
-                    verticalPadding: 7
-                    enabled: window.bridge.canRunProject || (window.bridge.projectRunHere && window.bridge.projectRunActive
-                             && window.bridge.projectRun.phase !== "stopping")
-                    Accessible.name: text === "Detener" ? "Detener programa del proyecto"
-                                   : window.bridge.activeArea === "app" ? "Iniciar aplicación Gema UI Kit" : "Detectar y ejecutar proyecto con IA"
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 450
-                    ToolTip.text: window.bridge.projectRunHere
-                                  ? [window.bridge.projectRunNotice || window.bridge.projectRun.message,
-                                     window.bridge.projectRun.source === "cache" ? "Inicio guardado · sin consulta a la IA" : "",
-                                     window.bridge.projectRun.command || "",
-                                     window.bridge.projectRun.output ? window.bridge.projectRun.output.slice(-1200) : ""].filter(part => !!part).join("\n")
-                                  : window.bridge.projectRunActive ? "Otro proyecto se está ejecutando."
-                                  : window.bridge.activeArea === "app"
-                                    ? "Inicia la ventana Glassmorphism de tu aplicación Gema UI Kit en Hyprland."
-                                  : window.bridge.projectRunCaches[window.bridge.projectId]
-                                    ? "Ejecutar el inicio guardado del proyecto."
-                                    : "La IA detecta cómo iniciar el proyecto sin añadir mensajes al chat."
-                    onClicked: {
-                        if (window.bridge.projectRunHere && window.bridge.projectRunActive) window.bridge.stopProject();
-                        else window.bridge.runProject();
+                    ConversationPane {
+                        objectName: "chatConversation"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 140
+                        bridge: window.bridge
+                        onPerformanceRequested: measurement => window.showPerformance(measurement)
+                        onSuggestionRequested: text => composer.prepare(text)
+                        onLoginRequested: window.bridge.login()
+                        onAccountRequested: accountPanel.open()
                     }
                 }
-                ActionButton {
-                    objectName: "workProjectsButton"
-                    text: window.bridge.activeArea === "app" ? "Apps" : "Proyectos"
-                    font.pixelSize: 11
-                    verticalPadding: 7
-                    enabled: window.bridge.canSelectArea
-                    onClicked: window.bridge.selectArea(window.bridge.activeArea, "")
+                GlassPanel {
+                    id: projectActionsPanel
+                    objectName: "workProjectActions"
+                    readonly property int inset: 3
+                    Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                    visible: window.projectOpen
+                    implicitWidth: projectActions.implicitWidth + 2 * inset
+                    implicitHeight: projectActions.implicitHeight + 2 * inset
+                    radius: 12
+                    topColor: "#16ffffff"
+                    bottomColor: "#0cffffff"
+                    edgeColor: "#32ffffff"
+
+                    ColumnLayout {
+                        id: projectActions
+                        anchors.fill: parent
+                        anchors.margins: projectActionsPanel.inset
+                        spacing: 4
+
+                        ProjectActionButton {
+                            objectName: "workExplorerButton"
+                            text: "Archivos"
+                            glyph: ProjectActionButton.Files
+                            accent: window.explorerWindow.visible && window.explorerWindow.projectId === window.bridge.projectId
+                            enabled: window.bridge.ready && !window.bridge.areaBusy
+                                     && window.explorerWindow.projectId === window.bridge.projectId
+                            Accessible.name: accent ? "Cerrar explorador de archivos" : "Abrir explorador de archivos"
+                            ToolTip.text: Accessible.name
+                            onClicked: window.explorerWindow.visible = !window.explorerWindow.visible
+                        }
+                        ProjectActionButton {
+                            objectName: "workGitButton"
+                            text: "Git"
+                            glyph: ProjectActionButton.Git
+                            accent: window.gitFlowWindow.visible
+                            enabled: window.bridge.ready && !!window.bridge.projectId
+                            Accessible.name: accent ? "Cerrar visor de flujo Git" : "Abrir visor de flujo de commits Git"
+                            ToolTip.text: accent
+                                ? "Ocultar el visor de flujo de commits Git."
+                                : "Ver el flujo de commits y ramas Git de este proyecto a la derecha."
+                            onClicked: window.gitFlowWindow.toggleForProject({
+                                project_id: window.bridge.projectId,
+                                name: window.bridge.projectName,
+                                workdir: window.bridge.workspace
+                            })
+                        }
+                        ProjectActionButton {
+                            objectName: "workRunButton"
+                            readonly property bool canShowStop: window.bridge.projectRunHere && window.bridge.projectRunActive
+                            glyph: canShowStop ? ProjectActionButton.Stop : ProjectActionButton.Play
+                            text: canShowStop ? "Detener" : window.bridge.activeArea === "app" ? "Iniciar" : "Ejecutar"
+                            accent: window.bridge.activeArea === "app" && !canShowStop
+                            enabled: window.bridge.canRunProject || (canShowStop && window.bridge.projectRun.phase !== "stopping")
+                            Accessible.name: canShowStop ? "Detener programa del proyecto"
+                                           : window.bridge.activeArea === "app" ? "Iniciar aplicación Gema UI Kit" : "Detectar y ejecutar proyecto con IA"
+                            ToolTip.text: window.bridge.projectRunHere
+                                          ? [text, window.bridge.projectRunNotice || window.bridge.projectRun.message,
+                                             window.bridge.projectRun.source === "cache" ? "Inicio guardado · sin consulta a la IA" : "",
+                                             window.bridge.projectRun.command || "",
+                                             window.bridge.projectRun.output ? window.bridge.projectRun.output.slice(-1200) : ""].filter(part => !!part).join("\n")
+                                          : window.bridge.projectRunActive ? "Otro proyecto se está ejecutando."
+                                          : window.bridge.activeArea === "app"
+                                            ? "Inicia la ventana Glassmorphism de tu aplicación Gema UI Kit en Hyprland."
+                                          : window.bridge.projectRunCaches[window.bridge.projectId]
+                                            ? "Ejecutar el inicio guardado del proyecto."
+                                            : "La IA detecta cómo iniciar el proyecto sin añadir mensajes al chat."
+                            onClicked: {
+                                if (canShowStop) window.bridge.stopProject();
+                                else window.bridge.runProject();
+                            }
+                        }
+                        ProjectActionButton {
+                            objectName: "workProjectsButton"
+                            text: window.bridge.activeArea === "app" ? "Apps" : "Proyectos"
+                            glyph: ProjectActionButton.Projects
+                            Accessible.name: "Volver a " + text
+                            ToolTip.text: Accessible.name
+                            enabled: window.bridge.canSelectArea
+                            onClicked: window.bridge.selectArea(window.bridge.activeArea, "")
+                        }
+                    }
                 }
             }
             WorkProjects {
@@ -553,18 +593,6 @@ FloatingWindow {
                     window.projectToDelete = ({ project_id: projectId, name: name, workdir: workdir });
                     deleteProjectDialog.open();
                 }
-            }
-            ConversationPane {
-                objectName: "chatConversation"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 140
-                visible: window.bridge.workspaceSelected
-                bridge: window.bridge
-                onPerformanceRequested: measurement => window.showPerformance(measurement)
-                onSuggestionRequested: text => composer.prepare(text)
-                onLoginRequested: window.bridge.login()
-                onAccountRequested: accountPanel.open()
             }
 
             ProviderSwitcher {

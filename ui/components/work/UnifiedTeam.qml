@@ -12,15 +12,7 @@ GlassPanel {
     property bool compact: false
     readonly property var activeWorker: bridge.activeWorker
     readonly property bool planning: bridge.busy && !activeWorker
-    readonly property string architectName: {
-        const resolved = bridge.resolvedModels[bridge.modelName];
-        if (bridge.provider === "claude" && resolved) return resolved;
-        for (let i = 0; i < bridge.availableModels.count; ++i) {
-            const model = bridge.availableModels.get(i);
-            if (model.slug === bridge.modelName) return model.displayName;
-        }
-        return bridge.modelName || "Sin modelo";
-    }
+    readonly property var architect: bridge.unifiedArchitect
     readonly property color accentColor: GemaTheme.synced ? GemaTheme.accentInk : "#ffffff"
     implicitHeight: content.implicitHeight + 20
     radius: 14
@@ -148,14 +140,15 @@ GlassPanel {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 horizontalAlignment: Text.AlignRight
-                text: team.symbol(team.bridge.provider) + " " + team.architectName
+                text: team.architect.name ? team.symbol(team.architect.provider) + " " + team.architect.name : "Sin modelo"
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 color: team.accentColor
             }
             Label {
-                text: team.engine(team.bridge.provider)
-                      + (team.bridge.reasoningEffort ? " · " + team.bridge.reasoningEffort : "")
+                visible: !!team.architect.model
+                text: team.engine(team.architect.provider)
+                      + (team.architect.effort ? " · " + team.architect.effort : "")
                 color: GemaTheme.subtleColor
                 font.pixelSize: 10
             }

@@ -5,7 +5,7 @@ import unittest
 from tests.support import paths  # noqa: F401
 from harness.core.http import Cancelled, StreamControl
 from harness.work.quota_router import EXHAUSTED_COOLDOWN, QuotaAwareRouter
-from harness.work.roster import Candidate, build_roster, model_tier, quota_bucket, rank
+from harness.work.roster import Candidate, architect_candidate, build_roster, model_tier, quota_bucket, rank
 from harness.work.worker import WorkerResult
 
 
@@ -50,6 +50,37 @@ class RosterTests(unittest.TestCase):
     def test_agy_buckets_are_independent(self):
         self.assertEqual(quota_bucket("agy", "gemini-3.8-flash-medium"), "agy:gemini")
         self.assertEqual(quota_bucket("agy", "claude-sonnet-5-5-medium"), "agy:3p")
+
+
+class ArchitectCandidateTests(unittest.TestCase):
+    def test_strength_and_unknown_family(self):
+        catalogs = {"claude": [row("claude-haiku-9")], "chatgpt": [row("gpt-5.5")],
+                    "other": [row("other-pro-99")]}
+        self.assertEqual(architect_candidate(catalogs, {}, "claude").model, "gpt-5.5")
+
+    def test_newest_within_family_and_high_effort(self):
+        catalogs = {"claude": [row("claude-opus-4", ("high",)),
+                               row("claude-opus-5", ("low", "high"))]}
+        candidate = architect_candidate(catalogs, {}, "")
+        self.assertEqual((candidate.model, candidate.effort), ("claude-opus-5", "high"))
+
+    def test_low_and_exhausted_quota_lose_to_weaker_model(self):
+        catalogs = {"claude": [row("claude-opus")], "chatgpt": [row("gpt-mini")]}
+        for left in (0, 4):
+            with self.subTest(left=left):
+                self.assertEqual(architect_candidate(catalogs, {"claude": left, "chatgpt": 50},
+                                                     "claude").provider, "chatgpt")
+
+    def test_flagships_tie_by_quota_then_preference(self):
+        catalogs = {"claude": [row("claude-opus-5")], "chatgpt": [row("gpt-5.5")]}
+        self.assertEqual(architect_candidate(catalogs, {"claude": 80, "chatgpt": 80}, "chatgpt").provider,
+                         "chatgpt")
+        self.assertEqual(architect_candidate(catalogs, {"claude": 90, "chatgpt": 80}, "chatgpt").provider,
+                         "claude")
+
+    def test_empty_catalogs(self):
+        self.assertIsNone(architect_candidate({"claude": []}, {}, "claude"))
+        self.assertIsNone(architect_candidate({}, {}, ""))
 
 
 class RankTests(unittest.TestCase):

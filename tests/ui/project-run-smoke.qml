@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtTest
 import Quickshell
 import "../../ui"
+import "../../ui/components/work"
 
 // Tarea interna de IA por HTTP local y programa real, sin mensajes de chat.
 ShellRoot {
@@ -41,7 +42,8 @@ ShellRoot {
                     inspector.wait(180);
                     const button = inspector.findChild(chat, "workRunButton");
                     if (!check(button && button.visible && button.enabled && button.text === "Ejecutar"
-                        && !inspector.findChild(chat, "workExplorerButton"), "cabecera de Work incorrecta")) return;
+                        && button.glyph === ProjectActionButton.Play,
+                        "cabecera de Work incorrecta")) return;
                     inspector.mouseClick(button);
                     if (!check(agent.projectRunPending && prompt.text === "Borrador conservado"
                         && !agent.messages.count && !agent.busy, "Ejecutar modifica el borrador o el chat")) return;
@@ -52,7 +54,10 @@ ShellRoot {
                         || agent.projectRun.output.indexOf("run-ready") < 0) return;
                     scenario.firstExecution = agent.projectRun.execution_id;
                     const button = inspector.findChild(chat, "workRunButton");
-                    if (!check(button.text === "Detener" && button.enabled && agent.canSend
+                    const status = inspector.findChild(chat, "workRunStatus");
+                    if (!check(status.visible && status.text === agent.projectRun.message,
+                        "la cabecera oculta el estado de ejecución")) return;
+                    if (!check(button.text === "Detener" && button.glyph === ProjectActionButton.Stop && button.enabled && agent.canSend
                         && !agent.messages.count && !agent.currentChatId && !agent.conversations.count
                         && !agent.performanceHistory.length, "ejecución interna contamina historial o bloquea chat")) return;
                     agent.submit("Hola");
@@ -69,6 +74,7 @@ ShellRoot {
                     if (agent.projectRunActive) return;
                     const button = inspector.findChild(chat, "workRunButton");
                     if (!check(agent.projectRun.phase === "interrupted" && button.text === "Ejecutar"
+                        && button.glyph === ProjectActionButton.Play
                         && button.enabled && agent.messages.count === 2,
                         "Detener afecta al chat o no permite repetir")) return;
                     inspector.mouseClick(button);
