@@ -145,17 +145,20 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.connected = True
+        self.accounts = [
+            {"id": "fixture-account", "label": "Cuenta 1", "email": "fixture@example.invalid"},
+            {"id": "fixture-second", "label": "Cuenta 2", "email": "second@example.invalid"},
+        ]
         self.selected_account = "fixture-account"
 
     def account(self):
-        email = "fixture@example.invalid" if self.selected_account == "fixture-account" else "second@example.invalid"
-        return {"authenticated": self.connected, "method": "chatgpt" if self.connected else "none",
-                "email": email if self.connected else "", "plan": "",
-                "plan_enabled": self.connected, "accounts": [
-                    {"id": "fixture-account", "label": "Cuenta 1", "email": "fixture@example.invalid",
-                     "active": self.selected_account == "fixture-account"},
-                    {"id": "fixture-second", "label": "Cuenta 2", "email": "second@example.invalid",
-                     "active": self.selected_account == "fixture-second"}]}
+        current = next((item for item in self.accounts if item["id"] == self.selected_account), None)
+        connected = self.connected and current is not None
+        email = current["email"] if connected else ""
+        return {"authenticated": connected, "method": "chatgpt" if connected else "none",
+                "email": email, "plan": "",
+                "plan_enabled": connected, "accounts": [
+                    {**item, "active": item["id"] == self.selected_account} for item in self.accounts]}
 
     def begin_login(self, cancel, new_account=False):
         # Verifica el botón de Qt sin abrir navegador ni emitir una URL OAuth.
@@ -165,10 +168,24 @@ class FakeSession:
 
     def select_account(self, account_id):
         from harness.core.http import ServiceError
-        if account_id not in ("fixture-account", "fixture-second"):
+        if not any(item["id"] == account_id for item in self.accounts):
             raise ServiceError("Cuenta no registrada")
         self.selected_account = account_id
         self.connected = True
+
+    def remove_account(self, account_id):
+        from harness.core.http import ServiceError
+        if not any(item["id"] == account_id for item in self.accounts):
+            raise ServiceError("La cuenta seleccionada no está registrada")
+        self.accounts = [item for item in self.accounts if item["id"] != account_id]
+        if self.selected_account == account_id:
+            if self.accounts:
+                self.selected_account = self.accounts[-1]["id"]
+                self.connected = True
+            else:
+                self.selected_account = ""
+                self.connected = False
+        return True
 
     def access_token(self):
         return "test-only-access-token"

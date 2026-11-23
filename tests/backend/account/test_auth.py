@@ -410,6 +410,70 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn("access_token", record["connection"])
         self.assertNotIn("id_token_hint", parse_qs(urlsplit(self.attempt().url).query))
 
+    def _connect_extra(self, client_id: str, subject: str, email: str):
+        attempt = self.attempt(new_account=True)
+        self.http.json.side_effect = [
+            self.tokens(attempt.nonce, aud=client_id, sub=subject, email=email),
+            {"keys": [self.jwk]},
+        ]
+        self.session.complete_login(attempt, {"code": "code-" + client_id, "client_id": client_id})
+
+    def test_remove_inactive_account_keeps_active_session_and_host_id(self):
+        self.connect(email="one@example.invalid")
+        host_id = self.session.store.load()["host_id"]
+        self._connect_extra("oaiapp_two", "subject-2", "two@example.invalid")
+        accounts = self.session.account()["accounts"]
+        inactive = next(item for item in accounts if not item["active"])
+        self.http.json.side_effect = [{"revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke"}, {}]
+        self.assertTrue(self.session.remove_account(inactive["id"]))
+        after = self.session.account()
+        self.assertTrue(after["authenticated"])
+        self.assertEqual(after["email"], "two@example.invalid")
+        self.assertEqual(len(after["accounts"]), 1)
+        self.assertEqual(self.session.store.load()["host_id"], host_id)
+
+    def test_remove_active_disconnected_account_promotes_connected_saved_account(self):
+        self.connect(email="active-connected@example.invalid")
+        self._connect_extra("oaiapp_old", "subject-old", "old@example.invalid")
+        self.http.json.side_effect = [{"revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke"}, {}]
+        self.session.logout()  # Cuenta 2 queda activa y desconectada; Cuenta 1 sigue con tokens
+        active = next(item for item in self.session.account()["accounts"] if item["active"])
+        self.http.json.reset_mock()
+        self.assertTrue(self.session.remove_account(active["id"]))
+        self.http.json.assert_not_called()  # Sin refresh_token no hace petición remota
+        after = self.session.account()
+        self.assertTrue(after["authenticated"])
+        self.assertEqual(after["email"], "active-connected@example.invalid")
+        self.assertEqual(len(after["accounts"]), 1)
+
+    def test_remove_last_account_clears_connection_and_preserves_host_id(self):
+        self.connect()
+        host_id = self.session.store.load()["host_id"]
+        active = self.session.account()["accounts"][0]
+        self.http.json.side_effect = ServiceError("network", 503)
+        self.assertFalse(self.session.remove_account(active["id"]))
+        after = self.session.account()
+        self.assertFalse(after["authenticated"])
+        self.assertEqual(after["accounts"], [])
+        record = self.session.store.load()
+        self.assertIsNone(record["connection"])
+        self.assertEqual(record["host_id"], host_id)
+
+    def test_remove_unknown_account_preserves_session_file_and_next_label_avoids_duplicates(self):
+        self.connect(email="one@example.invalid")
+        self._connect_extra("oaiapp_two", "subject-2", "two@example.invalid")
+        before = self.session.store.path.read_bytes()
+        with self.assertRaises(ServiceError):
+            self.session.remove_account("nonexistent-id")
+        self.assertEqual(self.session.store.path.read_bytes(), before)
+        # Eliminar Cuenta 1 y registrar otra nueva no debe duplicar la etiqueta Cuenta 2
+        first = next(item for item in self.session.account()["accounts"] if item["label"] == "Cuenta 1")
+        self.http.json.side_effect = [{"revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke"}, {}]
+        self.session.remove_account(first["id"])
+        self._connect_extra("oaiapp_three", "subject-3", "three@example.invalid")
+        labels = [item["label"] for item in self.session.account()["accounts"]]
+        self.assertEqual(len(labels), len(set(labels)))
+
     def test_credentials_have_private_permissions_and_atomic_failure_preserves_them(self):
         self.connect()
         self.assertEqual(self.session.store.path.stat().st_mode & 0o777, 0o600)

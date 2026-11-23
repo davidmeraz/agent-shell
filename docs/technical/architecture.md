@@ -141,7 +141,10 @@ intercambio mediante otra autorización, separado del registro activo.
 El selector identifica cada registro mediante un hash del cliente, con una
 etiqueta estable y correo para presentarlo; no agrupa registros por correo.
 Cambiar de cuenta actualiza los modelos y conserva las conversaciones. Cerrar
-sesión revoca y elimina únicamente los tokens de la cuenta seleccionada.
+sesión revoca y elimina únicamente los tokens de la cuenta seleccionada. Quitar
+una cuenta (`auth.remove`) intenta revocar sus tokens si siguen activos y retira
+su registro local conservando el `host_id`, historiales y proyectos; si era la
+cuenta activa, promueve otra cuenta registrada con sesión válida cuando existe.
 
 Cada intento tiene state, nonce y PKCE nuevos. El listener está ligado únicamente
 a `127.0.0.1` y a `/auth/callback`. El intercambio usa exactamente el mismo URI,

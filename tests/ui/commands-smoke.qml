@@ -278,10 +278,23 @@ ShellRoot {
                     if (!scenario.check(agent.canSend && agent.messages.count === 2 && agent.registeredAccounts.count === 2,
                         "selección de cuenta no actualiza modelos o conserva chat")) return;
                     if (!scenario.check(agent.email === "second@example.invalid", "correo no corresponde a cuenta seleccionada")) return;
-                    inspector.findChild(chat, "chatAccount").close(); inspector.wait(180);
-                    chat.contentItem.Window.window.width = 1040;
+                    const removeBtn = inspector.findChild(chat, "chatRemoveAccount");
+                    if (!scenario.check(!!removeBtn && removeBtn.visible && removeBtn.enabled, "botón quitar cuenta ausente")) return;
+                    inspector.mouseClick(removeBtn); inspector.wait(180);
+                    const confirmDialog = inspector.findChild(chat, "chatRemoveAccountDialog");
+                    const confirmBtn = inspector.findChild(chat, "chatConfirmRemoveAccount");
+                    if (!scenario.check(!!confirmDialog && confirmDialog.visible && !!confirmBtn && confirmBtn.enabled,
+                        "diálogo de confirmación para quitar cuenta no abrió")) return;
+                    inspector.mouseClick(confirmBtn);
                     scenario.stage = 10;
                 } else if (scenario.stage === 10) {
+                    if (agent.accountBusy || agent.registeredAccounts.count !== 1) return;
+                    if (!scenario.check(agent.canSend && agent.email === "fixture@example.invalid" && agent.messages.count === 2,
+                        "quitar cuenta no promueve la restante o altera el chat")) return;
+                    inspector.findChild(chat, "chatAccount").close(); inspector.wait(180);
+                    chat.contentItem.Window.window.width = 1040;
+                    scenario.stage = 11;
+                } else if (scenario.stage === 11) {
                     if (!chat.wideLayout) return;
                     const sidebar = inspector.findChild(chat, "chatSidebar");
                     const drawer = inspector.findChild(chat, "chatSidebarDrawer");

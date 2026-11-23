@@ -129,11 +129,27 @@ class ServerTests(unittest.TestCase):
             self.assertIn("no registrada", self.output.wait_for("error")["message"])
         self.assertFalse(self.server.account_pending)
         for command in ({"type": "auth.login", "new_account": "true"},
-                        {"type": "auth.select", "account_id": None}):
+                        {"type": "auth.select", "account_id": None},
+                        {"type": "auth.remove", "account_id": ""}):
             self.server.handle(command)
             self.output.wait_for("error")
             self.assertFalse(self.server.login_pending)
             self.assertFalse(self.server.account_pending)
+
+    def test_account_removal_updates_state_models_and_preserves_conversation(self):
+        self.send("conservar")
+        current = self.server.conversation
+        self.server.handle({"type": "auth.remove", "account_id": "fixture-second"})
+        self.output.wait_for("auth.refresh.finished")
+        self.assertFalse(self.server.account_pending)
+        self.assertIs(self.server.conversation, current)
+        self.assertEqual(len(self.session.account()["accounts"]), 1)
+        self.assertEqual(len(self.server.models), 2)
+
+        with patch.object(self.session, "remove_account", side_effect=ServiceError("Cuenta no registrada")):
+            self.server.handle({"type": "auth.remove", "account_id": "missing"})
+            self.assertIn("no registrada", self.output.wait_for("error")["message"])
+        self.assertFalse(self.server.account_pending)
 
     def test_cancel_closes_http_stream_and_keeps_partial_answer(self):
         self.server.handle({"type": "chat.send", "prompt": "cancel"})

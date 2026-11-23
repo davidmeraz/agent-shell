@@ -351,6 +351,21 @@ class HarnessServer:
             return
         self._refresh_account()
 
+    def _remove_account(self, account_id: str) -> None:
+        try:
+            confirmed = self.session.remove_account(account_id)
+        except (ServiceError, OSError) as error:
+            with self._lock:
+                self.account_pending = False
+                self._emit("auth.refresh.finished")
+                self._emit("error", message=str(error) if isinstance(error, ServiceError) else
+                           "No se pudo quitar la cuenta")
+            return
+        if not confirmed:
+            with self._lock:
+                self._emit("error", message="Cuenta quitada de Agent Shell. No se confirmó la revocación remota; puedes desconectarla en los ajustes de ChatGPT.")
+        self._refresh_account()
+
     def _logout(self) -> None:
         try:
             confirmed = self.session.logout()
@@ -972,7 +987,7 @@ class HarnessServer:
                                else "No se pudo guardar la selección de modelo." if action == "model.select"
                                else "No se pudo abrir la conversación guardada")
                 return
-            if action in ("auth.login", "auth.refresh", "auth.logout", "auth.select"):
+            if action in ("auth.login", "auth.refresh", "auth.logout", "auth.select", "auth.remove"):
                 if self.busy or self.login_pending or self.account_pending or self.project_runner.preparing:
                     self._emit("error", message="Ya hay una operación en curso")
                 elif action == "auth.login":
@@ -984,14 +999,15 @@ class HarnessServer:
                     self._login_cancel = threading.Event()
                     cancel = self._login_cancel
                     self._spawn(lambda: self._login(cancel, new_account))
-                elif action == "auth.select":
+                elif action in ("auth.select", "auth.remove"):
                     account_id = request.get("account_id")
                     if not isinstance(account_id, str) or not account_id or len(account_id) > 128:
                         self._emit("error", message="Selecciona una cuenta registrada")
                         return
                     self.account_pending = True
                     self._emit("auth.refresh.started")
-                    self._spawn(lambda: self._select_account(account_id))
+                    self._spawn(lambda: (self._remove_account if action == "auth.remove"
+                                         else self._select_account)(account_id))
                 else:
                     self.account_pending = True
                     self._emit("auth.refresh.started")

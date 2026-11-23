@@ -26,8 +26,9 @@ FloatingWindow {
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
     property var projectToDelete: ({})
+    property var accountToRemove: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
-                                           || accountPanel.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
+                                           || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || shellSettings.visible
                                            || commandHelp.visible
                                            || projectDialog.visible || deleteProjectDialog.visible
@@ -88,6 +89,14 @@ FloatingWindow {
         if (!bridge.canBrowseHistory) return;
         chatToDelete = ({ chat_id: chatId, title: title });
         deleteDialog.open();
+    }
+
+    function requestRemoveAccount() {
+        if (!accountControlsEnabled || bridge.activeAccountIndex < 0
+            || bridge.activeAccountIndex >= bridge.registeredAccounts.count) return;
+        const item = bridge.registeredAccounts.get(bridge.activeAccountIndex);
+        accountToRemove = ({ accountId: item.accountId, displayName: item.displayName });
+        removeAccountDialog.open();
     }
 
     Timer {
@@ -543,13 +552,23 @@ FloatingWindow {
                     onClicked: window.bridge.logout()
                 }
             }
-            ActionButton {
-                objectName: "chatAddAccount"
+            RowLayout {
                 Layout.fillWidth: true
                 visible: window.bridge.registeredAccounts.count > 0
-                text: "Usar otra cuenta"
-                enabled: window.accountControlsEnabled
-                onClicked: window.bridge.login(true)
+                ActionButton {
+                    objectName: "chatAddAccount"
+                    Layout.fillWidth: true
+                    text: "Usar otra cuenta"
+                    enabled: window.accountControlsEnabled
+                    onClicked: window.bridge.login(true)
+                }
+                ActionButton {
+                    objectName: "chatRemoveAccount"
+                    text: "Quitar"
+                    visible: window.bridge.activeAccountIndex >= 0
+                    enabled: window.accountControlsEnabled
+                    onClicked: window.requestRemoveAccount()
+                }
             }
             ActionButton {
                 objectName: "chatUsageButton"
@@ -577,6 +596,57 @@ FloatingWindow {
             }
             Text { text: "Agent Shell · v" + (window.bridge.appVersion || "…"); color: "#aaaaaa"; font.pixelSize: 10 }
         }
+    }
+
+    GlassDialog {
+        id: removeAccountDialog
+        objectName: "chatRemoveAccountDialog"
+        title: "Quitar cuenta"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, window.width - 40)
+        contentItem: ColumnLayout {
+            spacing: 12
+            Text {
+                Layout.fillWidth: true
+                text: window.accountToRemove.displayName || "Cuenta"
+                textFormat: Text.PlainText
+                color: "#f5f5f5"
+                font.pixelSize: 15
+                font.bold: true
+                wrapMode: Text.WrapAnywhere
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Se eliminará este registro de Agent Shell y se cerrará su sesión local. Tus conversaciones y proyectos se conservan."
+                color: "#bbbbbb"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: null
+            ActionButton {
+                text: "Cancelar"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ActionButton {
+                objectName: "chatConfirmRemoveAccount"
+                text: "Quitar"
+                enabled: window.accountControlsEnabled
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                contentItem: Text {
+                    text: parent.text
+                    color: parent.enabled ? "#ffffff" : "#777777"
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+        }
+        onAccepted: window.bridge.removeAccount(window.accountToRemove.accountId)
     }
 
     GlassDialog {

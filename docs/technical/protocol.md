@@ -45,6 +45,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `history.list` | Ninguno | Consultar conversaciones recientes del área o proyecto seleccionado |
 | `auth.login` | `new_account` booleano opcional, por defecto `false` | Reautorizar la cuenta seleccionada o registrar otra |
 | `auth.select` | `account_id` del registro guardado | Activar otra cuenta y actualizar modelos |
+| `auth.remove` | `account_id` del registro guardado | Revocar si tiene sesión y eliminar el registro local de Agent Shell |
 | `auth.cancel` | Ninguno | Cancelar el intento OAuth |
 | `auth.refresh` | Ninguno | Leer sesión y actualizar catálogo |
 | `auth.logout` | Ninguno | Revocar y cerrar la sesión local |

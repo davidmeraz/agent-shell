@@ -219,6 +219,30 @@ class ChatGPTSession:
     def _account_id(profile: dict) -> str:
         return hashlib.sha256(profile["client_id"].encode()).hexdigest()
 
+    @staticmethod
+    def _next_label(profiles: list[dict]) -> str:
+        used = {item.get("label") for item in profiles}
+        index = 1
+        while f"Cuenta {index}" in used:
+            index += 1
+        return f"Cuenta {index}"
+
+    def _revoke(self, profile: dict) -> bool:
+        if not profile.get("refresh_token"):
+            return True
+        try:
+            discovery = self.http.json("GET", ISSUER + "/.well-known/openid-configuration")
+            endpoint = discovery.get("revocation_endpoint", "")
+            if urlsplit(endpoint).scheme != "https" or urlsplit(endpoint).hostname != "auth.openai.com":
+                raise ServiceError("Dirección de revocación incompatible")
+            self.http.json("POST", endpoint, urlencode({
+                "token": profile["refresh_token"], "token_type_hint": "refresh_token",
+                "client_id": profile["client_id"],
+            }).encode(), {"Content-Type": "application/x-www-form-urlencoded"})
+            return True
+        except ServiceError:
+            return False
+
     def select_account(self, account_id: str) -> None:
         with self.store.locked():
             record = self.store.load()
@@ -234,6 +258,42 @@ class ChatGPTSession:
                 record["saved_connections"].append(current)
             record["connection"] = selected
             self.store.save(record)
+
+    def remove_account(self, account_id: str) -> bool:
+        """Elimina un registro guardado y revoca sus tokens si existían; conserva host_id."""
+        with self.store.locked():
+            record = self.store.load()
+            current = record.get("connection")
+            saved = list(record.get("saved_connections", []))
+            if current and self._account_id(current) == account_id:
+                target = current
+                remaining = saved
+                is_active = True
+            else:
+                target = next((item for item in saved if self._account_id(item) == account_id), None)
+                if target is None:
+                    raise ServiceError("La cuenta seleccionada no está registrada")
+                remaining = [item for item in saved if item is not target]
+                is_active = False
+            confirmed = self._revoke(target)
+            if is_active:
+                if remaining:
+                    # Promueve una cuenta con sesión activa si existe; si no, la más reciente.
+                    next_active = next(
+                        (item for item in reversed(remaining)
+                         if (item.get("access_token") or item.get("refresh_token"))
+                         and PLAN_SCOPE in item.get("scopes", [])),
+                        remaining[-1],
+                    )
+                    record["connection"] = next_active
+                    record["saved_connections"] = [item for item in remaining if item is not next_active]
+                else:
+                    record["connection"] = None
+                    record["saved_connections"] = []
+            else:
+                record["saved_connections"] = remaining
+            self.store.save(record)
+            return confirmed
 
     def begin_login(self, cancel: threading.Event, new_account: bool = False) -> LoginAttempt:
         with self.store.locked():
@@ -320,7 +380,7 @@ class ChatGPTSession:
             if attempt.profile and (not current or current["client_id"] != attempt.profile["client_id"]):
                 raise ServiceError("La cuenta activa cambió durante el inicio de sesión. Vuelve a intentarlo.")
             profile["label"] = (previous.get("label", "Cuenta 1") if previous else
-                                "Cuenta " + str(len(profiles) + 1))
+                                self._next_label(profiles))
             record["saved_connections"] = [item for item in saved if item["client_id"] != client_id]
             if current and current["client_id"] != client_id:
                 record["saved_connections"].append(current)
@@ -370,19 +430,7 @@ class ChatGPTSession:
         with self.store.locked():
             record = self.store.load()
             profile = record.get("connection") or {}
-            confirmed = True
-            if profile.get("refresh_token"):
-                try:
-                    discovery = self.http.json("GET", ISSUER + "/.well-known/openid-configuration")
-                    endpoint = discovery.get("revocation_endpoint", "")
-                    if urlsplit(endpoint).scheme != "https" or urlsplit(endpoint).hostname != "auth.openai.com":
-                        raise ServiceError("Dirección de revocación incompatible")
-                    self.http.json("POST", endpoint, urlencode({
-                        "token": profile["refresh_token"], "token_type_hint": "refresh_token",
-                        "client_id": profile["client_id"],
-                    }).encode(), {"Content-Type": "application/x-www-form-urlencoded"})
-                except ServiceError:
-                    confirmed = False
+            confirmed = self._revoke(profile)
             for key in ("access_token", "refresh_token", "id_token"):
                 profile.pop(key, None)
             if profile:

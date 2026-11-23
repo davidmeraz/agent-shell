@@ -256,6 +256,13 @@ QtObject {
         sendCommand({ type: "auth.select", account_id: accountId });
     }
 
+    function removeAccount(accountId) {
+        if (!ready || busy || loginBusy || accountBusy || projectRunPreparing || !accountId) return;
+        accountBusy = true;
+        status = "Quitando cuenta…";
+        sendCommand({ type: "auth.remove", account_id: accountId });
+    }
+
     function cancelLogin() { sendCommand({ type: "auth.cancel" }); }
     function refreshAccount() {
         if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
