@@ -104,6 +104,36 @@ class FileToolsAndAnsiTests(unittest.TestCase):
         compact = compact_result({"status": "error", "exit_code": 1, "output": noisy})
         self.assertEqual(compact["output"], "PASS ERROR\n")
 
+    def test_progress_bars_repeated_lines_long_lines_and_middle_diagnostics_rescue(self):
+        # 1. Barras de progreso con \r y líneas repetidas
+        progress = "Descargando 10%\rDescargando 55%\rDescargando 100%\n"
+        repeated = "WARNING: reintentando conexión con backend local\n" * 20
+        giant_line = "const bundle = {" + ",".join(f'"k{i}":{i}' for i in range(300)) + "};\n"
+        compact = compact_result({"status": "completed", "exit_code": 0,
+                                  "output": progress + repeated + giant_line})
+        self.assertIn("Descargando 100%", compact["output"])
+        self.assertNotIn("Descargando 10%", compact["output"])
+        self.assertIn("[… línea repetida 19 veces …]", compact["output"])
+        self.assertIn("chars en la misma línea", compact["output"])
+        self.assertTrue(compact["truncated"])
+
+        # 2. Rescate de diagnósticos en el centro omitido de un log largo
+        head_block = "".join(f"test_case_{i:03d} ... ok\n" for i in range(120))
+        middle_err = (
+            "FAIL: test_critical_payment (tests.test_pay.PayTests)\n"
+            "Traceback (most recent call last):\n"
+            "  File \"pay.py\", line 88, in charge\n"
+            "AssertionError: expected 200 got 500\n"
+        )
+        tail_block = "".join(f"test_tail_{i:03d} ... ok\n" for i in range(120)) + "FAILED (failures=1)\n"
+        full_log = head_block + middle_err + tail_block
+        rescued = compact_result({"status": "error", "exit_code": 1, "output": full_log}, limit=2000)
+        self.assertLessEqual(len(rescued["output"]), 2000)
+        self.assertIn("diagnósticos en parte omitida", rescued["output"])
+        self.assertIn("FAIL: test_critical_payment", rescued["output"])
+        self.assertIn("AssertionError: expected 200 got 500", rescued["output"])
+        self.assertIn("rescataron diagnósticos", rescued["output_note"])
+
 
 class ParallelToolBatchIntegrationTests(unittest.TestCase):
     def test_harness_executes_parallel_read_batch_and_apply_patch_in_one_turn(self):

@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.23.0] — 2026-11-22
+
+Esta versión refuerza la protección de salidas de herramientas con fusibles en vivo contra inundaciones y volcados binarios, limpieza de barras de progreso, deduplicación de líneas repetidas y rescate inteligente de diagnósticos en el centro omitido.
+
+- Fusibles en vivo en `ShellExecutor` (`backend/harness/tools/shell.py`): detiene de inmediato procesos desbocados que superan `MAX_STREAM_BYTES` (`2 MiB`) o producen volcados binarios con bytes NUL (`MAX_BINARY_NULS = 64`), sin esperar al timeout completo de la orden.
+- Limpieza semántica en `compact_result` (`backend/harness/tools/output.py`): colapsa barras de progreso con `\r` (`collapse_carriage_returns`), deduplica bloques de líneas repetidas consecutivas (`collapse_repeated_lines`) y recorta líneas individuales gigantes como JS/JSON minificado (`clip_long_lines`).
+- Rescate de diagnósticos en la parte omitida (`extract_middle_diagnostics` y cosecha en streaming de `BoundedOutput`): cuando una salida grande se trunca, extrae bloques con `Traceback`, `FAIL:`, `ERROR:`, `*Error:` o `AssertionError` del centro descartado y los incluye dentro del presupuesto de caracteres del modelo.
+- Verificación con 295 pruebas Python aprobadas (`test_shell.py` y `test_patch_and_files.py`).
+
 ## [0.22.0] — 2026-11-22
 
 Esta versión añade el espacio `App` (Gema UI Kit) junto a `Chat` y `Work`, permitiendo crear, probar e iniciar aplicaciones de escritorio nativas con diseño Dark Glassmorphism para Quickshell y motores Python o Rust.

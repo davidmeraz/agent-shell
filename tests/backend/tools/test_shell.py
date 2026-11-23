@@ -186,6 +186,27 @@ class ExecutorTests(unittest.TestCase):
             self.execute("sleep 30")
         spawn.assert_not_called()
 
+    def test_live_flood_and_binary_nul_circuit_breakers_stop_runaway_process_early(self):
+        # 1. Un bucle infinito de impresión se corta al superar max_stream_bytes sin esperar al timeout.
+        self.executor.timeout = 10
+        self.executor.max_stream_bytes = 32 * 1024
+        t0 = time.monotonic()
+        flood = self.execute("yes 'inundacion_infinita_1234567890'")
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 3.0)
+        self.assertEqual(flood["status"], "error")
+        self.assertTrue(flood["truncated"])
+        self.assertTrue(flood.get("flood_stopped"))
+        self.assertIn("inundación de salida", flood["output"])
+
+        # 2. Volcado binario con bytes NUL se detiene de inmediato.
+        self.executor.max_stream_bytes = 2 * 1024 * 1024
+        binary = self.execute(shlex.quote(sys.executable) + " -c 'import os; os.write(1, b\"\\x00\" * 128)'")
+        self.assertEqual(binary["status"], "error")
+        self.assertTrue(binary["truncated"])
+        self.assertTrue(binary.get("flood_stopped"))
+        self.assertIn("salida binaria", binary["output"])
+
 
 class AgentShellTests(unittest.TestCase):
     def setUp(self):

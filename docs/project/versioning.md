@@ -5,7 +5,13 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.22.0` añade el espacio `App` (Gema UI Kit) junto a `Chat` y `Work`
+La versión `0.23.0` añade protección inteligente de salidas en `shell.py` y
+`output.py`: fusibles en vivo contra inundación de salida (`2 MiB`) y volcados
+binarios (`NUL`), colapsado de barras de progreso (`\r`) y líneas repetidas,
+recorte de líneas individuales gigantes y rescate de diagnósticos (`Traceback`,
+`FAIL:`, `ERROR:`) en el centro omitido. Conserva NDJSON v2 y el esquema lógico 1;
+incrementa MENOR por las nuevas protecciones de ejecución y contexto.
+La versión anterior `0.22.0` añade el espacio `App` (Gema UI Kit) junto a `Chat` y `Work`
 para crear, probar (`app.test`) e iniciar aplicaciones nativas con diseño Dark
 Glassmorphism en Quickshell y motores Python o Rust (`backend/harness/work/gema_kit.py`).
 Conserva NDJSON v2 y el esquema lógico 1; incrementa MENOR por el nuevo espacio y
