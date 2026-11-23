@@ -33,6 +33,7 @@ GlassPanel {
         if (lower.startsWith("claude")) return "Claude";
         if (lower.startsWith("gpt-oss")) return "Antigravity";
         if (!lower && bridge.provider === "agy") return "Antigravity";
+        if (!lower && bridge.provider === "claude") return "Claude";
         return "ChatGPT";
     }
 
@@ -119,7 +120,9 @@ GlassPanel {
                 ? (pane.bridge.activeArea === "app"
                    ? "Construye con vidrio mate transparente (Quickshell + " + (pane.bridge.projectEngine === "rust" ? "Rust" : "Python") + "). Usa 'Probar' e 'Iniciar' arriba."
                    : pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
-                : "Conecta tu cuenta de ChatGPT" + (pane.bridge.agyAvailable ? " o usa Antigravity (Gemini / Claude)" : "") + " para comenzar."
+                : pane.bridge.provider === "claude"
+                  ? "Inicia sesión en Claude Code con tu plan Pro o Max para comenzar."
+                  : "Conecta tu cuenta de ChatGPT" + (pane.bridge.agyAvailable ? " o usa Antigravity (Gemini)" : "") + " para comenzar."
             color: GemaTheme.mutedColor
             font.pixelSize: 13
             style: Text.Raised
@@ -230,17 +233,33 @@ GlassPanel {
             visible: !pane.bridge.engineReady
             spacing: 10
             ActionButton {
+                visible: pane.bridge.provider !== "claude"
                 text: "Continuar con ChatGPT"
                 accent: true
-                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
                 onClicked: pane.loginRequested()
             }
             ActionButton {
                 objectName: "chatHeroUseAgy"
-                visible: pane.bridge.agyAvailable
-                text: "✦ Usar Antigravity (agy)"
-                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                visible: pane.bridge.provider !== "claude" && pane.bridge.agyAvailable
+                text: "✦ Usar Gemini (agy)"
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
                 onClicked: pane.bridge.selectProvider("agy")
+            }
+            ActionButton {
+                objectName: "chatHeroLoginClaude"
+                visible: pane.bridge.provider === "claude" && pane.bridge.claudeAvailable
+                text: pane.bridge.claudeLoginBusy ? "Iniciando sesión…" : "◆ Conectar Claude"
+                accent: true
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                onClicked: pane.bridge.loginClaude()
+            }
+            ActionButton {
+                objectName: "chatHeroRefreshClaude"
+                visible: pane.bridge.provider === "claude" && pane.bridge.claudeAvailable
+                text: "Comprobar sesión"
+                enabled: pane.bridge.ready && !pane.bridge.loginBusy && !pane.bridge.claudeLoginBusy && !pane.bridge.accountBusy && !pane.bridge.providerBusy
+                onClicked: pane.bridge.refreshClaudeAuth()
             }
         }
     }

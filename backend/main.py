@@ -63,12 +63,13 @@ def main() -> None:
     from harness.account.auth import ChatGPTSession
     from harness.chat.agy import AgyClient
     from harness.chat.chatgpt import ChatGPTClient
+    from harness.chat.claude import ClaudeClient
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     session = ChatGPTSession(paths.session_root)
     HarnessServer(
         paths.history_root, sys.stdout, session, ChatGPTClient(session), args.model,
         args.workspace, limits=limits, config_root=paths.config_root,
-        agy_client=AgyClient(),
+        agy_client=AgyClient(), claude_client=ClaudeClient(),
     ).serve(sys.stdin)
 
 

@@ -1,4 +1,4 @@
-"""Preferencia local de motor de IA (ChatGPT o Antigravity CLI) con guardado atómico."""
+"""Preferencia local de motor de IA (ChatGPT, Antigravity CLI o Claude Code CLI)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,20 @@ import os
 import tempfile
 from pathlib import Path
 
-VALID_PROVIDERS = ("chatgpt", "agy")
+VALID_PROVIDERS = ("chatgpt", "agy", "claude")
 
 
 def normalize_provider(raw) -> str:
     if not isinstance(raw, str) or raw not in VALID_PROVIDERS:
-        raise ValueError("Motor de IA no soportado. Elige 'chatgpt' o 'agy'.")
+        raise ValueError("Motor de IA no soportado. Elige 'chatgpt', 'agy' o 'claude'.")
     return raw
+
+
+def _clean_field(raw, max_len: int = 128) -> str:
+    if not isinstance(raw, str) or "\0" in raw:
+        return ""
+    value = raw.strip()
+    return value[:max_len] if len(value) > max_len else value
 
 
 class ProviderStore:
@@ -24,7 +31,7 @@ class ProviderStore:
         self.path = self.root / "provider.json"
 
     def load(self) -> dict[str, str]:
-        default = {"provider": "chatgpt", "agy_model": ""}
+        default = {"provider": "chatgpt", "agy_model": "", "claude_model": "", "claude_effort": ""}
         try:
             if self.path.is_symlink() or not self.path.is_file():
                 return default
@@ -32,18 +39,23 @@ class ProviderStore:
             if not isinstance(raw, dict):
                 return default
             provider = normalize_provider(raw.get("provider", "chatgpt"))
-            agy_model = raw.get("agy_model", "")
-            if not isinstance(agy_model, str) or len(agy_model) > 128 or "\0" in agy_model:
-                agy_model = ""
-            return {"provider": provider, "agy_model": agy_model.strip()}
+            return {
+                "provider": provider,
+                "agy_model": _clean_field(raw.get("agy_model", "")),
+                "claude_model": _clean_field(raw.get("claude_model", "")),
+                "claude_effort": _clean_field(raw.get("claude_effort", ""), 32),
+            }
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return default
 
-    def save(self, provider: str, agy_model: str = "") -> dict[str, str]:
+    def save(
+        self,
+        provider: str,
+        agy_model: str = "",
+        claude_model: str = "",
+        claude_effort: str = "",
+    ) -> dict[str, str]:
         normalized = normalize_provider(provider)
-        clean_model = agy_model.strip() if isinstance(agy_model, str) and "\0" not in agy_model else ""
-        if len(clean_model) > 128:
-            clean_model = clean_model[:128]
         if self.root.is_symlink():
             raise OSError("El directorio de configuración no puede ser un enlace simbólico.")
         self.root.mkdir(parents=True, exist_ok=True)
@@ -53,7 +65,12 @@ class ProviderStore:
             pass
         if self.path.is_symlink():
             raise OSError("El archivo de motor no puede ser un enlace simbólico.")
-        payload = {"provider": normalized, "agy_model": clean_model}
+        payload = {
+            "provider": normalized,
+            "agy_model": _clean_field(agy_model),
+            "claude_model": _clean_field(claude_model),
+            "claude_effort": _clean_field(claude_effort, 32),
+        }
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(

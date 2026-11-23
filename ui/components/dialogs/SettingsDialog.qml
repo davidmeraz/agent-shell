@@ -147,8 +147,12 @@ GlassDialog {
                     }
                     Text {
                         text: dialog.bridge.provider === "agy"
-                            ? "Gemini · Claude (agy)"
-                            : (dialog.bridge.authenticated ? "Plan ChatGPT" : "Sin sesión")
+                            ? "Gemini · Antigravity (agy)"
+                            : dialog.bridge.provider === "claude"
+                              ? (dialog.bridge.claudeAuthenticated
+                                 ? "Claude Code" + (dialog.bridge.claudePlan ? " · " + dialog.bridge.claudePlan : "")
+                                 : "Claude · Sin sesión")
+                              : (dialog.bridge.authenticated ? "Plan ChatGPT" : "Sin sesión")
                         textFormat: Text.PlainText
                         color: GemaTheme.subtleColor
                         font.pixelSize: 10
@@ -156,9 +160,9 @@ GlassDialog {
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: 6
                     readonly property bool canSwitch: dialog.bridge.ready && !dialog.bridge.busy
-                        && !dialog.bridge.loginBusy && !dialog.bridge.accountBusy
+                        && !dialog.bridge.loginBusy && !dialog.bridge.claudeLoginBusy && !dialog.bridge.accountBusy
                         && !dialog.bridge.providerBusy && !dialog.bridge.projectRunPreparing
                     Button {
                         id: chatgptProviderBtn
@@ -170,12 +174,12 @@ GlassDialog {
                         readonly property bool active: dialog.bridge.provider === "chatgpt"
                         onClicked: dialog.bridge.selectProvider("chatgpt")
                         contentItem: Text {
-                            text: (chatgptProviderBtn.active ? "● " : "") + "ChatGPT"
+                            text: (chatgptProviderBtn.active ? "◎ " : "") + "ChatGPT"
                             textFormat: Text.PlainText
                             color: chatgptProviderBtn.active
                                 ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
                                 : GemaTheme.mutedColor
-                            font.pixelSize: 12
+                            font.pixelSize: 11
                             font.weight: chatgptProviderBtn.active ? Font.DemiBold : Font.Normal
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -203,16 +207,16 @@ GlassDialog {
                         readonly property bool active: dialog.bridge.provider === "agy"
                         onClicked: dialog.bridge.selectProvider("agy")
                         ToolTip.visible: hovered && !dialog.bridge.agyAvailable
-                        ToolTip.text: "Instala e inicia sesión en Antigravity CLI (`agy`) para habilitar este motor."
+                        ToolTip.text: "Instala e inicia sesión en Antigravity CLI (`agy`) para habilitar Gemini."
                         contentItem: Text {
                             text: (agyProviderBtn.active ? "✦ " : "")
-                                + (dialog.bridge.agyAvailable ? "Antigravity (agy)" : "agy (no disponible)")
+                                + (dialog.bridge.agyAvailable ? "Gemini" : "Gemini (n/d)")
                             textFormat: Text.PlainText
                             color: !dialog.bridge.agyAvailable ? "#777777"
                                 : agyProviderBtn.active
                                   ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
                                   : GemaTheme.mutedColor
-                            font.pixelSize: 12
+                            font.pixelSize: 11
                             font.weight: agyProviderBtn.active ? Font.DemiBold : Font.Normal
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -227,6 +231,44 @@ GlassDialog {
                                 : (agyProviderBtn.hovered ? "#1effffff" : "#10ffffff")
                             bottomColor: "#08ffffff"
                             edgeColor: agyProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#58ffffff")
+                                : "#24ffffff"
+                        }
+                    }
+                    Button {
+                        id: claudeProviderBtn
+                        objectName: "settingsProviderClaude"
+                        Layout.fillWidth: true
+                        implicitHeight: 34
+                        hoverEnabled: true
+                        enabled: parent.canSwitch && dialog.bridge.claudeAvailable
+                        readonly property bool active: dialog.bridge.provider === "claude"
+                        onClicked: dialog.bridge.selectProvider("claude")
+                        ToolTip.visible: hovered && !dialog.bridge.claudeAvailable
+                        ToolTip.text: "Instala Claude Code CLI (`claude`) para habilitar este motor."
+                        contentItem: Text {
+                            text: (claudeProviderBtn.active ? "◆ " : "")
+                                + (dialog.bridge.claudeAvailable ? "Claude" : "Claude (n/d)")
+                            textFormat: Text.PlainText
+                            color: !dialog.bridge.claudeAvailable ? "#777777"
+                                : claudeProviderBtn.active
+                                  ? (GemaTheme.synced ? GemaTheme.accentInk : "#ffffff")
+                                  : GemaTheme.mutedColor
+                            font.pixelSize: 11
+                            font.weight: claudeProviderBtn.active ? Font.DemiBold : Font.Normal
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        background: GlassPanel {
+                            radius: 9
+                            reflective: false
+                            highlighted: claudeProviderBtn.active || claudeProviderBtn.hovered
+                            topColor: claudeProviderBtn.active
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                                : (claudeProviderBtn.hovered ? "#1effffff" : "#10ffffff")
+                            bottomColor: "#08ffffff"
+                            edgeColor: claudeProviderBtn.active
                                 ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#58ffffff")
                                 : "#24ffffff"
                         }
@@ -276,8 +318,10 @@ GlassDialog {
             iconText: "◔"
             titleText: "Uso del plan"
             subtitleText: dialog.bridge.provider === "agy"
-                ? "Cuotas por grupo de modelos en Antigravity (Gemini, Claude y GPT)"
-                : "Ventana de cuotas 5 h y límite semanal"
+                ? "Cuotas por grupo de modelos en Antigravity (Gemini y Claude)"
+                : dialog.bridge.provider === "claude"
+                  ? "Sesión actual (5 h) y cuota semanal de Claude"
+                  : "Ventana de cuotas 5 h y límite semanal"
             onClicked: { dialog.close(); dialog.usageRequested(); }
         }
 

@@ -278,6 +278,13 @@ FloatingWindow {
                 }
             }
 
+            ProviderSwitcher {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: -6
+                visible: window.bridge.agyAvailable || window.bridge.claudeAvailable
+                bridge: window.bridge
+            }
+
             GlassPanel {
                 Layout.fillWidth: true
                 implicitHeight: loginRow.implicitHeight + 20
@@ -908,7 +915,9 @@ FloatingWindow {
                 objectName: "chatUsageButton"
                 Layout.fillWidth: true
                 visible: window.bridge.engineReady
-                text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)" : "Ver uso del plan"
+                text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)"
+                    : window.bridge.provider === "claude" ? "Ver uso de Claude"
+                    : "Ver uso del plan"
                 onClicked: { accountPanel.close(); window.usageWindow.open(); }
             }
             Text {

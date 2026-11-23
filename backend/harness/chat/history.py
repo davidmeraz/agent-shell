@@ -42,10 +42,12 @@ def _validate_record(chat_id: str, record: dict) -> dict:
             raise ValueError("Chat origen del historial inválido")
     if record.get("thread_id") is not None and not isinstance(record["thread_id"], str):
         raise ValueError("Thread del historial inválido")
-    if "provider" in record and record["provider"] not in ("chatgpt", "agy"):
+    if "provider" in record and record["provider"] not in ("chatgpt", "agy", "claude"):
         raise ValueError("Motor del historial inválido")
     if record.get("agy_conversation_id") is not None and not isinstance(record["agy_conversation_id"], str):
         raise ValueError("Conversación de Antigravity inválida")
+    if record.get("claude_session_id") is not None and not isinstance(record["claude_session_id"], str):
+        raise ValueError("Sesión de Claude inválida")
     area, project_id = record.get("area", "chat"), record.get("project_id", "")
     if (area not in ("chat", "work", "app") or not isinstance(project_id, str)
             or (area == "chat" and project_id != "")

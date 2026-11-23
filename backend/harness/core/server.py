@@ -33,6 +33,7 @@ from ..chat.history import HistoryStore
 from ..work.projects import ProjectStore
 from ..work.project_runner import ProjectRunner
 from ..chat.agy import summarize_agy_tool
+from ..chat.claude import summarize_claude_tool
 from ..chat.models import validate_effort
 from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
@@ -86,7 +87,7 @@ class HarnessServer:
     def __init__(self, history_root: Path, output: TextIO, session, client,
                  model: str = "", workspace: Path | None = None, usage_reader=None,
                  limits: AgentLimits | None = None, config_root: Path | None = None,
-                 agy_client=None) -> None:
+                 agy_client=None, claude_client=None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
         config_dir = config_root if config_root is not None else self.history.root / "config"
@@ -98,13 +99,27 @@ class HarnessServer:
         saved_provider = self.provider_store.load()
         self.agy_client = agy_client
         self.agy_available = bool(self.agy_client is not None and self.agy_client.is_available())
-        self.provider = "agy" if saved_provider["provider"] == "agy" and self.agy_available else "chatgpt"
+        self.claude_client = claude_client
+        self.claude_available = bool(self.claude_client is not None and self.claude_client.is_available())
+        self.claude_authenticated = False
+        self.claude_email = ""
+        self.claude_plan = ""
+        self.claude_login_pending = False
+        if saved_provider["provider"] == "agy" and self.agy_available:
+            self.provider = "agy"
+        elif saved_provider["provider"] == "claude" and self.claude_available:
+            self.provider = "claude"
+        else:
+            self.provider = "chatgpt"
         self.provider_pending = False
         self._chatgpt_models: list[dict] = []
         self._chatgpt_model = model
         self._chatgpt_effort = ""
         self._agy_models: list[dict] = []
         self._agy_model = saved_provider.get("agy_model", "")
+        self._claude_models: list[dict] = []
+        self._claude_model = saved_provider.get("claude_model", "")
+        self._claude_effort = saved_provider.get("claude_effort", "")
         self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
         self.active_area = "chat"
         self.project: dict | None = None
@@ -114,8 +129,15 @@ class HarnessServer:
         self.session = session
         self.client = client
         self.conversation: dict | None = None
-        self.model = self._agy_model if self.provider == "agy" else model
-        self.reasoning_effort = ""
+        if self.provider == "agy":
+            self.model = self._agy_model
+            self.reasoning_effort = ""
+        elif self.provider == "claude":
+            self.model = self._claude_model
+            self.reasoning_effort = self._claude_effort
+        else:
+            self.model = model
+            self.reasoning_effort = ""
         self.models: list[dict] = []
         self.authenticated = False
         self.busy = False
@@ -183,11 +205,26 @@ class HarnessServer:
     def _publish_profile(self) -> None:
         self._emit("profile.state", display_name=self.profile.get("display_name", ""))
 
+    def _save_provider_prefs(self) -> None:
+        try:
+            self.provider_store.save(
+                self.provider,
+                self._agy_model,
+                self._claude_model,
+                self._claude_effort,
+            )
+        except OSError:
+            pass
+
     def _publish_provider(self) -> None:
         self._emit(
             "provider.state",
             provider=self.provider,
             agy_available=self.agy_available,
+            claude_available=self.claude_available,
+            claude_authenticated=self.claude_authenticated,
+            claude_email=self.claude_email,
+            claude_plan=self.claude_plan,
             chatgpt_authenticated=self.authenticated,
         )
 
@@ -224,8 +261,80 @@ class HarnessServer:
                 self.provider_pending = False
                 self._emit("provider.refresh.finished")
 
+    def _probe_claude_status_silent(self) -> None:
+        if self.claude_client is None or not self.claude_available:
+            return
+        status = self.claude_client.auth_status()
+        with self._lock:
+            if self._closing.is_set():
+                return
+            self.claude_authenticated = bool(status.get("authenticated"))
+            self.claude_email = status.get("email", "")
+            self.claude_plan = status.get("plan", "")
+            self._publish_provider()
+
+    def _load_claude_status(self) -> None:
+        try:
+            status = self.claude_client.auth_status() if self.claude_client is not None else {}
+            models = self.claude_client.models() if self.claude_client is not None else []
+            with self._lock:
+                if self._closing.is_set():
+                    return
+                self.claude_authenticated = bool(status.get("authenticated"))
+                self.claude_email = status.get("email", "")
+                self.claude_plan = status.get("plan", "")
+                self._claude_models = models
+                if self.provider == "claude":
+                    if self.claude_authenticated:
+                        preferred = self._claude_model or self.model
+                        self._apply_catalog(models, preferred, self._claude_effort)
+                        self._claude_model = self.model
+                        self._claude_effort = self.reasoning_effort
+                    else:
+                        self._apply_catalog([], "", "")
+                self._publish_provider()
+        except (ServiceError, OSError) as error:
+            with self._lock:
+                self.claude_authenticated = False
+                if self.provider == "claude":
+                    self._apply_catalog([], "", "")
+                self._publish_provider()
+                self._emit("error", message=str(error) if isinstance(error, ServiceError) else
+                           "No se pudo comprobar la sesión de Claude Code.")
+        finally:
+            with self._lock:
+                self.provider_pending = False
+                self._emit("provider.refresh.finished")
+
+    def _login_claude(self, cancel: threading.Event) -> None:
+        success, message = False, "Inicio de sesión en Claude cancelado."
+        try:
+            if self.claude_client is None:
+                raise ServiceError("Claude Code CLI (`claude`) no está disponible en este equipo.")
+            status = self.claude_client.login(cancel=cancel)
+            with self._lock:
+                self.claude_authenticated = bool(status.get("authenticated"))
+                self.claude_email = status.get("email", "")
+                self.claude_plan = status.get("plan", "")
+            success, message = True, "Sesión de Claude Code conectada."
+        except Cancelled:
+            pass
+        except ServiceError as error:
+            message = str(error)
+        except (OSError, ValueError, KeyError, TypeError):
+            message = "No se pudo completar el inicio de sesión en Claude Code."
+        finally:
+            with self._lock:
+                self.claude_login_pending = False
+                self._emit("claude.login.finished", success=success, message=message)
+                if not self._closing.is_set():
+                    self.provider_pending = True
+                    self._emit("provider.refresh.started")
+                    self._spawn(self._load_claude_status)
+
     def _select_provider(self, request: dict) -> None:
-        if self.busy or self.login_pending or self.account_pending or self.provider_pending or self.project_runner.preparing:
+        if (self.busy or self.login_pending or self.account_pending
+                or self.provider_pending or self.claude_login_pending or self.project_runner.preparing):
             self._emit("provider.rejected", message="Espera a que termine la operación actual antes de cambiar de motor.")
             return
         try:
@@ -240,12 +349,19 @@ class HarnessServer:
         if target == "agy" and not self.agy_available:
             self._emit("provider.rejected", message="Antigravity CLI (agy) no está disponible en este equipo.")
             return
+        if target == "claude" and not self.claude_available:
+            self._emit("provider.rejected", message="Claude Code CLI (`claude`) no está disponible en este equipo.")
+            return
 
         if target == self.provider:
             if target == "agy" and not self._agy_models:
                 self.provider_pending = True
                 self._emit("provider.refresh.started")
                 self._spawn(lambda: self._load_agy_models(force=True))
+            elif target == "claude" and not self.claude_authenticated:
+                self.provider_pending = True
+                self._emit("provider.refresh.started")
+                self._spawn(self._load_claude_status)
             else:
                 self._publish_provider()
             return
@@ -253,14 +369,14 @@ class HarnessServer:
         if self.provider == "chatgpt":
             self._chatgpt_model = self.model
             self._chatgpt_effort = self.reasoning_effort
-        else:
+        elif self.provider == "agy":
             self._agy_model = self.model
+        elif self.provider == "claude":
+            self._claude_model = self.model
+            self._claude_effort = self.reasoning_effort
 
         self.provider = target
-        try:
-            self.provider_store.save(self.provider, self._agy_model)
-        except OSError:
-            pass
+        self._save_provider_prefs()
 
         self._publish_provider()
         if target == "agy":
@@ -272,6 +388,16 @@ class HarnessServer:
                 self.provider_pending = True
                 self._emit("provider.refresh.started")
                 self._spawn(self._load_agy_models)
+        elif target == "claude":
+            if self.claude_authenticated and self._claude_models:
+                self._apply_catalog(self._claude_models, self._claude_model, self._claude_effort)
+                self._claude_model = self.model
+                self._claude_effort = self.reasoning_effort
+                self._emit("provider.refresh.finished")
+            else:
+                self.provider_pending = True
+                self._emit("provider.refresh.started")
+                self._spawn(self._load_claude_status)
         else:
             if self.authenticated:
                 if self._chatgpt_models:
@@ -354,10 +480,11 @@ class HarnessServer:
         self.model, self.reasoning_effort = model["slug"], effort
         if self.provider == "agy":
             self._agy_model = self.model
-            try:
-                self.provider_store.save("agy", self._agy_model)
-            except OSError:
-                pass
+            self._save_provider_prefs()
+        elif self.provider == "claude":
+            self._claude_model = self.model
+            self._claude_effort = self.reasoning_effort
+            self._save_provider_prefs()
         else:
             self._chatgpt_model = self.model
             self._chatgpt_effort = self.reasoning_effort
@@ -480,6 +607,8 @@ class HarnessServer:
     def _usage_identity(self):
         if self.provider == "agy":
             return ("agy", self.agy_available, "", "")
+        if self.provider == "claude":
+            return ("claude", self.claude_available and self.claude_authenticated, self.claude_email, "")
         account = self.session.account()
         selected = next((row.get("id") for row in account.get("accounts", []) if row.get("active")), "")
         return ("chatgpt", account.get("authenticated"), account.get("email", ""), selected)
@@ -490,6 +619,10 @@ class HarnessServer:
                 if self.agy_client is None:
                     raise UsageError("agy_missing", "Antigravity CLI (agy) no está disponible en este equipo.")
                 result = self.agy_client.usage()
+            elif identity[0] == "claude":
+                if self.claude_client is None:
+                    raise UsageError("claude_missing", "Claude Code CLI (`claude`) no está disponible en este equipo.")
+                result = self.claude_client.usage()
             else:
                 result = self.usage_reader.read(expected_email=identity[2])
             with self._lock:
@@ -498,7 +631,10 @@ class HarnessServer:
                 self._emit("usage.state", request_id=request_id, **result)
         except (UsageError, ServiceError, OSError, ValueError, TypeError) as error:
             default_msg = ("No se pudo consultar el uso de Antigravity (agy)."
-                           if identity[0] == "agy" else "No se pudo consultar el uso de Codex.")
+                           if identity[0] == "agy"
+                           else "No se pudo consultar el uso de Claude Code."
+                           if identity[0] == "claude"
+                           else "No se pudo consultar el uso de Codex.")
             self._emit("usage.error", request_id=request_id,
                        code=error.code if isinstance(error, UsageError) else "unavailable",
                        message=str(error) if isinstance(error, UsageError) else default_msg)
@@ -1529,6 +1665,181 @@ class HarnessServer:
                     self._finish("failed", str(error) if isinstance(error, ServiceError) else
                                  "No se pudo completar la respuesta con Antigravity (agy).")
 
+    def _start_claude_turn(
+        self,
+        prompt: str,
+        model: str,
+        effort: str,
+        control: StreamControl,
+        generation: int,
+        workspace: Path,
+        project_id: str,
+        claude_session_id: str,
+        image: str = "",
+    ) -> None:
+        """Ejecuta un turno mediante el CLI oficial `claude -p --output-format stream-json`."""
+        claude_calls: dict[str, dict] = {}
+        tool_started_at: dict[str, float] = {}
+        streamed_by_msg: set[str] = set()
+        step_counter = 0
+        current_item_id = ""
+        step_usage_reported = False
+        streamed_text = False
+        result_seen = False
+        result_error = ""
+        final_response = ""
+        final_usage = None
+        turn_id = ""
+        with self._lock:
+            if not self._current_turn(generation) or self._performance is None:
+                return
+            turn_id = self._performance.turn_id
+            current_item_id = f"claude-{turn_id}-0"
+            self._performance.begin_model_call()
+            call_stub = {"id": turn_id, "turn_id": turn_id}
+            observe_work = bool(project_id)
+
+        try:
+            observer = ProjectActivity(
+                workspace,
+                lambda change: self._work_changed(change, project_id, call_stub, generation),
+                ignored=(self.history.root,),
+            ) if observe_work else nullcontext()
+            with observer:
+                stream = self.claude_client.stream_turn(
+                    prompt,
+                    model,
+                    workspace,
+                    control,
+                    session_id=claude_session_id,
+                    effort=effort,
+                    image=image,
+                )
+                for event in stream:
+                    control.check()
+                    with self._lock:
+                        if not self._current_turn(generation):
+                            return
+                        kind = event["type"]
+                        sess_id = event.get("session_id") or ""
+                        if sess_id and self.conversation is not None:
+                            self.conversation["claude_session_id"] = sess_id
+
+                        if kind == "init":
+                            self._save()
+                        elif kind == "message_start":
+                            step_counter += 1
+                            msg_key = event.get("message_id") or str(step_counter)
+                            current_item_id = f"claude-{turn_id}-{msg_key}"
+                            if not self._performance._call_active:
+                                self._performance.begin_model_call()
+                                self._performance.mark("request")
+                        elif kind == "text_delta":
+                            delta = event.get("text", "")
+                            msg_key = event.get("message_id") or ""
+                            item_id = f"claude-{turn_id}-{msg_key}" if msg_key else current_item_id
+                            if delta:
+                                streamed_text = True
+                                if msg_key:
+                                    streamed_by_msg.add(msg_key)
+                                self._message(item_id, delta, True)
+                        elif kind == "assistant_text":
+                            text = event.get("text", "")
+                            msg_key = event.get("message_id") or ""
+                            if text and (not msg_key or msg_key not in streamed_by_msg):
+                                streamed_text = True
+                                item_id = f"claude-{turn_id}-{msg_key}" if msg_key else current_item_id
+                                self._message(item_id, text, False)
+                        elif kind == "tool_start":
+                            tool_use_id = event.get("tool_use_id") or uuid.uuid4().hex
+                            if tool_use_id not in claude_calls:
+                                summary = summarize_claude_tool(
+                                    event.get("tool_name", "tool"),
+                                    event.get("parameters"),
+                                    workspace,
+                                )
+                                call = {
+                                    "id": uuid.uuid4().hex,
+                                    "call_id": f"claude-{tool_use_id}",
+                                    "turn_id": turn_id,
+                                    "source": "claude",
+                                    "command": summary,
+                                    "workdir": str(workspace),
+                                    "status": "running",
+                                    "output": "",
+                                    "exit_code": None,
+                                    "truncated": False,
+                                    "message_index": len(self.conversation["messages"]),
+                                }
+                                claude_calls[tool_use_id] = call
+                                tool_started_at[tool_use_id] = time.monotonic()
+                                self.conversation.setdefault("tool_calls", []).append(call)
+                                self._performance.tool_calls += 1
+                                self._emit("tool.updated", call=call)
+                                if observe_work:
+                                    self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                                               turn_id=turn_id, status="running")
+                                self._save()
+                        elif kind == "tool_done":
+                            tool_use_id = event.get("tool_use_id") or ""
+                            call = claude_calls.get(tool_use_id)
+                            if call is not None:
+                                call["status"] = "error" if event.get("is_error") else "completed"
+                                call["output"] = event.get("output", "")
+                                call["truncated"] = bool(event.get("truncated", False))
+                                started = tool_started_at.get(tool_use_id)
+                                if started is not None:
+                                    duration_ms = round(max(0.0, time.monotonic() - started) * 1000, 3)
+                                    call["duration_ms"] = duration_ms
+                                    self._performance.tool_ms += duration_ms
+                                self._emit("tool.updated", call=call)
+                                if observe_work:
+                                    self._emit("work.activity", project_id=project_id, call_id=call["id"],
+                                               turn_id=turn_id, status=call["status"])
+                                self._save()
+                        elif kind == "usage":
+                            if event.get("usage"):
+                                if not self._performance._call_active:
+                                    self._performance.begin_model_call()
+                                    self._performance.mark("request")
+                                self._performance.complete_model_call(event["usage"])
+                                step_usage_reported = True
+                                self._update_performance(force=True)
+                        elif kind == "error":
+                            raise ServiceError(event.get("message") or "Claude Code devolvió un error.")
+                        elif kind == "result":
+                            result_seen = True
+                            if event.get("is_error"):
+                                result_error = event.get("error") or "Claude Code terminó con error."
+                            final_response = event.get("result", "")
+                            final_usage = event.get("usage")
+
+            with self._lock:
+                if not self._current_turn(generation):
+                    return
+                if result_error:
+                    raise ServiceError(result_error)
+                if final_response and not streamed_text:
+                    streamed_text = True
+                    self._message(f"claude-{turn_id}-final", final_response, False)
+                if not step_usage_reported and final_usage:
+                    if not self._performance._call_active:
+                        self._performance.begin_model_call()
+                        self._performance.mark("request")
+                    self._performance.complete_model_call(final_usage)
+                if not streamed_text and not claude_calls and not result_seen:
+                    raise ServiceError("Claude Code terminó sin devolver una respuesta.")
+                self._finish("completed")
+        except Cancelled:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self._finish("interrupted")
+        except (ServiceError, OSError, ValueError, KeyError, TypeError) as error:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self._finish("failed", str(error) if isinstance(error, ServiceError) else
+                                 "No se pudo completar la respuesta con Claude Code.")
+
     def _explore(self, request: dict) -> None:
         project_id = request.get("project_id")
         request_id = request.get("request_id")
@@ -1660,7 +1971,7 @@ class HarnessServer:
                 if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
                     self._emit("usage.error", request_id="", code="invalid_request", message="Solicitud de uso inválida.")
                     return
-                if self.usage_pending or self.login_pending or self.account_pending or self.provider_pending:
+                if self.usage_pending or self.login_pending or self.account_pending or self.provider_pending or self.claude_login_pending:
                     self._emit("usage.error", request_id=request_id, code="busy", message="Espera a que termine la consulta o el cambio de motor.")
                     self._emit("usage.finished", request_id=request_id)
                     return
@@ -1669,6 +1980,12 @@ class HarnessServer:
                     if not identity[1]:
                         self._emit("usage.error", request_id=request_id, code="agy_missing",
                                    message="Instala e inicia sesión en Antigravity CLI (`agy`) para consultar tu uso.")
+                        self._emit("usage.finished", request_id=request_id)
+                        return
+                elif identity[0] == "claude":
+                    if not identity[1]:
+                        self._emit("usage.error", request_id=request_id, code="login_required",
+                                   message="Inicia sesión en Claude Code (`claude auth login`) para consultar tu uso.")
                         self._emit("usage.finished", request_id=request_id)
                         return
                 elif not identity[1] or not identity[2]:
@@ -1738,6 +2055,33 @@ class HarnessServer:
                 return
             if action == "provider.select":
                 self._select_provider(request)
+                return
+            if action == "claude.login":
+                if (self.busy or self.login_pending or self.account_pending
+                        or self.provider_pending or self.claude_login_pending or self.project_runner.preparing):
+                    self._emit("error", message="Ya hay una operación en curso")
+                    return
+                if not self.claude_available:
+                    self._emit("claude.login.finished", success=False,
+                               message="Claude Code CLI (`claude`) no está disponible en este equipo.")
+                    return
+                self.claude_login_pending = True
+                self._login_cancel = threading.Event()
+                cancel = self._login_cancel
+                self._emit("claude.login.started")
+                self._spawn(lambda: self._login_claude(cancel))
+                return
+            if action == "claude.refresh":
+                if (self.busy or self.login_pending or self.account_pending
+                        or self.provider_pending or self.claude_login_pending or self.project_runner.preparing):
+                    self._emit("error", message="Ya hay una operación en curso")
+                    return
+                if not self.claude_available:
+                    self._publish_provider()
+                    return
+                self.provider_pending = True
+                self._emit("provider.refresh.started")
+                self._spawn(self._load_claude_status)
                 return
             if action == "shell.execute":
                 self._start_local_shell(request)
@@ -1811,6 +2155,14 @@ class HarnessServer:
                                compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
                                max_compactions=self.limits.max_compactions,
                                message="Antigravity (agy) gestiona la compactación de contexto automáticamente en su sesión.")
+                    return
+                if self.provider == "claude":
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                               max_compactions=self.limits.max_compactions,
+                               message="Claude Code gestiona la compactación de contexto automáticamente en su sesión.")
                     return
                 if not self.authenticated or not self.models:
                     self._emit("chat.compacted", status="failed", handoff=False, manual=True,
@@ -1890,7 +2242,7 @@ class HarnessServer:
             if action != "chat.send":
                 self._emit("error", message="Instrucción desconocida")
                 return
-            if self.busy or self.login_pending or self.account_pending or self.provider_pending:
+            if self.busy or self.login_pending or self.account_pending or self.provider_pending or self.claude_login_pending:
                 self._emit("error", message="Espera a que termine la operación actual")
                 return
             prompt = request.get("prompt")
@@ -1907,7 +2259,9 @@ class HarnessServer:
                 self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
             elif self.provider == "agy" and (not self.agy_available or not self.models):
                 self._emit("chat.finished", status="failed", message="Antigravity (agy) no tiene modelos disponibles. Comprueba tu sesión en `agy`.")
-            elif self.provider != "agy" and (not self.authenticated or not self.models):
+            elif self.provider == "claude" and (not self.claude_available or not self.claude_authenticated or not self.models):
+                self._emit("chat.finished", status="failed", message="Inicia sesión en Claude Code (botón 'Conectar Claude' o `claude auth login`) para conversar.")
+            elif self.provider == "chatgpt" and (not self.authenticated or not self.models):
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
             elif self.active_area in ("work", "app") and self.project is None:
                 self._emit("chat.finished", status="failed",
@@ -1974,6 +2328,15 @@ class HarnessServer:
                     self._spawn(lambda: self._start_agy_turn(
                         agy_prompt, model, control, generation, workspace, project_id, agy_conv_id, image=image,
                     ))
+                elif self.provider == "claude":
+                    claude_sess_id = self.conversation.get("claude_session_id") or ""
+                    claude_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(claude_sess_id))
+                    workspace = self.workspace
+                    project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
+                    self._spawn(lambda: self._start_claude_turn(
+                        claude_prompt, model, reasoning_effort, control, generation,
+                        workspace, project_id, claude_sess_id, image=image,
+                    ))
                 else:
                     chat_cache_key = "chat-" + self.conversation["chat_id"]
                     control.turn_state = self._turn_states.get(chat_cache_key, "")
@@ -2004,6 +2367,11 @@ class HarnessServer:
                     self._emit("provider.refresh.started")
                     self._emit("auth.refresh.finished")
                     self._spawn(self._load_agy_models)
+                elif self.provider == "claude" and self.claude_available:
+                    self.provider_pending = True
+                    self._emit("provider.refresh.started")
+                    self._emit("auth.refresh.finished")
+                    self._spawn(self._load_claude_status)
                 elif self.authenticated:
                     self.account_pending = True
                     self._emit("auth.refresh.started")
@@ -2011,6 +2379,8 @@ class HarnessServer:
                 else:
                     self._emit("models.list", models=[], selected="")
                     self._emit("auth.refresh.finished")
+                if self.claude_available and self.provider != "claude":
+                    self._spawn(self._probe_claude_status_silent)
             while line := source.readline(MAX_REQUEST_BYTES + 1):
                 if len(line.encode("utf-8")) > MAX_REQUEST_BYTES:
                     while not line.endswith("\n"):
@@ -2042,4 +2412,6 @@ class HarnessServer:
             self.usage_reader.close()
             if self.agy_client is not None and hasattr(self.agy_client, "close"):
                 self.agy_client.close()
+            if self.claude_client is not None and hasattr(self.claude_client, "close"):
+                self.claude_client.close()
             self.history.db.checkpoint()

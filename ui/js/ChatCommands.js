@@ -121,10 +121,14 @@ function blockedReason(name, bridge) {
     if (name === "/modelos") return bridge.canSend ? ""
         : (bridge.provider === "agy"
            ? "Espera a que los modelos de Antigravity (agy) estén disponibles."
-           : "Conecta ChatGPT y espera a que termine la operación actual para elegir modelo.");
+           : bridge.provider === "claude"
+             ? "Conecta Claude Code y espera a que termine la operación actual para elegir modelo."
+             : "Conecta ChatGPT y espera a que termine la operación actual para elegir modelo.");
     if (name === "/compact") {
         if (bridge.provider === "agy")
             return "Antigravity (agy) gestiona el contexto automáticamente en su sesión.";
+        if (bridge.provider === "claude")
+            return "Claude Code gestiona el contexto automáticamente en su sesión.";
         return bridge.canSend && bridge.currentChatId ? "" : "Abre una conversación con sesión conectada para compactar el contexto.";
     }
     if (name === "/limites") return bridge.ready && !bridge.busy && !bridge.loginBusy ? "" : "Espera a que el motor esté disponible y termine la operación actual.";

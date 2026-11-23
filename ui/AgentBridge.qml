@@ -11,8 +11,15 @@ QtObject {
     property bool authenticated: false
     property string provider: "chatgpt"
     property bool agyAvailable: false
+    property bool claudeAvailable: false
+    property bool claudeAuthenticated: false
+    property string claudeEmail: ""
+    property string claudePlan: ""
+    property bool claudeLoginBusy: false
     property bool providerBusy: false
-    readonly property bool engineReady: (provider === "agy" && agyAvailable) || (provider === "chatgpt" && authenticated)
+    readonly property bool engineReady: (provider === "agy" && agyAvailable)
+                                        || (provider === "claude" && claudeAvailable && claudeAuthenticated)
+                                        || (provider === "chatgpt" && authenticated)
     property bool busy: false
     property bool loginBusy: false
     property bool accountBusy: false
@@ -86,11 +93,11 @@ QtObject {
     readonly property ListModel availableModels: ListModel {}
     readonly property ListModel registeredAccounts: ListModel {}
     property int activeAccountIndex: -1
-    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !openingChat && !deletingChatId && !areaBusy
+    readonly property bool canBrowseHistory: historyReady && !busy && !loginBusy && !claudeLoginBusy && !openingChat && !deletingChatId && !areaBusy
     readonly property bool canSelectArea: ready && canBrowseHistory && !accountBusy && !providerBusy
     readonly property bool canSend: ready && engineReady && availableModels.count > 0
-                                   && !busy && !loginBusy && !accountBusy && !providerBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
-    readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy && !providerBusy
+                                   && !busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
+    readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy
                                       && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunProject: canRunShell && (activeArea === "work" || activeArea === "app") && !!projectId && !projectRunActive
                                          && ((authenticated && availableModels.count > 0) || !!projectRunCaches[projectId])
@@ -107,7 +114,7 @@ QtObject {
     }
 
     function refreshUsage() {
-        if (!ready || usageBusy || accountBusy || loginBusy || providerBusy) return;
+        if (!ready || usageBusy || accountBusy || loginBusy || claudeLoginBusy || providerBusy) return;
         usageBusy = true;
         usageError = "";
         usageRequestId = "usage-" + (++usageSequence);
@@ -349,10 +356,23 @@ QtObject {
     }
 
     function selectProvider(nextProvider) {
-        if (!ready || busy || loginBusy || accountBusy || providerBusy || projectRunPreparing) return;
-        if (nextProvider !== "chatgpt" && nextProvider !== "agy") return;
+        if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing) return;
+        if (nextProvider !== "chatgpt" && nextProvider !== "agy" && nextProvider !== "claude") return;
         if (nextProvider === "agy" && !agyAvailable) return;
+        if (nextProvider === "claude" && !claudeAvailable) return;
         sendCommand({ type: "provider.select", provider: nextProvider });
+    }
+
+    function loginClaude() {
+        if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing || !claudeAvailable) return;
+        claudeLoginBusy = true;
+        status = "Iniciando sesión en Claude Code en tu navegador…";
+        sendCommand({ type: "claude.login" });
+    }
+
+    function refreshClaudeAuth() {
+        if (!ready || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy || projectRunPreparing || !claudeAvailable) return;
+        sendCommand({ type: "claude.refresh" });
     }
 
     function refreshPerformance() {
@@ -528,8 +548,9 @@ QtObject {
             profileError = data.message;
             status = data.message;
         } else if (event.type === "provider.state") {
-            const nextProvider = data.provider === "agy" ? "agy" : "chatgpt";
-            if (nextProvider !== provider) {
+            const nextProvider = (data.provider === "agy" || data.provider === "claude") ? data.provider : "chatgpt";
+            const nextClaudeAuth = !!data.claude_authenticated;
+            if (nextProvider !== provider || (nextProvider === "claude" && nextClaudeAuth !== claudeAuthenticated)) {
                 accountUsage = ({});
                 usageError = "";
                 usageRequestId = "";
@@ -537,24 +558,44 @@ QtObject {
             }
             provider = nextProvider;
             agyAvailable = !!data.agy_available;
-            if (!busy && !loginBusy && !accountBusy && !providerBusy) {
+            claudeAvailable = !!data.claude_available;
+            claudeAuthenticated = nextClaudeAuth;
+            claudeEmail = data.claude_email || "";
+            claudePlan = data.claude_plan || "";
+            if (!busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy) {
                 if (provider === "agy")
                     status = availableModels.count > 0 ? "Conectado con Antigravity (agy)." : "Antigravity (agy) listo.";
+                else if (provider === "claude")
+                    status = claudeAuthenticated
+                        ? ("Conectado con Claude Code" + (claudePlan ? " (" + claudePlan + ")" : "") + ".")
+                        : "Inicia sesión en Claude Code para empezar.";
                 else if (authenticated)
                     status = "Conectado con tu cuenta de ChatGPT.";
             }
         } else if (event.type === "provider.refresh.started") {
             providerBusy = true;
-            status = "Cargando modelos de Antigravity (agy)…";
+            status = provider === "claude"
+                ? "Comprobando sesión de Claude Code…"
+                : "Cargando modelos de Antigravity (agy)…";
         } else if (event.type === "provider.refresh.finished") {
             providerBusy = false;
             if (provider === "agy")
                 status = availableModels.count > 0
                     ? "Conectado con Antigravity (agy)."
                     : "No se encontraron modelos en Antigravity (agy).";
+            else if (provider === "claude")
+                status = claudeAuthenticated
+                    ? ("Conectado con Claude Code" + (claudePlan ? " (" + claudePlan + ")" : "") + ".")
+                    : "Inicia sesión en Claude Code para conversar.";
         } else if (event.type === "provider.rejected") {
             providerBusy = false;
             status = data.message;
+        } else if (event.type === "claude.login.started") {
+            claudeLoginBusy = true;
+            status = "Completa el inicio de sesión de Claude en tu navegador…";
+        } else if (event.type === "claude.login.finished") {
+            claudeLoginBusy = false;
+            status = data.message || (data.success ? "Sesión de Claude Code conectada." : "Inicio de sesión en Claude cancelado.");
         } else if (event.type === "tool.updated") {
             updateTool(data.call);
             if (data.call.status === "running") status = data.call.source === "local" ? "Ejecutando comando local…" : "Ejecutando comando…";
@@ -605,7 +646,7 @@ QtObject {
             conversationChanged();
         } else if (event.type === "backend.ready") {
             ready = true;
-            if (data.provider === "agy" || data.provider === "chatgpt") provider = data.provider;
+            if (data.provider === "agy" || data.provider === "claude" || data.provider === "chatgpt") provider = data.provider;
             appVersion = data.app_version;
             status = "Comprobando tu sesión…";
         } else if (event.type === "auth.state") {
@@ -629,7 +670,7 @@ QtObject {
                 registeredAccounts.append({ accountId: account.id,
                                             displayName: account.label + (account.email ? " · " + account.email : "") });
             }
-            if (!busy && !loginBusy && !accountBusy && !providerBusy && provider !== "agy")
+            if (!busy && !loginBusy && !claudeLoginBusy && !accountBusy && !providerBusy && provider === "chatgpt")
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
                          : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                          : "Inicia sesión con ChatGPT para empezar.";
@@ -649,6 +690,9 @@ QtObject {
             if (provider === "agy") {
                 if (!providerBusy && availableModels.count > 0)
                     status = "Conectado con Antigravity (agy).";
+            } else if (provider === "claude") {
+                if (!providerBusy && !claudeLoginBusy && claudeAuthenticated)
+                    status = "Conectado con Claude Code" + (claudePlan ? " (" + claudePlan + ")" : "") + ".";
             } else if (authenticated && availableModels.count > 0)
                 status = "Conectado. Usando tu plan de ChatGPT.";
             else if (!authenticated)
@@ -703,7 +747,9 @@ QtObject {
         } else if (event.type === "chat.delta") {
             recordFirstText(data.turn_id, data.text);
             updateMessage(data.item_id, data.text, true, data.turn_id);
-            status = provider === "agy" ? "Antigravity está respondiendo…" : "ChatGPT está respondiendo…";
+            status = provider === "agy" ? "Antigravity está respondiendo…"
+                   : provider === "claude" ? "Claude está respondiendo…"
+                   : "ChatGPT está respondiendo…";
         } else if (event.type === "chat.message") {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
             recordFirstText(data.turn_id, data.text);
@@ -752,6 +798,7 @@ QtObject {
             authenticated = false;
             busy = false;
             loginBusy = false;
+            claudeLoginBusy = false;
             accountBusy = false;
             providerBusy = false;
             performanceBusy = false;
@@ -783,6 +830,7 @@ QtObject {
             bridge.busy = false;
             bridge.shellRunning = false;
             bridge.loginBusy = false;
+            bridge.claudeLoginBusy = false;
             bridge.accountBusy = false;
             bridge.providerBusy = false;
             bridge.performanceBusy = false;

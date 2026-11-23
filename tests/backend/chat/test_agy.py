@@ -194,17 +194,29 @@ class AgyParsingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "config"
             store = ProviderStore(root)
-            self.assertEqual(store.load(), {"provider": "chatgpt", "agy_model": ""})
+            self.assertEqual(
+                store.load(),
+                {"provider": "chatgpt", "agy_model": "", "claude_model": "", "claude_effort": ""},
+            )
             saved = store.save("agy", "gemini-4-neon-high")
-            self.assertEqual(saved, {"provider": "agy", "agy_model": "gemini-4-neon-high"})
-            self.assertEqual(store.load(), {"provider": "agy", "agy_model": "gemini-4-neon-high"})
+            self.assertEqual(
+                saved,
+                {"provider": "agy", "agy_model": "gemini-4-neon-high", "claude_model": "", "claude_effort": ""},
+            )
+            self.assertEqual(
+                store.load(),
+                {"provider": "agy", "agy_model": "gemini-4-neon-high", "claude_model": "", "claude_effort": ""},
+            )
             with self.assertRaises(ValueError):
                 normalize_provider("invalid")
             target = Path(tmp) / "outside.json"
             target.write_text("{}", encoding="utf-8")
             store.path.unlink()
             store.path.symlink_to(target)
-            self.assertEqual(store.load(), {"provider": "chatgpt", "agy_model": ""})
+            self.assertEqual(
+                store.load(),
+                {"provider": "chatgpt", "agy_model": "", "claude_model": "", "claude_effort": ""},
+            )
             with self.assertRaises(OSError):
                 store.save("agy")
 

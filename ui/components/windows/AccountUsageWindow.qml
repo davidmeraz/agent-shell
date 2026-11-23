@@ -76,7 +76,7 @@ FloatingWindow {
     onMainWindowTitleChanged: schedulePlacement()
     function refreshWhenAvailable() {
         if (visible && bridge.ready && bridge.engineReady && !hasData
-            && !bridge.accountBusy && !bridge.loginBusy && !bridge.providerBusy && !bridge.usageBusy)
+            && !bridge.accountBusy && !bridge.loginBusy && !bridge.claudeLoginBusy && !bridge.providerBusy && !bridge.usageBusy)
             bridge.refreshUsage();
     }
     Connections {
@@ -84,6 +84,7 @@ FloatingWindow {
         function onAreaChanged() { usage.schedulePlacement(); }
         function onReadyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
         function onLoginBusyChanged() { Qt.callLater(usage.refreshWhenAvailable); }
+        function onClaudeAuthenticatedChanged() { Qt.callLater(usage.refreshWhenAvailable); }
         function onProviderChanged() {
             usage.nowMs = Date.now();
             Qt.callLater(usage.refreshWhenAvailable);
@@ -174,7 +175,9 @@ FloatingWindow {
                             Layout.fillWidth: true
                             text: usage.bridge.provider === "agy"
                                 ? (usage.geminiOnly ? "Uso · Gemini" : "Uso · Antigravity")
-                                : "Uso · ChatGPT"
+                                : usage.bridge.provider === "claude"
+                                  ? "Uso · Claude"
+                                  : "Uso · ChatGPT"
                             textFormat: Text.PlainText
                             elide: Text.ElideRight
                             color: "#cfd8e3"
