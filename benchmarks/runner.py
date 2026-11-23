@@ -61,7 +61,10 @@ class EventCollector:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f"Tiempo agotado esperando el evento '{event_type}'")
-            event = self._queue.get(timeout=min(remaining, 1.0))
+            try:
+                event = self._queue.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
             if event["type"] == event_type:
                 return event["data"]
 
