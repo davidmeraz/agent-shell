@@ -38,6 +38,7 @@ argumento y no ejecuta nada; un argumento vacío mantiene el borrador con un avi
 | `projects.list` | Ninguno | Consultar los proyectos registrados sin contactar a OpenAI |
 | `chat.cancel` | Ninguno | Cerrar streaming o detener shell local; conservar el texto y la salida parcial |
 | `chat.new` | Ninguno | Vaciar conversación actual |
+| `chat.compact` | Ninguno | Compactar el contexto (hasta `max_compactions`, 3 por defecto) o crear chat de relevo con el estado Git y lo esencial |
 | `chat.open` | `chat_id` | Cargar conversación local |
 | `chat.delete` | `chat_id` | Borrar el archivo local del chat y sus mediciones |
 | `shell.configure` | `workdir` | Validar y cambiar el directorio local, sólo fuera de un turno; la terminal permanece disponible |
@@ -137,6 +138,7 @@ Cada evento contiene `version: 2`, `seq` creciente, `timestamp` UTC ISO 8601,
 | `chat.delta` | `item_id`, `text` que amplía el mensaje, `turn_id` |
 | `chat.message` | `item_id`, `text` final que reemplaza fragmentos, `turn_id` |
 | `chat.finished` | `status: completed/failed/interrupted`, `message`, `turn_id` |
+| `chat.compacted` | `status: completed/failed/interrupted`, `handoff`, `manual`, `chat_id`, `previous_chat_id`, `compaction_count`, `max_compactions`, `message` |
 | `performance.updated` | `measurement`: instantánea del turno con `chat_id` |
 | `performance.list` | `measurements`: últimas 200 instantáneas, más recientes primero |
 | `chat.reset` | Objeto vacío |

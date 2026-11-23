@@ -46,7 +46,7 @@ class HistoryStore:
             "title": " ".join(prompt.split())[:72],
             "created_at": timestamp, "updated_at": timestamp,
             "thread_id": None, "model": "", "messages": [],
-            "area": area, "project_id": project_id,
+            "area": area, "project_id": project_id, "compaction_count": 0,
         }
         self.save(record)
         return record
@@ -81,6 +81,14 @@ class HistoryStore:
             raise ValueError("Metadatos del historial inválidos")
         if "reasoning_effort" in record and not isinstance(record["reasoning_effort"], str):
             raise ValueError("Esfuerzo de razonamiento del historial inválido")
+        if "compaction_count" in record:
+            if type(record["compaction_count"]) is not int or record["compaction_count"] < 0:
+                raise ValueError("Contador de compactaciones del historial inválido")
+        else:
+            record["compaction_count"] = 0
+        if "parent_chat_id" in record and record["parent_chat_id"] is not None:
+            if not isinstance(record["parent_chat_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", record["parent_chat_id"]):
+                raise ValueError("Chat origen del historial inválido")
         if record.get("thread_id") is not None and not isinstance(record["thread_id"], str):
             raise ValueError("Thread del historial inválido")
         area, project_id = record.get("area", "chat"), record.get("project_id", "")

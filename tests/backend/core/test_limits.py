@@ -15,16 +15,24 @@ class LimitsTests(unittest.TestCase):
             self.assertEqual(AgentLimits.from_environment(), AgentLimits())
         with patch.dict(os.environ, {"AGENT_SHELL_MAX_STEPS": "48",
                                     "AGENT_SHELL_COMMAND_TIMEOUT": "600",
-                                    "AGENT_SHELL_MAX_TURN_TOKENS": "40000"}, clear=True):
+                                    "AGENT_SHELL_MAX_TURN_TOKENS": "40000",
+                                    "AGENT_SHELL_COMPACT_THRESHOLD_TOKENS": "80000",
+                                    "AGENT_SHELL_MAX_COMPACTIONS": "4"}, clear=True):
             limits = AgentLimits.from_environment()
-        self.assertEqual((limits.max_steps, limits.shell_timeout, limits.max_turn_tokens), (48, 600, 40000))
+        self.assertEqual(
+            (limits.max_steps, limits.shell_timeout, limits.max_turn_tokens,
+             limits.compact_threshold_tokens, limits.max_compactions),
+            (48, 600, 40000, 80000, 4),
+        )
 
     def test_invalid_limits_fail_explicitly_instead_of_enabling_unbounded_work(self):
         for name, value in (("AGENT_SHELL_MAX_STEPS", "0"), ("AGENT_SHELL_MAX_TOOL_CALLS", "-1"),
                             ("AGENT_SHELL_COMMAND_TIMEOUT", "forever"),
                             ("AGENT_SHELL_CONTEXT_OUTPUT_CHARS", "100000"),
                             ("AGENT_SHELL_MAX_TURN_TOKENS", "nan"),
-                            ("AGENT_SHELL_REPEATED_FAILURES", "1")):
+                            ("AGENT_SHELL_REPEATED_FAILURES", "1"),
+                            ("AGENT_SHELL_COMPACT_THRESHOLD_TOKENS", "500"),
+                            ("AGENT_SHELL_MAX_COMPACTIONS", "0")):
             with self.subTest(name=name), patch.dict(os.environ, {name: value}, clear=True):
                 with self.assertRaisesRegex(ValueError, name):
                     AgentLimits.from_environment()

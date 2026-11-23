@@ -8,6 +8,8 @@ enlaces simbólicos.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 EXCLUDED_DIRS = frozenset({
@@ -18,6 +20,57 @@ EXCLUDED_DIRS = frozenset({
 MAX_FILES = 120
 MAX_DEPTH = 4
 MAX_AGENTS_BYTES = 4096
+MAX_GIT_COMMITS = 8
+MAX_GIT_STATUS_LINES = 25
+GIT_TIMEOUT = 2.0
+
+
+def _run_git(root: Path, args: list[str]) -> str:
+    git = shutil.which("git")
+    if not git:
+        return ""
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "HOME")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            [git, *args], cwd=root, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=GIT_TIMEOUT, env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def git_software_context(workspace: Path) -> str:
+    """Resumen compacto del estado Git real (rama, últimos commits y archivos modificados)."""
+    try:
+        root = workspace.resolve(strict=True)
+    except OSError:
+        return ""
+    if not (root / ".git").exists():
+        return ""
+    branch = _run_git(root, ["branch", "--show-current"]) or _run_git(root, ["rev-parse", "--short", "HEAD"])
+    log_raw = _run_git(root, ["log", f"-n{MAX_GIT_COMMITS}", "--date=short", "--format=%h %ad %s"])
+    status_raw = _run_git(root, ["status", "--short", "--untracked-files=normal"])
+
+    sections: list[str] = []
+    if branch:
+        sections.append(f"git_branch: {branch[:80]}")
+    if log_raw:
+        commits = [line[:140] for line in log_raw.splitlines()[:MAX_GIT_COMMITS]]
+        sections.append("recent_commits:\n" + "\n".join(commits))
+    if status_raw:
+        clean_status = []
+        for line in status_raw.splitlines():
+            path_part = line[3:].strip().strip('"')
+            if any(_is_secret_name(part) for part in Path(path_part).parts):
+                continue
+            clean_status.append(line[:140])
+            if len(clean_status) >= MAX_GIT_STATUS_LINES:
+                break
+        if clean_status:
+            sections.append("git_status:\n" + "\n".join(clean_status))
+    return "\n".join(sections)
 
 
 def _is_secret_name(name: str) -> bool:
@@ -102,6 +155,12 @@ def build_work_bootstrap(workspace: Path, ignored: tuple[Path, ...] = ()) -> str
         "Workspace snapshot (captured once at conversation start; use directly instead of "
         "re-listing files or rereading AGENTS.md; only run git commands if git_repo is yes).\n"
         f"git_repo: {'yes' if is_git else 'no'}\n"
+    )
+    if is_git:
+        git_info = git_software_context(root)
+        if git_info:
+            header += git_info + "\n"
+    header += (
         f"files ({len(files)}{'+' if truncated else ''}):\n"
         + "\n".join(files)
     )

@@ -21,6 +21,13 @@ from ..chat.images import validate_image, user_content
 from ..work.explorer import ProjectExplorer
 from .events import EventEmitter
 from ..chat.context import append_result, close_pending_calls, replay_items, visible_chat
+from ..chat.compaction import (
+    build_compacted_context,
+    build_handoff_context,
+    handoff_title,
+    split_for_compaction,
+    summarize_context,
+)
 from ..chat.history import HistoryStore
 from ..work.projects import ProjectStore
 from ..work.project_runner import ProjectRunner
@@ -109,6 +116,7 @@ class HarnessServer:
         self.shell_enabled = True
         self._shell_control = ShellControl(self._stream.cancelled)
         self._local_call: dict | None = None
+        self._compacting = False
         self._turn_states: dict[str, str] = {}
         self.project_runner = ProjectRunner(self._emit, LaunchCache(self.projects))
 
@@ -760,9 +768,180 @@ class HarnessServer:
                 self._emit("work.changed", project_id=project_id, call_id=call["id"],
                            turn_id=call["turn_id"], **change)
 
+    def _compaction_effort(self, model_slug: str) -> str:
+        efforts = self._model_options(model_slug).get("reasoning_efforts", [])
+        return "low" if "low" in efforts else ""
+
+    @staticmethod
+    def _last_context_tokens(record: dict | None) -> int:
+        if not record:
+            return 0
+        for row in reversed(record.get("performance") or []):
+            tokens = row.get("context_tokens")
+            if type(tokens) is int and tokens > 0:
+                return tokens
+        return 0
+
+    def _perform_compaction(
+        self,
+        control: StreamControl,
+        generation: int,
+        *,
+        manual: bool,
+        keep_recent_turns: int = 1,
+        carry_pending_turn: bool = False,
+    ) -> tuple[list[dict], str, dict]:
+        """Compacta el chat actual (1..max_compactions) o hace relevo a un chat nuevo limpio."""
+        with self._lock:
+            if not self._current_turn(generation) or self.conversation is None:
+                raise Cancelled()
+            record = self.conversation
+            old_chat_id = record["chat_id"]
+            compactions = int(record.get("compaction_count", 0))
+            handoff = compactions >= self.limits.max_compactions
+            model = self.model
+            effort = self._compaction_effort(model)
+            area = self.active_area
+            project_id = self.project["project_id"] if self.project else ""
+            workspace = self.workspace if area == "work" else None
+            raw_context = copy.deepcopy(record.get("context") or [
+                {"role": row["role"], "content": user_content(row["text"], row.get("image", ""))}
+                for row in record.get("messages", []) if row.get("text") or row.get("image")
+            ])
+
+        if handoff:
+            source_items = raw_context[:-1] if (carry_pending_turn and raw_context) else raw_context
+            summary = summarize_context(
+                self.client, model, source_items, control,
+                handoff=True, workspace=workspace, effort=effort,
+            )
+            with self._lock:
+                if not self._current_turn(generation) or not self.conversation or self.conversation["chat_id"] != old_chat_id:
+                    raise Cancelled()
+                old = self.conversation
+                carried_msg = None
+                carried_ctx = None
+                carried_perf = None
+                if carry_pending_turn:
+                    if old["messages"] and old["messages"][-1].get("role") == "user":
+                        carried_msg = old["messages"].pop()
+                    if old.get("context") and old["context"][-1].get("role") == "user":
+                        carried_ctx = old["context"].pop()
+                    if self._performance and old.get("performance"):
+                        for idx in range(len(old["performance"]) - 1, -1, -1):
+                            if old["performance"][idx].get("turn_id") == self._performance.turn_id:
+                                carried_perf = old["performance"].pop(idx)
+                                break
+                    self.history.save(old)
+
+                title = handoff_title(old["title"])
+                new_record = self.history.create(title, area, project_id)
+                new_record["title"] = title
+                new_record["model"] = model
+                new_record["reasoning_effort"] = self.reasoning_effort
+                new_record["compaction_count"] = 0
+                new_record["parent_chat_id"] = old_chat_id
+                new_record["context"] = build_handoff_context(
+                    summary, area=area, workspace=workspace, history_root=self.history.root,
+                )
+                handoff_note = (
+                    f"Relevo automático tras alcanzar el límite de {self.limits.max_compactions} compactaciones.\n\n"
+                    + summary
+                )
+                new_record["messages"].append({
+                    "id": uuid.uuid4().hex, "role": "system", "text": handoff_note,
+                    "status": "completed", "turn_id": "",
+                })
+                if carried_msg is not None:
+                    new_record["messages"].append(carried_msg)
+                if carried_ctx is not None:
+                    new_record["context"].append(carried_ctx)
+                if carried_perf is not None:
+                    new_record.setdefault("performance", []).append(carried_perf)
+                self.history.save(new_record)
+
+                self._turn_states.pop("chat-" + old_chat_id, None)
+                control.turn_state = ""
+                self.conversation = new_record
+                self._area_chats[self._area_key()] = new_record
+                new_cache_key = "chat-" + new_record["chat_id"]
+                msg = (f"Límite de {self.limits.max_compactions} compactaciones alcanzado. "
+                       "Se creó un chat nuevo con el relevo esencial y el estado Git.")
+                info = {
+                    "status": "completed", "handoff": True, "manual": manual,
+                    "chat_id": new_record["chat_id"], "previous_chat_id": old_chat_id,
+                    "compaction_count": 0, "max_compactions": self.limits.max_compactions,
+                    "message": msg,
+                }
+                self._emit("chat.loaded", chat=visible_chat(new_record))
+                self._emit("chat.saved", chat_id=new_record["chat_id"], title=new_record["title"])
+                self._emit("chat.compacted", **info)
+                self._publish_history()
+                return copy.deepcopy(new_record["context"]), new_cache_key, info
+
+        prefix, older, tail = split_for_compaction(raw_context, keep_recent_turns=keep_recent_turns)
+        if not older:
+            raise ValueError("Todavía no hay suficiente contexto para compactar.")
+        summary = summarize_context(
+            self.client, model, older, control,
+            handoff=False, workspace=workspace, effort=effort,
+        )
+        with self._lock:
+            if not self._current_turn(generation) or not self.conversation or self.conversation["chat_id"] != old_chat_id:
+                raise Cancelled()
+            self.conversation["context"] = build_compacted_context(prefix, summary, tail)
+            self.conversation["compaction_count"] = compactions + 1
+            self.history.save(self.conversation)
+            cache_key = "chat-" + old_chat_id
+            self._turn_states.pop(cache_key, None)
+            control.turn_state = ""
+            count = self.conversation["compaction_count"]
+            msg = (f"Contexto compactado ({count}/{self.limits.max_compactions}). "
+                   + ("La próxima compactación abrirá un chat nuevo con el relevo esencial."
+                      if count >= self.limits.max_compactions else "Puedes continuar."))
+            info = {
+                "status": "completed", "handoff": False, "manual": manual,
+                "chat_id": old_chat_id, "previous_chat_id": old_chat_id,
+                "compaction_count": count, "max_compactions": self.limits.max_compactions,
+                "message": msg,
+            }
+            self._emit("chat.compacted", **info)
+            return copy.deepcopy(self.conversation["context"]), cache_key, info
+
+    def _run_manual_compact(self, control: StreamControl, generation: int) -> None:
+        try:
+            self._perform_compaction(control, generation, manual=True, keep_recent_turns=1)
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self.busy = False
+                    self._compacting = False
+        except Cancelled:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self.busy = False
+                    self._compacting = False
+                    self._emit("chat.compacted", status="interrupted", handoff=False, manual=True,
+                               chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                               max_compactions=self.limits.max_compactions,
+                               message="Compactación cancelada.")
+        except (ServiceError, ValueError, OSError, KeyError, TypeError) as error:
+            with self._lock:
+                if self.busy and generation == self._generation:
+                    self.busy = False
+                    self._compacting = False
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                               max_compactions=self.limits.max_compactions,
+                               message=str(error) if isinstance(error, (ServiceError, ValueError)) else
+                               "No se pudo compactar el contexto.")
+
     def _start_turn(self, messages: list[dict], model: str, control: StreamControl,
                     generation: int, reasoning_effort: str = "",
-                    prompt_cache_key: str = "") -> None:
+                    prompt_cache_key: str = "", prior_context_tokens: int = 0) -> None:
         failures = FailureTracker(self.limits.repeated_failures)
         continuation = {
             "role": "developer", "content":
@@ -787,10 +966,37 @@ class HarnessServer:
                     instructions += "You are in Chat, the conversation space. Prioritize clear, helpful conversation. "
                 instructions += (f"Shell timeout: {self.limits.shell_timeout} seconds per command. "
                                  "Working directory: " + str(self.workspace))
-            for _ in range(self.limits.max_steps):
+            if (self.limits.compact_threshold_tokens > 0
+                    and prior_context_tokens >= self.limits.compact_threshold_tokens):
+                try:
+                    messages, prompt_cache_key, info = self._perform_compaction(
+                        control, generation, manual=False, keep_recent_turns=1,
+                        carry_pending_turn=True,
+                    )
+                    if info.get("handoff"):
+                        self._emit("chat.busy", turn_id=self._performance.turn_id if self._performance else "")
+                        self._emit("chat.thread", thread_id=info["chat_id"], model=model)
+                except ValueError:
+                    pass
+            for step in range(self.limits.max_steps):
                 completed = None
                 streamed_text = False
                 control.check()
+                if (step > 0 and self.limits.compact_threshold_tokens > 0
+                        and self._performance and (self._performance.context_tokens or 0) >= self.limits.compact_threshold_tokens):
+                    with self._lock:
+                        can_inline_compact = (
+                            self._current_turn(generation)
+                            and self.conversation is not None
+                            and int(self.conversation.get("compaction_count", 0)) < self.limits.max_compactions
+                        )
+                    if can_inline_compact:
+                        try:
+                            messages, prompt_cache_key, _ = self._perform_compaction(
+                                control, generation, manual=False, keep_recent_turns=0,
+                            )
+                        except ValueError:
+                            pass
                 with self._lock:
                     if not self._current_turn(generation):
                         return
@@ -1061,10 +1267,49 @@ class HarnessServer:
                 if self.busy:
                     self._stream.cancel()
                     self._shell_control.cancel()
-                    if self._local_call is not None:
+                    if self._compacting:
+                        self.busy = False
+                        self._compacting = False
+                        self._emit("chat.compacted", status="interrupted", handoff=False, manual=True,
+                                   chat_id=self.conversation["chat_id"] if self.conversation else "",
+                                   previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                                   compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                                   max_compactions=self.limits.max_compactions,
+                                   message="Compactación cancelada.")
+                    elif self._local_call is not None:
                         self._finish_local_shell("interrupted")
                     else:
                         self._finish("interrupted")
+                return
+            if action == "chat.compact":
+                if self.busy or self.login_pending or self.account_pending:
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               previous_chat_id=self.conversation["chat_id"] if self.conversation else "",
+                               compaction_count=self.conversation.get("compaction_count", 0) if self.conversation else 0,
+                               max_compactions=self.limits.max_compactions,
+                               message="Espera a que termine la operación actual.")
+                    return
+                if not self.authenticated or not self.models:
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id="", previous_chat_id="", compaction_count=0,
+                               max_compactions=self.limits.max_compactions,
+                               message="Conecta ChatGPT y selecciona un modelo para compactar.")
+                    return
+                if self.conversation is None or not self.conversation.get("messages"):
+                    self._emit("chat.compacted", status="failed", handoff=False, manual=True,
+                               chat_id="", previous_chat_id="", compaction_count=0,
+                               max_compactions=self.limits.max_compactions,
+                               message="No hay una conversación con contexto para compactar.")
+                    return
+                self.busy = True
+                self._compacting = True
+                self._generation += 1
+                generation = self._generation
+                self._stream = StreamControl()
+                control = self._stream
+                self._shell_control = ShellControl(control.cancelled)
+                self._spawn(lambda: self._run_manual_compact(control, generation))
                 return
             if action == "auth.cancel":
                 self._login_cancel.set()
@@ -1143,6 +1388,7 @@ class HarnessServer:
                 self._emit("chat.finished", status="failed", message="Selecciona o crea un proyecto en Work para comenzar")
             else:
                 try:
+                    prior_context_tokens = self._last_context_tokens(self.conversation)
                     if self.conversation is None:
                         self.conversation = self._create_conversation(prompt.strip() or "Imagen adjunta")
                     snapshot = copy.deepcopy(self.conversation)
@@ -1194,7 +1440,8 @@ class HarnessServer:
                 chat_cache_key = "chat-" + self.conversation["chat_id"]
                 control.turn_state = self._turn_states.get(chat_cache_key, "")
                 self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort,
-                                                     prompt_cache_key=chat_cache_key))
+                                                     prompt_cache_key=chat_cache_key,
+                                                     prior_context_tokens=prior_context_tokens))
 
     def serve(self, source: TextIO) -> None:
         try:

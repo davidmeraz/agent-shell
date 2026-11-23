@@ -5,7 +5,12 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.17.0` añade eliminación de cuentas registradas (`auth.remove` y
+La versión `0.18.0` añade compactación inteligente de contexto (`/compact` y
+automática por umbral), límite de 3 compactaciones por chat con relevo automático
+a un nuevo chat limpio (`parent_chat_id`) y contexto real de Git (`git log`, rama
+y estado) en el bootstrap y los relevos de Work. Conserva NDJSON v2 y el esquema 1
+del historial; incrementa MENOR por las nuevas capacidades de gestión de contexto.
+La versión anterior `0.17.0` añade eliminación de cuentas registradas (`auth.remove` y
 confirmación en el diálogo de cuenta), herramientas nativas de edición y lectura
 (`apply_patch`, `read_file`, `grep_files`), ejecución paralela de lecturas
 (`parallel_tool_calls: true`), afinidad de caché (`prompt_cache_key`, `session_id`,

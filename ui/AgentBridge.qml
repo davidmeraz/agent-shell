@@ -141,6 +141,7 @@ QtObject {
             }
             if (command.name === "/nuevo") newChat();
             else if (command.name === "/detener") cancel();
+            else if (command.name === "/compact") compactChat();
             else localCommandRequested(command.name === "/modelos" && command.family
                                        ? "/modelos " + command.family : command.name);
             return true;
@@ -173,6 +174,13 @@ QtObject {
 
     function newChat() {
         if (canBrowseHistory) sendCommand({ type: "chat.new" });
+    }
+
+    function compactChat() {
+        if (!canSend || !currentChatId) return;
+        busy = true;
+        status = "Compactando contexto…";
+        sendCommand({ type: "chat.compact" });
     }
 
     function selectArea(area, projectId) {
@@ -536,6 +544,11 @@ QtObject {
             // El texto final reemplaza los deltas; evita respuestas duplicadas.
             recordFirstText(data.turn_id, data.text);
             updateMessage(data.item_id, data.text, false, data.turn_id);
+        } else if (event.type === "chat.compacted") {
+            if (data.manual) busy = false;
+            status = data.message || "Contexto compactado.";
+            if (data.status === "failed")
+                messages.append({ author: "SISTEMA", body: status, imageUrl: "", turnId: "", performanceJson: "", toolJson: "" });
         } else if (event.type === "chat.finished") {
             busy = false;
             status = data.status === "completed" ? "Respuesta completada."

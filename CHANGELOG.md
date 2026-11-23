@@ -3,6 +3,16 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.18.0] — 2026-11-22
+
+Esta versión incorpora compactación inteligente de contexto con límite de 3 compactaciones por conversación, relevo automático a un chat nuevo limpio con lo esencial del software y contexto real de Git en Work.
+
+- Contexto Git real en el bootstrap de Work (`git_software_context`): rama actual, últimos 8 commits (`git log`) y `git status --short` filtrando secretos `.env*`, disponible desde el primer turno y durante compactaciones y relevos.
+- Compactación inteligente (`/compact` y automática al superar `AGENT_SHELL_COMPACT_THRESHOLD_TOKENS`, 60 000 por defecto): resume el historial antiguo sin borrar mensajes visibles ni romper pares `function_call`/`function_call_output`, omitiendo imágenes base64 viejas y razonamiento cifrado.
+- Límite de compactaciones (`AGENT_SHELL_MAX_COMPACTIONS`, 3 por defecto) con relevo automático (*handoff*): al superar el límite crea un chat nuevo limpio (`parent_chat_id`, `compaction_count: 0`) sembrado con bootstrap fresco, `git log` real y resumen filtrado de lo que realmente aporta al software, conservando intacto el chat anterior.
+- Nuevas extensiones compatibles de NDJSON v2 (`chat.compact` y `chat.compacted`) y campos opcionales en el esquema 1 del historial (`compaction_count` y `parent_chat_id`).
+- Verificación con 282 pruebas Python, `qmllint` y 12 escenarios Qt/Quickshell.
+
 ## [0.17.0] — 2026-11-22
 
 Esta versión reduce el consumo real de tokens y viajes al modelo mediante herramientas nativas de archivo, ejecución en paralelo, afinidad de caché de prompts y bootstrap inicial de proyectos en Work, e incorpora la eliminación de cuentas guardadas desde la interfaz.

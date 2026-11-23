@@ -8,7 +8,8 @@ const commands = [
     { name: "/modelos", description: "Elegir familia, modelo y esfuerzo de razonamiento" },
     { name: "/terminal", description: "Configurar la terminal y su directorio" },
     { name: "/detener", description: "Cancelar la respuesta o ejecución actual" },
-    { name: "/shell", description: "Ejecutar un comando local sin IA; por ejemplo /shell pwd" }
+    { name: "/shell", description: "Ejecutar un comando local sin IA; por ejemplo /shell pwd" },
+    { name: "/compact", description: "Compactar contexto (máx. 3; en la 4.ª crea un chat de relevo con Git)" }
 ];
 
 function parse(text) {
@@ -102,5 +103,6 @@ function blockedReason(name, bridge) {
     if (name === "/terminal") return bridge.ready && !bridge.busy && !bridge.loginBusy ? "" : "Espera a que el motor esté disponible y termine la operación actual.";
     if (name === "/shell") return bridge.canRunShell ? "" : "Espera a que termine la operación actual y esté disponible la terminal.";
     if (name === "/modelos") return bridge.canSend ? "" : "Conecta ChatGPT y espera a que termine la operación actual para elegir modelo.";
+    if (name === "/compact") return bridge.canSend && bridge.currentChatId ? "" : "Abre una conversación con sesión conectada para compactar el contexto.";
     return "Comando desconocido.";
 }

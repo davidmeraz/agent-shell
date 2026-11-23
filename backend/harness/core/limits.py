@@ -15,6 +15,8 @@ class AgentLimits:
     context_output_chars: int = DEFAULT_CONTEXT_OUTPUT
     max_turn_tokens: int = 0
     repeated_failures: int = 3
+    compact_threshold_tokens: int = 60000
+    max_compactions: int = 3
 
     @classmethod
     def from_environment(cls):
@@ -25,6 +27,8 @@ class AgentLimits:
             "context_output_chars": ("AGENT_SHELL_CONTEXT_OUTPUT_CHARS", 256, 16000),
             "max_turn_tokens": ("AGENT_SHELL_MAX_TURN_TOKENS", 0, 100000000),
             "repeated_failures": ("AGENT_SHELL_REPEATED_FAILURES", 2, 20),
+            "compact_threshold_tokens": ("AGENT_SHELL_COMPACT_THRESHOLD_TOKENS", 0, 500000),
+            "max_compactions": ("AGENT_SHELL_MAX_COMPACTIONS", 1, 20),
         }
         values = {}
         defaults = cls()
@@ -33,7 +37,11 @@ class AgentLimits:
                 value = int(os.environ.get(name, getattr(defaults, field)))
                 if not low <= value <= high:
                     raise ValueError()
+                if field == "compact_threshold_tokens" and 0 < value < 8000:
+                    raise ValueError()
             except ValueError:
+                if field == "compact_threshold_tokens":
+                    raise ValueError(f"{name} debe ser 0 (desactivado) o un entero entre 8000 y {high}") from None
                 raise ValueError(f"{name} debe ser un entero entre {low} y {high}") from None
             values[field] = value
         return cls(**values)

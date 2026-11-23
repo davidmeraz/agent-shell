@@ -170,8 +170,9 @@ Cada turno envía instrucciones y los mensajes locales mediante
 `parallel_tool_calls: true` y afinidad de caché (`prompt_cache_key` estable por
 conversación, cabecera `session_id` y propagación en memoria de `x-codex-turn-state`).
 En conversaciones nuevas de Work se añade una sola vez al inicio del contexto un
-bootstrap estático acotado (`AGENTS.md` y mapa de archivos excluyendo `.env` y
-enlaces simbólicos) para ahorrar viajes de descubrimiento sin mutar el prefijo.
+bootstrap estático acotado (`AGENTS.md`, mapa de archivos y contexto Git real con
+rama, últimos commits y `git status`, excluyendo `.env` y enlaces simbólicos) para
+ahorrar viajes de descubrimiento sin mutar el prefijo.
 Las herramientas nativas anunciadas son `shell`, `read_file`, `grep_files` y
 `apply_patch` (confinadas al workspace; `apply_patch` valida y aplica cambios
 multi-archivo atómicamente bajo observación `inotify` en Work, y los lotes de
@@ -197,8 +198,13 @@ parcial y liberan los controles.
 
 Los JSON de 0.2.0 siguen siendo legibles. Su antiguo thread_id no se consulta:
 continuar utiliza los mensajes locales. Si faltaba contexto interno, no puede
-reconstruirse. Las conversaciones demasiado largas pueden superar el contexto;
-todavía no hay compactación.
+reconstruirse. La compactación (`/compact` o automática al superar
+`AGENT_SHELL_COMPACT_THRESHOLD_TOKENS`, 60 000 por defecto) permite hasta
+`AGENT_SHELL_MAX_COMPACTIONS` (3 por defecto) compactaciones en el mismo chat sin
+borrar los mensajes visibles ni romper pares de herramientas; en la siguiente
+compactación crea automáticamente un chat nuevo (`parent_chat_id`) sembrado sólo
+con el relevo esencial del software y el bootstrap fresco con el historial de commits
+de Git, conservando intacto el chat anterior.
 La [auditoría de continuidad y consumo](harness-audit.md) documenta los cambios,
 las regresiones y el trabajo pendiente; la [guía de prácticas](../guides/llm-practices.md)
 describe los presupuestos configurables y cómo evaluar sus efectos.
