@@ -46,9 +46,10 @@ from ..tools.files import (
 )
 from ..tools.patch import APPLY_PATCH_TOOL, execute_apply_patch, summarize_patch_command
 from ..tools.shell import DEFAULT_TIMEOUT, SHELL_TOOL, ShellControl, ShellExecutor, parse_command, resolve_workspace
+from ..work.worker import DELEGATE_TOOL, WorkerRouter
 from .version import get_version
 
-AGENT_TOOLS = [SHELL_TOOL, READ_FILE_TOOL, GREP_TOOL, APPLY_PATCH_TOOL]
+AGENT_TOOLS = [SHELL_TOOL, READ_FILE_TOOL, GREP_TOOL, APPLY_PATCH_TOOL, DELEGATE_TOOL]
 READ_ONLY_TOOLS = frozenset({"read_file", "grep_files"})
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -87,7 +88,7 @@ class HarnessServer:
     def __init__(self, history_root: Path, output: TextIO, session, client,
                  model: str = "", workspace: Path | None = None, usage_reader=None,
                  limits: AgentLimits | None = None, config_root: Path | None = None,
-                 agy_client=None, claude_client=None) -> None:
+                 agy_client=None, claude_client=None, track_chat_quota: bool = False) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
         config_dir = config_root if config_root is not None else self.history.root / "config"
@@ -105,6 +106,9 @@ class HarnessServer:
         self.claude_email = ""
         self.claude_plan = ""
         self.claude_login_pending = False
+        self.track_chat_quota = bool(track_chat_quota)
+        self._last_quota_snapshots: dict[str, dict] = {}
+        self._active_turn_quota: dict | None = None
         if saved_provider["provider"] == "agy" and self.agy_available:
             self.provider = "agy"
         elif saved_provider["provider"] == "claude" and self.claude_available:
@@ -161,6 +165,15 @@ class HarnessServer:
         self._local_call: dict | None = None
         self._compacting = False
         self._turn_states: dict[str, str] = {}
+        self.worker_router = WorkerRouter(
+            chatgpt_client=client,
+            agy_client=agy_client,
+            claude_client=claude_client,
+            session=session,
+            workspace=self.workspace,
+            emit=self._emit,
+            shell_timeout=self.limits.shell_timeout,
+        )
         self.project_runner = ProjectRunner(self._emit, LaunchCache(self.projects))
 
     def _emit(self, event_type: str, **data) -> None:
@@ -613,6 +626,149 @@ class HarnessServer:
         selected = next((row.get("id") for row in account.get("accounts", []) if row.get("active")), "")
         return ("chatgpt", account.get("authenticated"), account.get("email", ""), selected)
 
+    @staticmethod
+    def _quota_bucket_key(provider: str, model: str = "") -> str:
+        if provider == "agy":
+            lower = (model or "").lower()
+            if lower and not lower.startswith("gemini"):
+                return "agy:3p"
+            return "agy:gemini"
+        return provider
+
+    @staticmethod
+    def _extract_quota_snapshots(provider: str, result: dict) -> dict[str, dict]:
+        """Extrae instantáneas de cuota (5 h y semanal) por bucket desde un resultado de uso."""
+        limits = result.get("limits") if isinstance(result, dict) else None
+        if not isinstance(limits, list) or not limits:
+            return {}
+        now_ts = time.monotonic()
+
+        def _snap(bucket: dict) -> dict:
+            primary = bucket.get("primary") if isinstance(bucket.get("primary"), dict) else None
+            secondary = bucket.get("secondary") if isinstance(bucket.get("secondary"), dict) else None
+            return {
+                "session_used": primary.get("used_percent") if primary else None,
+                "session_resets_at": primary.get("resets_at") if primary else None,
+                "weekly_used": secondary.get("used_percent") if secondary else None,
+                "weekly_resets_at": secondary.get("resets_at") if secondary else None,
+                "captured_at": now_ts,
+            }
+
+        if provider == "agy":
+            snaps: dict[str, dict] = {}
+            for bucket in limits:
+                if not isinstance(bucket, dict):
+                    continue
+                ident = f"{bucket.get('id', '')} {bucket.get('name', '')}".lower()
+                if "argon" in ident:
+                    continue
+                if "gemini" in ident and "agy:gemini" not in snaps:
+                    snaps["agy:gemini"] = _snap(bucket)
+                elif ("claude" in ident or "gpt" in ident or "3p" in ident) and "agy:3p" not in snaps:
+                    snaps["agy:3p"] = _snap(bucket)
+            return snaps
+
+        first = limits[0] if isinstance(limits[0], dict) else None
+        return {provider: _snap(first)} if first else {}
+
+    @staticmethod
+    def _quota_delta(before: dict | None, after: dict | None, field: str) -> float:
+        if not before or not after:
+            return 0.0
+        b_val = before.get(f"{field}_used")
+        a_val = after.get(f"{field}_used")
+        if not isinstance(b_val, (int, float)) or not isinstance(a_val, (int, float)):
+            return 0.0
+        b_reset = before.get(f"{field}_resets_at")
+        a_reset = after.get(f"{field}_resets_at")
+        if (isinstance(b_reset, (int, float)) and isinstance(a_reset, (int, float))
+                and abs(a_reset - b_reset) > 180 and a_val < b_val):
+            # La ventana se renovó durante el turno: no sumar saltos negativos.
+            return 0.0
+        diff = a_val - b_val
+        if diff <= 0:
+            return 0.0
+        return round(min(100.0, diff), 2)
+
+    def _cache_usage_snapshots(self, provider: str, result: dict) -> dict[str, dict]:
+        snaps = self._extract_quota_snapshots(provider, result)
+        if snaps:
+            self._last_quota_snapshots.update(snaps)
+        return snaps
+
+    def _fetch_provider_usage_raw(self, identity: tuple) -> dict | None:
+        provider = identity[0]
+        try:
+            if provider == "agy":
+                if self.agy_client is None or not self.agy_available:
+                    return None
+                return self.agy_client.usage()
+            if provider == "claude":
+                if self.claude_client is None or not self.claude_available or not self.claude_authenticated:
+                    return None
+                return self.claude_client.usage()
+            if provider == "chatgpt":
+                if not identity[1] or not identity[2]:
+                    return None
+                return self.usage_reader.read(expected_email=identity[2])
+        except (UsageError, ServiceError, OSError, ValueError, TypeError):
+            return None
+        return None
+
+    def _ensure_quota_baseline(self, turn_quota: dict | None) -> None:
+        if not self.track_chat_quota or not turn_quota or turn_quota.get("before") is not None:
+            return
+        result = self._fetch_provider_usage_raw(turn_quota["identity"])
+        if result is None:
+            return
+        with self._lock:
+            snaps = self._cache_usage_snapshots(turn_quota["provider"], result)
+            turn_quota["before"] = snaps.get(turn_quota["bucket_key"])
+
+    def _measure_turn_quota(self, turn_quota: dict) -> None:
+        chat_id = turn_quota["chat_id"]
+        provider = turn_quota["provider"]
+        bucket_key = turn_quota["bucket_key"]
+        identity = turn_quota["identity"]
+        before = turn_quota.get("before")
+        result = self._fetch_provider_usage_raw(identity)
+        with self._lock:
+            if self._closing.is_set():
+                return
+            delta_session = 0.0
+            delta_weekly = 0.0
+            if result is not None:
+                snaps = self._cache_usage_snapshots(provider, result)
+                after = snaps.get(bucket_key)
+                delta_session = self._quota_delta(before, after, "session")
+                delta_weekly = self._quota_delta(before, after, "weekly")
+                if self._usage_identity() == identity and not self.usage_pending:
+                    self._emit("usage.state", request_id="", auto=True, **result)
+
+            try:
+                if self.conversation is not None and self.conversation["chat_id"] == chat_id:
+                    record = self.conversation
+                    is_current = True
+                else:
+                    record = self.history.load(chat_id)
+                    is_current = False
+                qs = record.setdefault("quota_spent", {})
+                entry = qs.setdefault(provider, {"session_pct": 0.0, "weekly_pct": 0.0, "turns": 0, "tokens": 0})
+                if delta_session > 0:
+                    entry["session_pct"] = round(entry["session_pct"] + delta_session, 2)
+                if delta_weekly > 0:
+                    entry["weekly_pct"] = round(entry["weekly_pct"] + delta_weekly, 2)
+                self.history.save(record)
+                if is_current:
+                    self._last_saved = time.monotonic()
+                self._emit("chat.quota.updated", chat_id=chat_id,
+                           quota_spent=copy.deepcopy(qs), measuring=False)
+            except (FileNotFoundError, OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                self._emit("chat.quota.updated", chat_id=chat_id,
+                           quota_spent=copy.deepcopy(self.conversation.get("quota_spent", {}))
+                           if self.conversation and self.conversation["chat_id"] == chat_id else {},
+                           measuring=False)
+
     def _read_usage(self, request_id, identity):
         try:
             if identity[0] == "agy":
@@ -628,6 +784,7 @@ class HarnessServer:
             with self._lock:
                 if self._usage_identity() != identity:
                     raise UsageError("account_changed", "El motor o la cuenta activa cambió. Vuelve a consultar el uso.")
+                self._cache_usage_snapshots(identity[0], result)
                 self._emit("usage.state", request_id=request_id, **result)
         except (UsageError, ServiceError, OSError, ValueError, TypeError) as error:
             default_msg = ("No se pudo consultar el uso de Antigravity (agy)."
@@ -856,6 +1013,8 @@ class HarnessServer:
 
     def _finish(self, status: str, message: str = "") -> None:
         self.busy = False
+        turn_quota = self._active_turn_quota
+        self._active_turn_quota = None
         if self._performance and self._performance.status == "streaming":
             self._performance.finish(status)
             self._update_performance(force=True)
@@ -876,7 +1035,23 @@ class HarnessServer:
             for entry in self.conversation["messages"]:
                 if entry["status"] == "streaming":
                     entry["status"] = status
+            if turn_quota and turn_quota["chat_id"] == self.conversation["chat_id"] and status in ("completed", "interrupted"):
+                qs = self.conversation.setdefault("quota_spent", {})
+                provider = turn_quota["provider"]
+                entry = qs.setdefault(provider, {"session_pct": 0.0, "weekly_pct": 0.0, "turns": 0, "tokens": 0})
+                entry["turns"] += 1
+                usage = self._performance.usage if self._performance and isinstance(self._performance.usage, dict) else {}
+                total_toks = usage.get("total_tokens", 0)
+                if type(total_toks) is int and total_toks > 0:
+                    entry["tokens"] += total_toks
+                will_measure = self.track_chat_quota and not self._closing.is_set()
+                self._emit("chat.quota.updated", chat_id=self.conversation["chat_id"],
+                           quota_spent=copy.deepcopy(qs), measuring=will_measure)
+            else:
+                will_measure = False
             self._save()
+            if turn_quota and will_measure:
+                self._spawn(lambda: self._measure_turn_quota(turn_quota))
         self._emit("chat.finished", status=status, message=message,
                    turn_id=self._performance.turn_id if self._performance else "")
         self._publish_history()
@@ -1007,6 +1182,12 @@ class HarnessServer:
                 return summarize_patch_command(arguments), ""
             if name in READ_ONLY_TOOLS:
                 return summarize_file_tool_command(name, arguments), ""
+            if name == "delegate":
+                args = json.loads(arguments) if isinstance(arguments, str) else arguments
+                provider = args.get("provider") or "auto"
+                model = args.get("model") or "auto"
+                preview = (args.get("task") or "")[:80]
+                return f"delegate → {provider}/{model}: {preview}", ""
             raise ValueError("Herramienta desconocida; no se ejecutó ningún comando")
         except (ValueError, TypeError) as invalid:
             return "", str(invalid)
@@ -1026,6 +1207,54 @@ class HarnessServer:
             result = {"status": "error", "output": str(err), "exit_code": 1, "truncated": False}
         result["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
         return result
+
+    def _run_delegate(self, arguments: str, control: StreamControl) -> dict:
+        """Execute a delegate tool call via the WorkerRouter."""
+        started = time.monotonic()
+        try:
+            args = json.loads(arguments) if isinstance(arguments, str) else arguments
+            task = args.get("task", "")
+            if not task:
+                return {"status": "error", "output": "delegate requires a non-empty task.", "exit_code": 1}
+            provider = args.get("provider") or ""
+            model = args.get("model") or ""
+            max_steps = args.get("max_steps") or 16
+            if not isinstance(max_steps, int) or max_steps < 1:
+                max_steps = 16
+            max_steps = min(max_steps, self.limits.max_steps)
+
+            if not provider:
+                provider = self._select_default_worker_provider()
+            if not model:
+                model = self._select_default_worker_model(provider)
+
+            self.worker_router.workspace = self.workspace
+            result = self.worker_router.run(task, provider, model, control, max_steps)
+            output = result.to_tool_output()
+        except (json.JSONDecodeError, ValueError, TypeError) as err:
+            output = json.dumps({"status": "failed", "error": str(err)})
+        duration_ms = round((time.monotonic() - started) * 1000, 3)
+        return {"status": "completed", "output": output, "exit_code": 0,
+                "truncated": False, "duration_ms": duration_ms}
+
+    def _select_default_worker_provider(self) -> str:
+        """Pick the cheapest provider that has an available client."""
+        for candidate in ("agy", "claude", "chatgpt"):
+            if candidate == "agy" and self.agy_available:
+                return "agy"
+            if candidate == "claude" and self.claude_available and self.claude_authenticated:
+                return "claude"
+            if candidate == "chatgpt" and self.authenticated:
+                return "chatgpt"
+        return self.provider
+
+    def _select_default_worker_model(self, provider: str) -> str:
+        """Pick the cheapest known model for a provider."""
+        if provider == "agy":
+            return self._agy_model or "gemini-2.5-flash"
+        if provider == "claude":
+            return "claude-haiku"
+        return self._chatgpt_model or "gpt-4.1-mini"
 
     def _run_tool(self, item: dict, control: StreamControl, generation: int) -> dict:
         name = item.get("name", "")
@@ -1052,7 +1281,9 @@ class HarnessServer:
                 self._emit("work.activity", project_id=project_id, call_id=call["id"],
                            turn_id=call["turn_id"], status="running")
         control.check()
-        if name == "shell":
+        if name == "delegate":
+            result = self._run_delegate(item["arguments"], control)
+        elif name == "shell":
             executor = ShellExecutor(workspace, timeout=self.limits.shell_timeout)
             try:
                 observer = ProjectActivity(executor.workspace, lambda change:
@@ -2320,29 +2551,54 @@ class HarnessServer:
                 self._emit("chat.thread", thread_id=self.conversation["chat_id"], model=model)
                 self._performance.mark("prepared")
                 self._update_performance(force=True)
+                bucket_key = self._quota_bucket_key(self.provider, model)
+                turn_quota = {
+                    "chat_id": self.conversation["chat_id"],
+                    "provider": self.provider,
+                    "model": model,
+                    "bucket_key": bucket_key,
+                    "identity": self._usage_identity(),
+                    "before": self._last_quota_snapshots.get(bucket_key),
+                }
+                self._active_turn_quota = turn_quota
                 if self.provider == "agy":
                     agy_conv_id = self.conversation.get("agy_conversation_id") or ""
                     agy_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(agy_conv_id))
                     workspace = self.workspace
                     project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
-                    self._spawn(lambda: self._start_agy_turn(
-                        agy_prompt, model, control, generation, workspace, project_id, agy_conv_id, image=image,
-                    ))
+
+                    def _run_agy():
+                        self._ensure_quota_baseline(turn_quota)
+                        self._start_agy_turn(
+                            agy_prompt, model, control, generation, workspace, project_id, agy_conv_id, image=image,
+                        )
+
+                    self._spawn(_run_agy)
                 elif self.provider == "claude":
                     claude_sess_id = self.conversation.get("claude_session_id") or ""
                     claude_prompt = self._build_agy_prompt(prompt.strip(), prior_messages, bool(claude_sess_id))
                     workspace = self.workspace
                     project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
-                    self._spawn(lambda: self._start_claude_turn(
-                        claude_prompt, model, reasoning_effort, control, generation,
-                        workspace, project_id, claude_sess_id, image=image,
-                    ))
+
+                    def _run_claude():
+                        self._ensure_quota_baseline(turn_quota)
+                        self._start_claude_turn(
+                            claude_prompt, model, reasoning_effort, control, generation,
+                            workspace, project_id, claude_sess_id, image=image,
+                        )
+
+                    self._spawn(_run_claude)
                 else:
                     chat_cache_key = "chat-" + self.conversation["chat_id"]
                     control.turn_state = self._turn_states.get(chat_cache_key, "")
-                    self._spawn(lambda: self._start_turn(messages, model, control, generation, reasoning_effort,
-                                                         prompt_cache_key=chat_cache_key,
-                                                         prior_context_tokens=prior_context_tokens))
+
+                    def _run_chatgpt():
+                        self._ensure_quota_baseline(turn_quota)
+                        self._start_turn(messages, model, control, generation, reasoning_effort,
+                                         prompt_cache_key=chat_cache_key,
+                                         prior_context_tokens=prior_context_tokens)
+
+                    self._spawn(_run_chatgpt)
 
     def serve(self, source: TextIO) -> None:
         try:
