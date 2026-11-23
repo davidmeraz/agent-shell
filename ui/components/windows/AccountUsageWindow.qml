@@ -32,7 +32,7 @@ FloatingWindow {
         visible = true;
         if (alreadyVisible) bridge.refreshUsage();
         Qt.callLater(function() {
-            if (!usage.visible || usage.bridge.activeArea === "work") return;
+            if (!usage.visible || usage.bridge.activeArea === "work" || usage.bridge.activeArea === "app") return;
             content.forceActiveFocus();
             content.Window.window.requestActivate();
         });

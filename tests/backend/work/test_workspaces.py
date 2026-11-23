@@ -378,3 +378,59 @@ class WorkspaceTests(unittest.TestCase):
             self.output.wait_for("area.rejected")
             setattr(self.server, flag, False)
             self.assertEqual(self.server.projects.load(project_id)["project_id"], project_id)
+
+    def test_app_area_creates_gema_ui_kit_scaffold_tests_and_runs_app(self):
+        app_dir = self.root / "mi-app-gema"
+        self.server.handle({
+            "type": "app.create",
+            "name": "Notas Gema",
+            "workdir": str(app_dir),
+            "engine": "python",
+        })
+        state = self.output.wait_for("area.state")
+        self.assertEqual(state["area"], "app")
+        app_id = state["project"]["project_id"]
+        self.assertEqual(state["project"]["kind"], "app")
+        self.assertEqual(state["project"]["engine"], "python")
+        self.assertTrue(state["project"]["has_launch_profile"])
+
+        # Verifica que se generó toda la estructura Glassmorphism de Gema UI Kit
+        for rel in (
+            "AGENTS.md",
+            "shell.qml",
+            "ui/AppBridge.qml",
+            "ui/AppWindow.qml",
+            "ui/components/GlassPanel.qml",
+            "ui/components/MattePanel.qml",
+            "ui/components/WaterReflection.qml",
+            "ui/components/ActionButton.qml",
+            "ui/components/GlassDialog.qml",
+            "ui/components/GlassComboBox.qml",
+            "backend/main.py",
+            "scripts/run.sh",
+            "scripts/check.sh",
+        ):
+            self.assertTrue((app_dir / rel).is_file(), f"Falta archivo generado: {rel}")
+
+        # Verifica las instrucciones de IA específicas de Gema UI Kit en el área App
+        self.send("Añade un botón de notas")
+        instructions = self.service.requests[-1]["body"]["instructions"]
+        self.assertIn("Gema UI Kit", instructions)
+        self.assertIn("Dark Glassmorphism", instructions)
+        self.assertIn("Notas Gema", instructions)
+
+        # Verifica el botón 'Probar' (app.test) que ejecuta scripts/check.sh
+        self.server.handle({"type": "app.test", "project_id": app_id})
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "completed")
+        last_call = self.server.conversation["tool_calls"][-1]
+        self.assertIn("GEMA_APP_CHECK_OK", last_call["output"])
+        self.assertEqual(last_call["exit_code"], 0)
+
+        # Verifica que 'projects.list' separa projects (Work) y apps (App)
+        self.create(0)
+        self.server.handle({"type": "projects.list"})
+        events = [json.loads(row) for row in self.output.getvalue().splitlines() if '"projects.list"' in row]
+        latest = events[-1]["data"]
+        self.assertEqual(len(latest["projects"]), 1)
+        self.assertEqual(len(latest["apps"]), 1)
+        self.assertEqual(latest["apps"][0]["project_id"], app_id)

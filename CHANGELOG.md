@@ -3,6 +3,15 @@
 Las versiones del proyecto siguen [SemVer 2.0.0](https://semver.org/lang/es/).
 Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
+## [0.22.0] — 2026-11-22
+
+Esta versión añade el espacio `App` (Gema UI Kit) junto a `Chat` y `Work`, permitiendo crear, probar e iniciar aplicaciones de escritorio nativas con diseño Dark Glassmorphism para Quickshell y motores Python o Rust.
+
+- Nueva pestaña `App` en `WorkspaceSwitcher.qml`, `WorkProjects.qml` y `ProjectDialog.qml` con selección de motor (`Quickshell + Python` o `Quickshell + Rust`) y separación de historial, proyectos y aplicaciones en SQLite (`kind` y `engine` en `projects`).
+- Nuevo generador `backend/harness/work/gema_kit.py`: crea automáticamente la estructura Glassmorphism de Gema UI Kit (`shell.qml`, `ui/AppBridge.qml`, `ui/AppWindow.qml`, `GlassPanel`, `MattePanel`, `WaterReflection`, `ActionButton`, `GlassDialog`, `GlassComboBox`, puente IPC JSON-Lines v2 sobre `stdin`/`stdout`, `scripts/check.sh` y `scripts/run.sh`).
+- Botones `Probar` (`app.test`, validación rápida con `qmllint` y chequeo IPC del motor) e `Iniciar`/`Detener` en la cabecera de `App` en `ChatWindow.qml`, con arranque directo sin inferencia cuando `scripts/run.sh` está presente.
+- Instrucciones de sistema `GEMA_UI_INSTRUCTIONS` inyectadas automáticamente en el área `App` para guiar a la IA en el diseño Glassmorphism de Gema UI Kit.
+
 ## [0.21.0] — 2026-11-22
 
 Esta versión añade integración nativa para Arch Linux y el estándar XDG Base Directory, con migración automática no destructiva desde `.runtime/`, empaquetado oficial (`PKGBUILD`), lanzador de escritorio y servicio `systemd --user`.

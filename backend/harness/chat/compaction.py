@@ -228,7 +228,7 @@ def build_handoff_context(
     summary: str, *, area: str, workspace: Path | None, history_root: Path | None = None,
 ) -> list[dict]:
     items: list[dict] = []
-    if area == "work" and workspace is not None:
+    if area in ("work", "app") and workspace is not None:
         ignored = (history_root,) if history_root is not None else ()
         bootstrap = build_work_bootstrap(workspace, ignored=ignored)
         if bootstrap:

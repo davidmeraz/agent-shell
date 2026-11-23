@@ -28,6 +28,7 @@ QtObject {
     property string activeArea: "chat"
     property string projectId: ""
     property string projectName: ""
+    property string projectEngine: "python"
     property bool areaBusy: false
     property string areaError: ""
     property var projectRun: ({})
@@ -37,7 +38,7 @@ QtObject {
     readonly property bool projectRunActive: projectRunPending || ["preparing", "inspecting", "starting", "running", "stopping"].indexOf(projectRun.phase) >= 0
     readonly property bool projectRunHere: !!projectId && projectRun.project_id === projectId
     readonly property bool projectRunPreparing: projectRunActive && projectRun.phase !== "running"
-    readonly property string areaKey: activeArea === "chat" ? "chat" : "work:" + projectId
+    readonly property string areaKey: activeArea === "chat" ? "chat" : activeArea + ":" + projectId
     readonly property bool workspaceSelected: activeArea === "chat" || !!projectId
     property int shellTimeout: 120
     property string limitsProfile: "equilibrado"
@@ -74,6 +75,7 @@ QtObject {
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
     readonly property ListModel projects: ListModel {}
+    readonly property ListModel apps: ListModel {}
     readonly property ListModel availableModels: ListModel {}
     readonly property ListModel registeredAccounts: ListModel {}
     property int activeAccountIndex: -1
@@ -83,8 +85,9 @@ QtObject {
                                    && !busy && !loginBusy && !accountBusy && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
     readonly property bool canRunShell: ready && historyReady && !busy && !loginBusy && !accountBusy
                                       && !openingChat && !deletingChatId && !areaBusy && workspaceSelected
-    readonly property bool canRunProject: canRunShell && activeArea === "work" && !!projectId && !projectRunActive
+    readonly property bool canRunProject: canRunShell && (activeArea === "work" || activeArea === "app") && !!projectId && !projectRunActive
                                          && ((authenticated && availableModels.count > 0) || !!projectRunCaches[projectId])
+    readonly property bool canTestApp: canRunShell && activeArea === "app" && !!projectId
     signal eventReceived(var event)
     signal conversationChanged()
     signal planConnected()
@@ -209,12 +212,30 @@ QtObject {
         sendCommand({ type: "project.create", name: name, workdir: workdir });
     }
 
+    function createApp(name, workdir, engine = "python") {
+        if (!canSelectArea) return;
+        areaBusy = true;
+        areaError = "";
+        sendCommand({ type: "app.create", name: name, workdir: workdir, engine: engine });
+    }
+
     function deleteProject(projectId) {
         if (!canSelectArea || !projectId) return;
         areaBusy = true;
         areaError = "";
-        status = "Eliminando proyecto…";
-        sendCommand({ type: "project.delete", project_id: projectId });
+        status = activeArea === "app" ? "Eliminando aplicación…" : "Eliminando proyecto…";
+        sendCommand({ type: activeArea === "app" ? "app.delete" : "project.delete", project_id: projectId });
+    }
+
+    function testApp() {
+        if (!canTestApp) return;
+        submittedAt = Date.now();
+        activeTurnId = "";
+        framePending = false;
+        shellRunning = true;
+        busy = true;
+        status = "Probando aplicación Gema UI Kit…";
+        sendCommand({ type: "app.test", project_id: projectId });
     }
 
     function runProject() {
@@ -373,6 +394,7 @@ QtObject {
             activeArea = data.area;
             projectId = data.project ? data.project.project_id : "";
             projectName = data.project ? data.project.name : "";
+            projectEngine = data.project && data.project.engine ? data.project.engine : "python";
             if (data.project) projectRunCaches = Object.assign({}, projectRunCaches,
                 { [data.project.project_id]: !!data.project.has_launch_profile });
             areaBusy = false;
@@ -399,12 +421,16 @@ QtObject {
             const caches = Object.assign({}, projectRunCaches);
             delete caches[data.project_id];
             projectRunCaches = caches;
-            status = "Proyecto eliminado. La carpeta local se conserva.";
+            status = data.kind === "app" ? "Aplicación eliminada. La carpeta local se conserva." : "Proyecto eliminado. La carpeta local se conserva.";
         } else if (event.type === "projects.list") {
             projects.clear();
-            for (const project of data.projects)
-                projects.append({ projectId: project.project_id, name: project.name, workdir: project.workdir });
-            projectRunCaches = Object.assign({}, projectRunCaches, ...data.projects.map(project =>
+            for (const project of data.projects || [])
+                projects.append({ projectId: project.project_id, name: project.name, workdir: project.workdir, engine: project.engine || "python" });
+            apps.clear();
+            for (const app of data.apps || [])
+                apps.append({ projectId: app.project_id, name: app.name, workdir: app.workdir, engine: app.engine || "python" });
+            const allItems = (data.projects || []).concat(data.apps || []);
+            projectRunCaches = Object.assign({}, projectRunCaches, ...allItems.map(project =>
                 ({ [project.project_id]: !!project.has_launch_profile })));
         } else if (event.type === "shell.state") {
             workspace = data.workdir;

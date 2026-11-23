@@ -21,10 +21,17 @@ def _validate_project(project_id: str, project: dict) -> dict:
             or not all(isinstance(project.get(key), str) and project[key]
                        for key in ("name", "workdir", "created_at", "updated_at"))):
         raise ValueError("Registro de proyecto inválido")
+    kind = project.get("kind", "work")
+    engine = project.get("engine", "python")
+    if kind not in ("work", "app") or engine not in ("python", "rust"):
+        raise ValueError("Metadatos de tipo o motor inválidos")
+    project["kind"] = kind
+    project["engine"] = engine
     return project
 
 
 def _row_to_project(row: sqlite3.Row) -> dict:
+    keys = row.keys()
     project = {
         "schema_version": row["schema_version"],
         "project_id": row["project_id"],
@@ -32,6 +39,8 @@ def _row_to_project(row: sqlite3.Row) -> dict:
         "workdir": row["workdir"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "kind": row["kind"] if "kind" in keys and row["kind"] else "work",
+        "engine": row["engine"] if "engine" in keys and row["engine"] else "python",
     }
     if row["launch_profile_json"] is not None:
         project["launch_profile"] = json.loads(row["launch_profile_json"])
@@ -98,7 +107,7 @@ class ProjectStore:
         with self.db.read() as conn:
             row = conn.execute(
                 """
-                SELECT project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json
+                SELECT project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json, kind, engine
                 FROM projects WHERE project_id = ?
                 """,
                 (project_id,),
@@ -115,19 +124,23 @@ class ProjectStore:
         project_id = self._validate_id(project["project_id"])
         updated_at = project["updated_at"] if preserve_updated_at and isinstance(project.get("updated_at"), str) else now()
         launch_json = json.dumps(project["launch_profile"], ensure_ascii=False) if "launch_profile" in project else None
+        kind = project.get("kind", "work") if project.get("kind") in ("work", "app") else "work"
+        engine = project.get("engine", "python") if project.get("engine") in ("python", "rust") else "python"
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO projects
-                    (project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json, kind, engine)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id) DO UPDATE SET
                     schema_version = excluded.schema_version,
                     name = excluded.name,
                     workdir = excluded.workdir,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at,
-                    launch_profile_json = excluded.launch_profile_json
+                    launch_profile_json = excluded.launch_profile_json,
+                    kind = excluded.kind,
+                    engine = excluded.engine
                 """,
                 (
                     project_id,
@@ -137,8 +150,12 @@ class ProjectStore:
                     project["created_at"],
                     updated_at,
                     launch_json,
+                    kind,
+                    engine,
                 ),
             )
+        project["kind"] = kind
+        project["engine"] = engine
         if not preserve_updated_at:
             project["updated_at"] = updated_at
 
@@ -166,36 +183,41 @@ class ProjectStore:
             self.save(project)
             return project
 
-    def create(self, name: str, workdir: str) -> dict:
+    def create(self, name: str, workdir: str, *, kind: str = "work", engine: str = "python") -> dict:
         if not isinstance(name, str) or not name.strip() or len(name) > 80 or "\0" in name:
             raise ValueError("Escribe un nombre de proyecto de entre 1 y 80 caracteres")
+        if kind not in ("work", "app") or engine not in ("python", "rust"):
+            raise ValueError("Configuración de aplicación o proyecto inválida")
         folder = resolve_workspace(workdir)
         if any(row["workdir"] == str(folder) for row in self.list()):
-            raise ValueError("Esta carpeta ya pertenece a un proyecto de Work")
+            raise ValueError("Esta carpeta ya pertenece a un proyecto de Work o App")
         timestamp = now()
         project = {
             "schema_version": 1, "project_id": uuid.uuid4().hex, "name": name.strip(),
             "workdir": str(folder), "created_at": timestamp, "updated_at": timestamp,
+            "kind": kind, "engine": engine,
         }
         try:
             self.save(project)
         except sqlite3.IntegrityError:
-            raise ValueError("Esta carpeta ya pertenece a un proyecto de Work") from None
+            raise ValueError("Esta carpeta ya pertenece a un proyecto de Work o App") from None
         return project
 
-    def list(self) -> list[dict]:
+    def list(self, kind: str | None = None) -> list[dict]:
         self._scan_legacy_json()
         with self.db.read() as conn:
             rows = conn.execute(
                 """
-                SELECT project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json
+                SELECT project_id, schema_version, name, workdir, created_at, updated_at, launch_profile_json, kind, engine
                 FROM projects ORDER BY updated_at DESC
                 """
             ).fetchall()
         result = []
         for row in rows:
             try:
-                result.append(_validate_project(row["project_id"], _row_to_project(row)))
+                item = _validate_project(row["project_id"], _row_to_project(row))
+                if kind is None or item.get("kind", "work") == kind:
+                    result.append(item)
             except (ValueError, KeyError, TypeError):
                 continue
         return result

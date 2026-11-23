@@ -16,7 +16,11 @@ import "components/work"
 FloatingWindow {
     id: window
     required property AgentBridge bridge
-    title: bridge.activeArea === "work" ? "Agent Shell · Work" + (bridge.projectName ? " · " + bridge.projectName : "") : "Agent Shell · Chat"
+    title: bridge.activeArea === "app"
+           ? "Agent Shell · App" + (bridge.projectName ? " · " + bridge.projectName : "")
+           : bridge.activeArea === "work"
+             ? "Agent Shell · Work" + (bridge.projectName ? " · " + bridge.projectName : "")
+             : "Agent Shell · Chat"
     implicitWidth: 600
     implicitHeight: 1000
     minimumSize: Qt.size(560, 560)
@@ -177,20 +181,39 @@ FloatingWindow {
             RowLayout {
                 objectName: "workProjectHeader"
                 Layout.fillWidth: true
-                visible: window.bridge.activeArea === "work" && !!window.bridge.projectId
+                visible: (window.bridge.activeArea === "work" || window.bridge.activeArea === "app") && !!window.bridge.projectId
                 spacing: 10
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     spacing: 3
-                    Text {
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: "Work · " + window.bridge.projectName
-                        textFormat: Text.PlainText
-                        color: "#dddddd"
-                        font.pixelSize: 13
-                        font.bold: true
-                        elide: Text.ElideRight
+                        spacing: 8
+                        Text {
+                            Layout.fillWidth: true
+                            text: (window.bridge.activeArea === "app" ? "App · " : "Work · ") + window.bridge.projectName
+                            textFormat: Text.PlainText
+                            color: "#dddddd"
+                            font.pixelSize: 13
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+                        GlassPanel {
+                            visible: window.bridge.activeArea === "app"
+                            implicitWidth: gemaBadge.implicitWidth + 14
+                            implicitHeight: 20
+                            radius: 6
+                            topColor: "#28505050"
+                            bottomColor: "#1c262626"
+                            Text {
+                                id: gemaBadge
+                                anchors.centerIn: parent
+                                text: "Gema UI Kit · Glass · " + (window.bridge.projectEngine === "rust" ? "Rust" : "Python")
+                                color: "#dddddd"
+                                font.pixelSize: 10
+                            }
+                        }
                     }
                     Text {
                         objectName: "workRunStatus"
@@ -205,13 +228,30 @@ FloatingWindow {
                     }
                 }
                 ActionButton {
+                    objectName: "appTestButton"
+                    visible: window.bridge.activeArea === "app"
+                    text: "Probar"
+                    font.pixelSize: 11
+                    verticalPadding: 7
+                    enabled: window.bridge.canTestApp
+                    Accessible.name: "Probar sintaxis QML y motor de la aplicación Gema UI Kit"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 450
+                    ToolTip.text: "Valida los componentes QML Glassmorphism (qmllint) y la conexión IPC del motor."
+                    onClicked: window.bridge.testApp()
+                }
+                ActionButton {
                     objectName: "workRunButton"
-                    text: window.bridge.projectRunHere && window.bridge.projectRunActive ? "Detener" : "Ejecutar"
+                    text: window.bridge.projectRunHere && window.bridge.projectRunActive
+                          ? "Detener"
+                          : (window.bridge.activeArea === "app" ? "Iniciar" : "Ejecutar")
+                    accent: window.bridge.activeArea === "app" && !(window.bridge.projectRunHere && window.bridge.projectRunActive)
                     font.pixelSize: 11
                     verticalPadding: 7
                     enabled: window.bridge.canRunProject || (window.bridge.projectRunHere && window.bridge.projectRunActive
                              && window.bridge.projectRun.phase !== "stopping")
-                    Accessible.name: text === "Detener" ? "Detener programa del proyecto" : "Detectar y ejecutar proyecto con IA"
+                    Accessible.name: text === "Detener" ? "Detener programa del proyecto"
+                                   : window.bridge.activeArea === "app" ? "Iniciar aplicación Gema UI Kit" : "Detectar y ejecutar proyecto con IA"
                     ToolTip.visible: hovered
                     ToolTip.delay: 450
                     ToolTip.text: window.bridge.projectRunHere
@@ -220,6 +260,8 @@ FloatingWindow {
                                      window.bridge.projectRun.command || "",
                                      window.bridge.projectRun.output ? window.bridge.projectRun.output.slice(-1200) : ""].filter(part => !!part).join("\n")
                                   : window.bridge.projectRunActive ? "Otro proyecto se está ejecutando."
+                                  : window.bridge.activeArea === "app"
+                                    ? "Inicia la ventana Glassmorphism de tu aplicación Gema UI Kit en Hyprland."
                                   : window.bridge.projectRunCaches[window.bridge.projectId]
                                     ? "Ejecutar el inicio guardado del proyecto."
                                     : "La IA detecta cómo iniciar el proyecto sin añadir mensajes al chat."
@@ -230,11 +272,11 @@ FloatingWindow {
                 }
                 ActionButton {
                     objectName: "workProjectsButton"
-                    text: "Proyectos"
+                    text: window.bridge.activeArea === "app" ? "Apps" : "Proyectos"
                     font.pixelSize: 11
                     verticalPadding: 7
                     enabled: window.bridge.canSelectArea
-                    onClicked: window.bridge.selectArea("work", "")
+                    onClicked: window.bridge.selectArea(window.bridge.activeArea, "")
                 }
             }
             WorkProjects {
@@ -846,7 +888,7 @@ FloatingWindow {
             spacing: 14
             RowLayout {
                 Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: window.bridge.activeArea === "work" ? "Historial del proyecto" : "Historial de Chat"; color: "#f5f5f5"; font.pixelSize: 21; font.bold: true }
+                Text { Layout.fillWidth: true; text: window.bridge.activeArea === "app" ? "Historial de la aplicación" : window.bridge.activeArea === "work" ? "Historial del proyecto" : "Historial de Chat"; color: "#f5f5f5"; font.pixelSize: 21; font.bold: true }
                 ActionButton { text: "Cerrar"; font.pixelSize: 11; verticalPadding: 6; onClicked: historyPanel.close() }
             }
             Text {

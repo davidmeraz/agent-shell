@@ -35,31 +35,35 @@ MattePanel {
         }
         RowLayout {
             Layout.fillWidth: true
-            visible: sidebar.bridge.activeArea === "work"
+            visible: sidebar.bridge.activeArea === "work" || sidebar.bridge.activeArea === "app"
             Text {
                 Layout.fillWidth: true
-                text: sidebar.bridge.projectName || "Tus proyectos"
+                text: sidebar.bridge.projectName || (sidebar.bridge.activeArea === "app" ? "Tus aplicaciones" : "Tus proyectos")
                 color: "#dddddd"
                 font.pixelSize: 12
                 elide: Text.ElideRight
                 textFormat: Text.PlainText
             }
             ActionButton {
-                text: "Proyectos"
+                text: sidebar.bridge.activeArea === "app" ? "Apps" : "Proyectos"
                 font.pixelSize: 11
                 horizontalPadding: 8
                 verticalPadding: 6
                 enabled: sidebar.bridge.canSelectArea
-                onClicked: sidebar.bridge.selectArea("work", "")
+                onClicked: sidebar.bridge.selectArea(sidebar.bridge.activeArea, "")
             }
         }
         ActionButton {
             Layout.fillWidth: true
-            text: sidebar.bridge.activeArea === "work" ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nuevo proyecto") : "+  Nuevo chat"
+            text: sidebar.bridge.activeArea === "app"
+                  ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nueva App")
+                  : sidebar.bridge.activeArea === "work"
+                    ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nuevo proyecto")
+                    : "+  Nuevo chat"
             accent: true
             enabled: sidebar.bridge.canBrowseHistory
             onClicked: {
-                if (sidebar.bridge.activeArea === "work" && !sidebar.bridge.projectId) sidebar.projectRequested();
+                if ((sidebar.bridge.activeArea === "work" || sidebar.bridge.activeArea === "app") && !sidebar.bridge.projectId) sidebar.projectRequested();
                 else sidebar.bridge.newChat();
             }
         }
@@ -85,7 +89,9 @@ MattePanel {
         Text {
             Layout.fillWidth: true
             visible: sidebar.bridge.conversations.count === 0
-            text: sidebar.bridge.activeArea === "work" ? "Las conversaciones de este proyecto aparecerán aquí." : "Tus chats se guardarán aquí."
+            text: sidebar.bridge.activeArea === "app" ? "Las conversaciones de esta aplicación aparecerán aquí."
+                  : sidebar.bridge.activeArea === "work" ? "Las conversaciones de este proyecto aparecerán aquí."
+                  : "Tus chats se guardarán aquí."
             color: "#aaaaaa"
             font.pixelSize: 12
             wrapMode: Text.Wrap

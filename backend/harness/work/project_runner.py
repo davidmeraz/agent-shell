@@ -182,6 +182,10 @@ class ProjectRunner:
         try:
             run.control.check()
             profile = self.cache.load(run.project_id, run.workspace)
+            if not profile and (run.workspace / "scripts" / "run.sh").is_file() and (run.workspace / "shell.qml").is_file():
+                snap = project_snapshot(run.workspace, ("scripts/run.sh", "shell.qml"))
+                self.cache.save(run.project_id, run.workspace, "sh scripts/run.sh", snap)
+                profile = self.cache.load(run.project_id, run.workspace)
             snapshot = project_snapshot(run.workspace, profile["watched_paths"] if profile else ())
             failed_start = None
             if profile and snapshot.cacheable and snapshot.fingerprint == profile["fingerprint"]:

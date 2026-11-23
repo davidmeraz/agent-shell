@@ -136,9 +136,11 @@ GlassPanel {
         }
         function onEventReceived(event) {
             if (event.type === "project.deleted") {
-                const key = "work:" + event.data.project_id;
-                delete composer.drafts[key];
-                delete composer.imageDrafts[key];
+                for (const prefix of ["work:", "app:"]) {
+                    const key = prefix + event.data.project_id;
+                    delete composer.drafts[key];
+                    delete composer.imageDrafts[key];
+                }
             }
             if (event.type === "chat.reset" || event.type === "chat.loaded") {
                 composer.cancelPaste();
@@ -217,9 +219,11 @@ GlassPanel {
                 selectedTextColor: "#000000"
                 id: prompt
                 objectName: "chatPrompt"
-                placeholderText: composer.bridge.activeArea === "work"
-                    ? "Describe lo que quieres construir o /shell comando…"
-                    : composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
+                placeholderText: composer.bridge.activeArea === "app"
+                    ? "Describe qué quieres añadir a tu aplicación Gema UI Kit o /shell comando…"
+                    : composer.bridge.activeArea === "work"
+                      ? "Describe lo que quieres construir o /shell comando…"
+                      : composer.bridge.authenticated ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
                 placeholderTextColor: "#aaaaaa"
                 color: "#f5f5f5"
                 font.pixelSize: 14

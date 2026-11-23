@@ -9,24 +9,27 @@ GlassDialog {
     id: dialog
     objectName: "workProjectDialog"
     required property AgentBridge bridge
-    title: "Nuevo proyecto"
+    readonly property bool isAppMode: bridge.activeArea === "app"
+    property string selectedEngine: "python"
+    title: isAppMode ? "Nueva aplicación · Gema UI Kit" : "Nuevo proyecto"
     modal: true
     closePolicy: bridge.areaBusy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: {
         projectName.text = "";
         directory.text = bridge.workspace;
+        selectedEngine = "python";
         bridge.areaError = "";
         projectName.forceActiveFocus();
     }
     Connections {
         target: dialog.bridge
         function onAreaChanged(previousKey, currentKey) {
-            if (dialog.visible && currentKey.startsWith("work:") && dialog.bridge.projectId) dialog.close();
+            if (dialog.visible && (currentKey.startsWith("work:") || currentKey.startsWith("app:")) && dialog.bridge.projectId) dialog.close();
         }
     }
     FolderDialog {
         id: folderPicker
-        title: "Carpeta del proyecto"
+        title: dialog.isAppMode ? "Carpeta de la aplicación" : "Carpeta del proyecto"
         onAccepted: directory.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""))
     }
     contentItem: ColumnLayout {
@@ -36,7 +39,7 @@ GlassDialog {
             id: projectName
             objectName: "workProjectName"
             Layout.fillWidth: true
-            placeholderText: "Mi proyecto"
+            placeholderText: dialog.isAppMode ? "Mis Notas Gema" : "Mi proyecto"
             maximumLength: 80
             enabled: !dialog.bridge.areaBusy
             color: "#ffffff"
@@ -45,6 +48,32 @@ GlassDialog {
             selectedTextColor: "#000000"
             padding: 12
             background: GlassPanel { radius: 10; highlighted: projectName.activeFocus }
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: dialog.isAppMode
+            spacing: 6
+            Text { text: "Stack y motor de Gema UI Kit"; color: "#dddddd"; font.pixelSize: 12 }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                ActionButton {
+                    objectName: "appEnginePython"
+                    Layout.fillWidth: true
+                    text: "Quickshell + Python"
+                    accent: dialog.selectedEngine === "python"
+                    enabled: !dialog.bridge.areaBusy
+                    onClicked: dialog.selectedEngine = "python"
+                }
+                ActionButton {
+                    objectName: "appEngineRust"
+                    Layout.fillWidth: true
+                    text: "Quickshell + Rust"
+                    accent: dialog.selectedEngine === "rust"
+                    enabled: !dialog.bridge.areaBusy
+                    onClicked: dialog.selectedEngine = "rust"
+                }
+            }
         }
         RowLayout {
             Layout.fillWidth: true
@@ -61,7 +90,7 @@ GlassDialog {
             id: directory
             objectName: "workProjectDirectory"
             Layout.fillWidth: true
-            placeholderText: "/home/usuario/proyectos/mi-proyecto"
+            placeholderText: dialog.isAppMode ? "/home/usuario/apps/mi-app-gema" : "/home/usuario/proyectos/mi-proyecto"
             enabled: !dialog.bridge.areaBusy
             color: "#ffffff"
             placeholderTextColor: "#888888"
@@ -72,7 +101,9 @@ GlassDialog {
         }
         Text {
             Layout.fillWidth: true
-            text: "Elige una carpeta existente, vacía o con un proyecto. Work conservará sus conversaciones por separado."
+            text: dialog.isAppMode
+                ? "Generará automáticamente la estructura Gema UI Kit con estilo Dark Glassmorphism (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC stdio y scripts para Probar e Iniciar."
+                : "Elige una carpeta existente, vacía o con un proyecto. Work conservará sus conversaciones por separado."
             color: "#aaaaaa"
             font.pixelSize: 12
             wrapMode: Text.Wrap
@@ -96,10 +127,13 @@ GlassDialog {
             ActionButton { text: "Cancelar"; enabled: !dialog.bridge.areaBusy; onClicked: dialog.close() }
             ActionButton {
                 objectName: "workCreateProject"
-                text: dialog.bridge.areaBusy ? "Abriendo…" : "Crear proyecto"
+                text: dialog.bridge.areaBusy ? "Creando…" : (dialog.isAppMode ? "Crear aplicación" : "Crear proyecto")
                 accent: true
                 enabled: dialog.bridge.canSelectArea && !!projectName.text.trim() && !!directory.text.trim()
-                onClicked: dialog.bridge.createProject(projectName.text.trim(), directory.text.trim())
+                onClicked: {
+                    if (dialog.isAppMode) dialog.bridge.createApp(projectName.text.trim(), directory.text.trim(), dialog.selectedEngine);
+                    else dialog.bridge.createProject(projectName.text.trim(), directory.text.trim());
+                }
             }
         }
     }

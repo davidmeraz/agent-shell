@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS projects (
     workdir TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    launch_profile_json TEXT
+    launch_profile_json TEXT,
+    kind TEXT NOT NULL DEFAULT 'work',
+    engine TEXT NOT NULL DEFAULT 'python'
 );
 
 CREATE TABLE IF NOT EXISTS chats (
@@ -136,6 +138,11 @@ class StorageDB:
             if version > SCHEMA_VERSION:
                 raise ValueError(f"Versión de base de datos incompatible: {version}")
             self._conn.executescript(_SCHEMA_SQL)
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(projects)").fetchall()}
+            if "kind" not in columns:
+                self._conn.execute("ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'work'")
+            if "engine" not in columns:
+                self._conn.execute("ALTER TABLE projects ADD COLUMN engine TEXT NOT NULL DEFAULT 'python'")
             if version < SCHEMA_VERSION:
                 self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._ensure_permissions()

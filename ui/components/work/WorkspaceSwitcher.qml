@@ -4,12 +4,12 @@ import QtQuick.Layouts
 import "../.."
 import "../shared"
 
-// Dos áreas, un espacio visible: navegación centrada y discreta sobre la conversación.
+// Tres áreas, un espacio visible: Chat, Work y App (Gema UI Kit).
 GlassPanel {
     id: switcher
     objectName: "workspaceSwitcher"
     required property AgentBridge bridge
-    implicitWidth: 180
+    implicitWidth: 252
     implicitHeight: 36
     radius: 12
     reflective: false
@@ -43,7 +43,9 @@ GlassPanel {
             border.color: tab.activeFocus ? "#70ffffff" : "#20ffffff"
         }
         Accessible.name: text
-        Accessible.description: text === "Chat" ? "Conversaciones generales" : "Proyectos con carpeta e historial propios"
+        Accessible.description: text === "Chat" ? "Conversaciones generales"
+            : text === "App" ? "Creador de aplicaciones Gema UI Kit (Glassmorphism)"
+            : "Proyectos con carpeta e historial propios"
     }
     RowLayout {
         anchors.fill: parent
@@ -57,6 +59,11 @@ GlassPanel {
         AreaTab {
             objectName: "workAreaButton"
             text: "Work"
+            bridge: switcher.bridge
+        }
+        AreaTab {
+            objectName: "appAreaButton"
+            text: "App"
             bridge: switcher.bridge
         }
     }

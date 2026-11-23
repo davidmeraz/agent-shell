@@ -16,6 +16,7 @@ from ..tools.clipboard import read_clipboard
 from ..account.codex_usage import CodexUsageReader, UsageError
 from ..work.activity import ProjectActivity
 from ..work.bootstrap import build_work_bootstrap
+from ..work.gema_kit import GEMA_UI_INSTRUCTIONS, scaffold_gema_app
 from ..chat.images import validate_image, user_content
 from ..work.explorer import ProjectExplorer
 from .events import EventEmitter
@@ -90,6 +91,7 @@ class HarnessServer:
         self.project: dict | None = None
         self._area_chats: dict[str, dict | None] = {}
         self._last_project_id = ""
+        self._last_app_id = ""
         self.session = session
         self.client = client
         self.conversation: dict | None = None
@@ -146,7 +148,7 @@ class HarnessServer:
                 and record.get("project_id", "") == (self.project["project_id"] if self.project else ""))
 
     def _area_key(self) -> str:
-        return "chat" if self.active_area == "chat" else "work:" + (self.project["project_id"] if self.project else "")
+        return "chat" if self.active_area == "chat" else self.active_area + ":" + (self.project["project_id"] if self.project else "")
 
     def _publish_area(self) -> None:
         project = self._visible_project(self.project) if self.project else None
@@ -184,7 +186,10 @@ class HarnessServer:
                    agent_timeout_seconds=self.limits.shell_timeout)
 
     def _publish_projects(self) -> None:
-        self._emit("projects.list", projects=[self._visible_project(project) for project in self.projects.list()])
+        all_items = self.projects.list()
+        self._emit("projects.list",
+                   projects=[self._visible_project(project) for project in all_items if project.get("kind", "work") == "work"],
+                   apps=[self._visible_project(project) for project in all_items if project.get("kind") == "app"])
 
     def _model_options(self, slug=None):
         return next((row for row in self.models if row["slug"] == (self.model if slug is None else slug)), {})
@@ -216,27 +221,33 @@ class HarnessServer:
 
     def _visible_project(self, project):
         visible = {key: value for key, value in project.items() if key != "launch_profile"}
-        visible["has_launch_profile"] = bool(self.project_runner.cache.load(project["project_id"], Path(project["workdir"])))
+        workdir = Path(project["workdir"])
+        has_gema_script = project.get("kind") == "app" and (workdir / "scripts" / "run.sh").is_file()
+        visible["has_launch_profile"] = bool(has_gema_script or self.project_runner.cache.load(project["project_id"], workdir))
         return visible
 
     def _select_area(self, area: str, project_id: str | None = None) -> None:
-        if area not in ("chat", "work"):
-            raise ValueError("Selecciona Chat o Work")
+        if area not in ("chat", "work", "app"):
+            raise ValueError("Selecciona Chat, Work o App")
         project = None
         workspace = self._chat_workspace
-        if area == "work":
-            selected = self._last_project_id if project_id is None else project_id
+        if area in ("work", "app"):
+            last_id = self._last_app_id if area == "app" else self._last_project_id
+            selected = last_id if project_id is None else project_id
             if not isinstance(selected, str):
                 raise ValueError("Selecciona un proyecto válido")
             if selected:
                 try:
-                    project = self.projects.load(selected)
+                    loaded = self.projects.load(selected)
+                    if loaded.get("kind", "work") != area:
+                        raise ValueError("El elemento pertenece a otro espacio")
+                    project = loaded
                     workspace = resolve_workspace(project["workdir"])
                 except (OSError, ValueError, KeyError, TypeError):
                     if project_id is not None:
                         raise
                     project = None
-        key = "chat" if area == "chat" else "work:" + (project["project_id"] if project else "")
+        key = "chat" if area == "chat" else area + ":" + (project["project_id"] if project else "")
         if key == self._area_key():
             self._publish_area()
             self._publish_projects()
@@ -244,7 +255,10 @@ class HarnessServer:
         self._area_chats[self._area_key()] = self.conversation
         self.active_area, self.project, self.workspace = area, project, workspace
         if project:
-            self._last_project_id = project["project_id"]
+            if area == "app":
+                self._last_app_id = project["project_id"]
+            else:
+                self._last_project_id = project["project_id"]
         self.conversation = self._area_chats.get(key)
         self._performance = None
         self._generation += 1
@@ -266,7 +280,8 @@ class HarnessServer:
         """Retira sólo registros privados en una transacción SQLite; nunca toca la carpeta del proyecto."""
         if self.project_runner.active and self.project_runner.state.get("project_id") == project_id:
             raise ValueError("Detén el programa antes de eliminar su proyecto.")
-        self.projects.load(project_id)
+        target = self.projects.load(project_id)
+        target_kind = target.get("kind", "work")
         # Sincronizar posibles JSON heredados antes de borrar; los corruptos se conservan en disco.
         self.history._scan_legacy_json()
         orphans: list[str] = []
@@ -274,7 +289,7 @@ class HarnessServer:
             chats = [
                 row[0]
                 for row in conn.execute(
-                    "SELECT chat_id FROM chats WHERE area = 'work' AND project_id = ?",
+                    "SELECT chat_id FROM chats WHERE area IN ('work', 'app') AND project_id = ?",
                     (project_id,),
                 )
             ]
@@ -288,7 +303,7 @@ class HarnessServer:
                         chats,
                     )
                 ]
-                conn.execute("DELETE FROM chats WHERE area = 'work' AND project_id = ?", (project_id,))
+                conn.execute("DELETE FROM chats WHERE area IN ('work', 'app') AND project_id = ?", (project_id,))
             cursor = conn.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
             if cursor.rowcount == 0:
                 raise FileNotFoundError(project_id)
@@ -300,13 +315,15 @@ class HarnessServer:
                     orphans.append(sha)
         for sha in orphans:
             self.history.blobs.delete(sha)
-        key = "work:" + project_id
         if self._last_project_id == project_id:
             self._last_project_id = ""
+        if self._last_app_id == project_id:
+            self._last_app_id = ""
         if self.project and self.project["project_id"] == project_id:
-            self._select_area("work", "")
-        self._area_chats.pop(key, None)
-        self._emit("project.deleted", project_id=project_id, chat_ids=chats)
+            self._select_area(target_kind, "")
+        self._area_chats.pop("work:" + project_id, None)
+        self._area_chats.pop("app:" + project_id, None)
+        self._emit("project.deleted", project_id=project_id, kind=target_kind, chat_ids=chats)
         self._publish_projects()
         self._publish_history()
         self._publish_performance()
@@ -635,8 +652,9 @@ class HarnessServer:
         if self.busy or self.login_pending or self.account_pending:
             self._emit("shell.rejected", message="Espera a que termine la operación actual.")
             return
-        if self.active_area == "work" and self.project is None:
-            self._emit("shell.rejected", message="Selecciona o crea un proyecto en Work antes de ejecutar comandos.")
+        if self.active_area in ("work", "app") and self.project is None:
+            self._emit("shell.rejected", message="Selecciona o crea una aplicación en App antes de ejecutar comandos."
+                       if self.active_area == "app" else "Selecciona o crea un proyecto en Work antes de ejecutar comandos.")
             return
         try:
             command = parse_command(json.dumps({"command": request.get("command")}, ensure_ascii=False))
@@ -730,7 +748,7 @@ class HarnessServer:
                 return {"status": "error", "output": error}
             shell_control = self._shell_control
             workspace = self.workspace
-            project_id = self.project["project_id"] if self.active_area == "work" and self.project else ""
+            project_id = self.project["project_id"] if self.active_area in ("work", "app") and self.project else ""
             observe_work = bool(project_id and name in ("shell", "apply_patch"))
             if observe_work:
                 self._emit("work.activity", project_id=project_id, call_id=call["id"],
@@ -807,7 +825,7 @@ class HarnessServer:
     def _work_changed(self, change: dict, project_id: str, call: dict, generation: int) -> None:
         with self._lock:
             if (self._current_turn(generation) and not self._stream.cancelled.is_set()
-                    and self.active_area == "work" and self.project
+                    and self.active_area in ("work", "app") and self.project
                     and self.project["project_id"] == project_id):
                 self._emit("work.changed", project_id=project_id, call_id=call["id"],
                            turn_id=call["turn_id"], **change)
@@ -847,7 +865,7 @@ class HarnessServer:
             effort = self._compaction_effort(model)
             area = self.active_area
             project_id = self.project["project_id"] if self.project else ""
-            workspace = self.workspace if area == "work" else None
+            workspace = self.workspace if area in ("work", "app") else None
             raw_context = copy.deepcopy(record.get("context") or [
                 {"role": row["role"], "content": user_content(row["text"], row.get("image", ""))}
                 for row in record.get("messages", []) if row.get("text") or row.get("image")
@@ -997,7 +1015,13 @@ class HarnessServer:
         try:
             with self._lock:
                 instructions = AGENT_INSTRUCTIONS
-                if self.active_area == "work":
+                if self.active_area == "app":
+                    instructions += (
+                        GEMA_UI_INSTRUCTIONS
+                        + "App name (user-provided metadata): " + json.dumps(self.project["name"]) + ". "
+                        + "Backend engine: " + json.dumps(self.project.get("engine", "python")) + ". "
+                    )
+                elif self.active_area == "work":
                     instructions += (
                         "You are in Work, the project workspace. Complete the requested implementation end to end. "
                         "Inspect the existing project and its local instructions before making changes. "
@@ -1163,16 +1187,16 @@ class HarnessServer:
                        message="Solicitud de explorador inválida")
             return
         project = self.project
-        # En Chat los visores conservan únicamente el último proyecto de Work.
+        # En Chat los visores conservan únicamente el último proyecto de Work o App.
         # Cargar su registro evita usar la carpeta de la conversación actual.
-        if self.active_area == "chat" and project_id and project_id == self._last_project_id:
+        if self.active_area == "chat" and project_id and project_id in (self._last_project_id, self._last_app_id):
             try:
                 project = self.projects.load(project_id)
             except (OSError, ValueError, KeyError, TypeError):
                 project = None
         if not project or project_id != project["project_id"]:
             self._emit("explorer.error", project_id=project_id, request_id=request_id,
-                       message="Selecciona el proyecto activo en Work")
+                       message="Selecciona el proyecto activo en Work o App")
             return
         root = Path(project["workdir"])
         def read_project():
@@ -1214,19 +1238,32 @@ class HarnessServer:
                     else:
                         if set(request) - {"type", "project_id"}:
                             raise ValueError("La instrucción de ejecución la prepara el backend.")
-                        if self.active_area != "work" or not self.project or project_id != self.project["project_id"]:
-                            raise ValueError("Selecciona el proyecto que quieres ejecutar en Work.")
+                        if self.active_area not in ("work", "app") or not self.project or project_id != self.project["project_id"]:
+                            raise ValueError("Selecciona el proyecto o aplicación que quieres ejecutar.")
                         if self.busy or self.login_pending or self.account_pending:
                             raise ValueError("Espera a que termine la operación actual.")
                         can_detect = self.authenticated and self.model in {row["slug"] for row in self.models}
                         project = self.projects.load(project_id)
-                        if not can_detect and not self.project_runner.cache.load(project_id, Path(project["workdir"])):
+                        has_direct_script = (
+                            project.get("kind") == "app"
+                            and (Path(project["workdir"]) / "scripts" / "run.sh").is_file()
+                        )
+                        if not can_detect and not has_direct_script and not self.project_runner.cache.load(project_id, Path(project["workdir"])):
                             raise ValueError("Conecta ChatGPT y selecciona un modelo para detectar el proyecto.")
                         run = self.project_runner.reserve(project, self.model, can_detect, self.reasoning_effort)
                         self._spawn(lambda: self.project_runner.run(run, self.client))
                 except (OSError, ValueError, TypeError) as error:
                     self._emit("project.run.rejected", project_id=project_id,
                                message=str(error) if isinstance(error, ValueError) else "No se pudo iniciar el proyecto.")
+                return
+            if action == "app.test":
+                project_id = request.get("project_id")
+                if self.active_area != "app" or not self.project or project_id != self.project["project_id"]:
+                    self._emit("shell.rejected", message="Selecciona una aplicación en App para probarla.")
+                    return
+                check_script = Path(self.workspace) / "scripts" / "check.sh"
+                cmd = "./scripts/check.sh" if check_script.is_file() else "qmllint shell.qml ui/*.qml ui/components/*.qml"
+                self._start_local_shell({"command": cmd})
                 return
             if action == "usage.read":
                 request_id = request.get("request_id")
@@ -1259,20 +1296,31 @@ class HarnessServer:
             if action == "projects.list":
                 self._publish_projects()
                 return
-            if action in ("area.select", "project.create", "project.delete"):
+            if action in ("area.select", "project.create", "project.delete", "app.create", "app.delete"):
                 if self.busy or self.login_pending or self.account_pending:
                     self._emit("area.rejected", message="Espera a que termine la operación actual antes de cambiar de espacio.")
                     return
                 try:
-                    if action == "project.delete":
+                    if action in ("project.delete", "app.delete"):
                         self._delete_project(request.get("project_id"))
+                    elif action == "app.create":
+                        name = request.get("name")
+                        workdir = request.get("workdir")
+                        engine = request.get("engine", "python")
+                        if not isinstance(name, str) or not name.strip() or len(name) > 80 or "\0" in name:
+                            raise ValueError("Escribe un nombre de aplicación de entre 1 y 80 caracteres")
+                        if not isinstance(workdir, str) or not workdir.strip():
+                            raise ValueError("Selecciona una carpeta para la aplicación")
+                        folder = scaffold_gema_app(workdir, name.strip(), engine)
+                        project = self.projects.create(name, str(folder), kind="app", engine=engine)
+                        self._select_area("app", project["project_id"])
                     elif action == "project.create":
-                        project = self.projects.create(request.get("name"), request.get("workdir"))
+                        project = self.projects.create(request.get("name"), request.get("workdir"), kind="work")
                         self._select_area("work", project["project_id"])
                     else:
                         self._select_area(request.get("area"), request.get("project_id"))
                 except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
-                    message = ("No se pudo eliminar el proyecto. Vuelve a intentarlo." if action == "project.delete"
+                    message = ("No se pudo eliminar el proyecto. Vuelve a intentarlo." if action in ("project.delete", "app.delete")
                                else "No se pudo abrir el proyecto. Comprueba que su carpeta existe y está disponible.")
                     self._emit("area.rejected", message=str(error) if isinstance(error, ValueError) else message)
                 return
@@ -1291,7 +1339,7 @@ class HarnessServer:
                         self._emit("error", message="La terminal permanece activa; sólo puedes cambiar su directorio.")
                         return
                     workspace = resolve_workspace(request.get("workdir"))
-                    if self.active_area == "work":
+                    if self.active_area in ("work", "app"):
                         if self.project is None:
                             raise ValueError("Selecciona un proyecto")
                         if any(row["project_id"] != self.project["project_id"] and row["workdir"] == str(workspace)
@@ -1439,8 +1487,10 @@ class HarnessServer:
                 self._emit("chat.finished", status="failed", message="Escribe entre 1 y 16000 caracteres")
             elif not self.authenticated or not self.models:
                 self._emit("chat.finished", status="failed", message="Conecta ChatGPT y actualiza los modelos para conversar")
-            elif self.active_area == "work" and self.project is None:
-                self._emit("chat.finished", status="failed", message="Selecciona o crea un proyecto en Work para comenzar")
+            elif self.active_area in ("work", "app") and self.project is None:
+                self._emit("chat.finished", status="failed",
+                           message="Selecciona o crea una aplicación en App para comenzar"
+                           if self.active_area == "app" else "Selecciona o crea un proyecto en Work para comenzar")
             else:
                 try:
                     prior_context_tokens = self._last_context_tokens(self.conversation)
@@ -1459,7 +1509,7 @@ class HarnessServer:
                     if "context" not in self.conversation:
                         bootstrap = (
                             build_work_bootstrap(self.workspace, ignored=(self.history.root,))
-                            if self.active_area == "work" else ""
+                            if self.active_area in ("work", "app") else ""
                         )
                         prefix = [{"role": "developer", "content": bootstrap}] if bootstrap else []
                         self.conversation["context"] = prefix + copy.deepcopy(messages)

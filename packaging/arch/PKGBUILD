@@ -1,6 +1,6 @@
 # Maintainer: Agent Shell Contributors
 pkgname=agent-shell
-pkgver=0.21.0
+pkgver=0.22.0
 pkgrel=1
 pkgdesc="Cliente nativo de ChatGPT para Linux con Quickshell, Qt Quick y ejecución local de shell"
 arch=('any')

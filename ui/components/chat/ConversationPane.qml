@@ -31,7 +31,9 @@ GlassPanel {
         visible: pane.bridge.messages.count === 0
         Text {
             width: parent.width
-            text: pane.bridge.activeArea === "work" ? "¿Qué vamos a construir?" : "¿De qué hablamos?"
+            text: pane.bridge.activeArea === "app"
+                  ? "Diseña tu aplicación Gema UI Kit"
+                  : pane.bridge.activeArea === "work" ? "¿Qué vamos a construir?" : "¿De qué hablamos?"
             color: "#f5f5f5"
             font.pixelSize: pane.width < 580 ? 25 : 32
             font.bold: true
@@ -40,7 +42,9 @@ GlassPanel {
         Text {
             width: parent.width
             text: pane.bridge.authenticated
-                ? (pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
+                ? (pane.bridge.activeArea === "app"
+                   ? "Construye con estilo Dark Glassmorphism (Quickshell + " + (pane.bridge.projectEngine === "rust" ? "Rust" : "Python") + "). Usa 'Probar' e 'Iniciar' arriba."
+                   : pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
                 : "Conecta tu cuenta de ChatGPT para comenzar."
             color: "#bbbbbb"
             font.pixelSize: 13
@@ -52,7 +56,11 @@ GlassPanel {
             spacing: 8
             visible: pane.bridge.authenticated && pane.height >= 260
             Repeater {
-                model: pane.bridge.activeArea === "work" ? [
+                model: pane.bridge.activeArea === "app" ? [
+                    { label: "Añadir panel Glass", prompt: "Diseña en AppWindow.qml una interfaz con paneles GlassPanel/MattePanel y controles de Gema UI Kit para: " },
+                    { label: "Conectar función al motor", prompt: "Agrega una nueva acción en AppBridge.qml y en el motor backend por JSON-Lines stdio para: " },
+                    { label: "Mejorar diseño Glassmorphism", prompt: "Refina el diseño Glassmorphism de la aplicación (transparencias, bordes luminosos, reflejos y layout) para: " }
+                ] : pane.bridge.activeArea === "work" ? [
                     { label: "Explorar proyecto", prompt: "Inspecciona este proyecto y explícame su estructura y cómo se ejecuta." },
                     { label: "Crear una función", prompt: "Quiero implementar esta función en el proyecto: " },
                     { label: "Resolver un error", prompt: "Investiga y corrige este error en el proyecto: " }

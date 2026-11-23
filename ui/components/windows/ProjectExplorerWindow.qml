@@ -218,7 +218,7 @@ FloatingWindow {
         }
         function onEventReceived(event) {
             const data = event.data;
-            if (event.type === "area.state" && data.area === "work") {
+            if (event.type === "area.state" && (data.area === "work" || data.area === "app")) {
                 explorer.setProject(data.project || {});
                 return;
             }
@@ -230,7 +230,7 @@ FloatingWindow {
                 explorer.stopActivity(data.status);
                 explorer.activityCall = "";
             }
-            if (event.type === "work.activity" && explorer.bridge.activeArea === "work"
+            if (event.type === "work.activity" && (explorer.bridge.activeArea === "work" || explorer.bridge.activeArea === "app")
                 && data.project_id === explorer.projectId) {
                 if (data.status === "running") {
                     explorer.activityCall = data.call_id;
@@ -243,7 +243,7 @@ FloatingWindow {
                 } else if (data.call_id === explorer.activityCall) explorer.stopActivity(data.status);
                 return;
             }
-            if (event.type === "work.changed" && explorer.bridge.activeArea === "work"
+            if (event.type === "work.changed" && (explorer.bridge.activeArea === "work" || explorer.bridge.activeArea === "app")
                 && data.project_id === explorer.projectId && data.call_id === explorer.activityCall
                 && explorer.activityState === "running") {
                 // Si el usuario cerró una ventana, un nuevo cambio relevante puede reabrirla.
