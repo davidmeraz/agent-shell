@@ -34,6 +34,9 @@ class ProjectStoreTests(unittest.TestCase):
         self.assertEqual(restored["name"], "Proyecto 🎵")
         self.assertEqual(restored["workdir"], str(self.folder.resolve()))
         self.assertEqual(self.store.list(), [restored])
+        renamed = self.store.rename(project["project_id"], "  Nombre Corregido  ")
+        self.assertEqual(renamed["name"], "Nombre Corregido")
+        self.assertEqual(ProjectStore(self.store.root).load(project["project_id"])["name"], "Nombre Corregido")
         if os.name == "posix":
             self.assertEqual(self.store.db.path.stat().st_mode & 0o777, 0o600)
 

@@ -53,6 +53,8 @@ QtObject {
     property string limitsError: ""
     property string status: "Preparando Agent Shell…"
     property string appVersion: ""
+    property string displayName: ""
+    property string profileError: ""
     property string email: ""
     property string plan: ""
     property string modelName: ""
@@ -62,6 +64,7 @@ QtObject {
     property string currentChatId: ""
     property string currentTitle: ""
     property var messageRows: ({})
+    property var pendingTextUpdates: ({})
     property var performanceHistory: []
     property bool performanceBusy: false
     property var latestPerformance: ({})
@@ -227,6 +230,13 @@ QtObject {
         sendCommand({ type: activeArea === "app" ? "app.delete" : "project.delete", project_id: projectId });
     }
 
+    function renameProject(projectId, name) {
+        if (!canSelectArea || !projectId) return;
+        areaBusy = true;
+        areaError = "";
+        sendCommand({ type: activeArea === "app" ? "app.rename" : "project.rename", project_id: projectId, name: name });
+    }
+
     function testApp() {
         if (!canTestApp) return;
         submittedAt = Date.now();
@@ -308,6 +318,12 @@ QtObject {
         sendCommand({ type: "auth.remove", account_id: accountId });
     }
 
+    function updateProfile(name) {
+        if (!ready) return;
+        profileError = "";
+        sendCommand({ type: "profile.update", display_name: (name || "").trim() });
+    }
+
     function cancelLogin() { sendCommand({ type: "auth.cancel" }); }
     function refreshAccount() {
         if (!ready || busy || loginBusy || accountBusy || projectRunPreparing) return;
@@ -342,12 +358,20 @@ QtObject {
         if (measurement.turn_id === activeTurnId) latestPerformance = measurement;
         let target = -1;
         for (let i = 0; i < messages.count; ++i) {
-            if (messages.get(i).turnId === measurement.turn_id && !messages.get(i).toolJson) {
-                messages.setProperty(i, "performanceJson", "");
+            if (messages.get(i).turnId === measurement.turn_id && !messages.get(i).toolJson)
                 target = i;
+        }
+        for (let i = 0; i < messages.count; ++i) {
+            if (i !== target && messages.get(i).turnId === measurement.turn_id
+                && !messages.get(i).toolJson && messages.get(i).performanceJson !== "") {
+                messages.setProperty(i, "performanceJson", "");
             }
         }
-        if (target >= 0) messages.setProperty(target, "performanceJson", JSON.stringify(measurement));
+        if (target >= 0) {
+            const encoded = JSON.stringify(measurement);
+            if (messages.get(target).performanceJson !== encoded)
+                messages.setProperty(target, "performanceJson", encoded);
+        }
     }
 
     function recordFirstText(turnId, text) {
@@ -365,15 +389,48 @@ QtObject {
                       first_visible_ms: now - submittedAt, ui_frame_ms: now - firstReceivedAt });
     }
 
+    readonly property Timer deltaFlushTimer: Timer {
+        interval: 16
+        repeat: false
+        onTriggered: bridge.flushPendingText()
+    }
+
+    function flushPendingText() {
+        deltaFlushTimer.stop();
+        const keys = Object.keys(pendingTextUpdates);
+        if (!keys.length) return;
+        const updates = pendingTextUpdates;
+        pendingTextUpdates = ({});
+        for (const itemId of keys) {
+            const row = messageRows[itemId];
+            if (row !== undefined && row < messages.count)
+                messages.setProperty(row, "body", updates[itemId]);
+        }
+        conversationChanged();
+    }
+
     function updateMessage(itemId, text, append, turnId) {
         const row = messageRows[itemId];
         if (row === undefined) {
+            flushPendingText();
             messageRows[itemId] = messages.count;
             messages.append({ author: "CHATGPT", body: text, imageUrl: "", turnId: turnId || "", performanceJson: "", toolJson: "" });
-        } else {
-            messages.setProperty(row, "body", append ? messages.get(row).body + text : text);
+            conversationChanged();
+            return;
         }
-        conversationChanged();
+        if (!append) {
+            delete pendingTextUpdates[itemId];
+            flushPendingText();
+            messages.setProperty(row, "body", text);
+            conversationChanged();
+            return;
+        }
+        const current = pendingTextUpdates[itemId] !== undefined
+            ? pendingTextUpdates[itemId]
+            : messages.get(row).body;
+        pendingTextUpdates[itemId] = current + text;
+        if (!deltaFlushTimer.running)
+            deltaFlushTimer.start();
     }
 
     function receive(line) {
@@ -387,6 +444,8 @@ QtObject {
             return;
         }
         const data = event.data;
+        if (event.type !== "chat.delta" && event.type !== "performance.updated")
+            flushPendingText();
         if (event.type === "clipboard.result") {
             clipboardResult(data);
         } else if (event.type === "area.state") {
@@ -450,6 +509,12 @@ QtObject {
             limitsError = "";
         } else if (event.type === "limits.rejected") {
             limitsError = data.message;
+            status = data.message;
+        } else if (event.type === "profile.state") {
+            displayName = data.display_name || "";
+            profileError = "";
+        } else if (event.type === "profile.rejected") {
+            profileError = data.message;
             status = data.message;
         } else if (event.type === "tool.updated") {
             updateTool(data.call);

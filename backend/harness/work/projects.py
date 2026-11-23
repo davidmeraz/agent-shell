@@ -183,6 +183,15 @@ class ProjectStore:
             self.save(project)
             return project
 
+    def rename(self, project_id: str, name: str) -> dict:
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or "\0" in name:
+            raise ValueError("Escribe un nombre de proyecto de entre 1 y 80 caracteres")
+        with self._lock:
+            project = self.load(project_id)
+            project["name"] = name.strip()
+            self.save(project)
+            return project
+
     def create(self, name: str, workdir: str, *, kind: str = "work", engine: str = "python") -> dict:
         if not isinstance(name, str) or not name.strip() or len(name) > 80 or "\0" in name:
             raise ValueError("Escribe un nombre de proyecto de entre 1 y 80 caracteres")

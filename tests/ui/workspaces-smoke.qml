@@ -36,6 +36,25 @@ ShellRoot {
         inspector.findChild(chat, "workProjectDirectory").text = workdir;
         return click("workCreateProject");
     }
+    function requestRename(projectId, newName) {
+        const list = inspector.findChild(chat, "workProjectList");
+        for (let index = 0; index < list.count; ++index) {
+            const row = list.itemAtIndex(index);
+            if (row && row.projectId === projectId) {
+                const button = inspector.findChild(row, "workRenameProject");
+                if (!check(!!button && button.enabled, "botón renombrar proyecto ausente")) return false;
+                inspector.mouseClick(button);
+                inspector.wait(160);
+                const dialog = inspector.findChild(chat, "workRenameProjectDialog");
+                const input = inspector.findChild(chat, "workRenameProjectInput");
+                if (!check(!!dialog && dialog.visible && !!input && !agent.projectId,
+                             "el botón renombrar abre el proyecto o no muestra el diálogo")) return false;
+                input.text = newName;
+                return click("workConfirmRenameProject");
+            }
+        }
+        return check(false, "fila del proyecto para renombrar no encontrada");
+    }
     function requestDelete(projectId) {
         const list = inspector.findChild(chat, "workProjectList");
         for (let index = 0; index < list.count; ++index) {
@@ -168,6 +187,12 @@ ShellRoot {
                 } else if (scenario.stage === 13) {
                     if (agent.areaBusy || agent.projectId) return;
                     inspector.wait(160);
+                    if (!scenario.requestRename(scenario.secondProject, "Proyecto B Renombrado")) return;
+                    inspector.tryCompare(agent, "areaBusy", false, 1000);
+                    inspector.wait(60);
+                    if (!scenario.check(agent.projects.get(0).name === "Proyecto B Renombrado"
+                        || agent.projects.get(1).name === "Proyecto B Renombrado",
+                        "el proyecto no actualizó su nombre en la lista")) return;
                     if (!scenario.requestDelete(scenario.secondProject)) return;
                     if (!scenario.click("workCancelDeleteProject")) return;
                     scenario.stage = 14;

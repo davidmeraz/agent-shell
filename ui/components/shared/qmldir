@@ -6,6 +6,7 @@ GlassDialog 1.0 GlassDialog.qml
 GlassPanel 1.0 GlassPanel.qml
 MattePanel 1.0 MattePanel.qml
 UsageLimit 1.0 UsageLimit.qml
+UserAvatar 1.0 UserAvatar.qml
 ViewerMotion 1.0 ViewerMotion.qml
 WaterReflection 1.0 WaterReflection.qml
 WorkStatusNote 1.0 WorkStatusNote.qml

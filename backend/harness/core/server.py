@@ -35,6 +35,7 @@ from ..chat.models import validate_effort
 from ..work.launch_cache import LaunchCache
 from .http import Cancelled, ServiceError, StreamControl, service_error
 from .limits import AgentLimits, FailureTracker, LIMIT_FIELDS, LimitsStore, billable_tokens
+from .profile import ProfileStore
 from ..chat.performance import TurnPerformance
 from ..tools.files import (
     GREP_TOOL, READ_FILE_TOOL, execute_grep_files, execute_read_file, summarize_file_tool_command,
@@ -84,8 +85,11 @@ class HarnessServer:
                  limits: AgentLimits | None = None, config_root: Path | None = None) -> None:
         self.events = EventEmitter(output)
         self.history = HistoryStore(history_root)
-        self.limits_store = LimitsStore(config_root if config_root is not None else self.history.root / "config")
+        config_dir = config_root if config_root is not None else self.history.root / "config"
+        self.limits_store = LimitsStore(config_dir)
         self.limits = limits if limits is not None else AgentLimits.from_environment(base=self.limits_store.load())
+        self.profile_store = ProfileStore(config_dir)
+        self.profile = self.profile_store.load()
         self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
         self.active_area = "chat"
         self.project: dict | None = None
@@ -160,6 +164,22 @@ class HarnessServer:
         compactions = int(self.conversation.get("compaction_count", 0)) if self.conversation else 0
         self._emit("limits.state", profile=self.limits.profile_name(),
                    chat_compaction_count=compactions, **self.limits.to_dict())
+
+    def _publish_profile(self) -> None:
+        self._emit("profile.state", display_name=self.profile.get("display_name", ""))
+
+    def _update_profile(self, request: dict) -> None:
+        try:
+            unknown = set(request) - {"type", "display_name"}
+            if unknown:
+                raise ValueError("Solicitud de perfil con campos desconocidos.")
+            saved = self.profile_store.save(request.get("display_name", ""))
+            self.profile = saved
+        except (ValueError, OSError, TypeError) as error:
+            self._emit("profile.rejected", message=str(error) if isinstance(error, ValueError) else
+                       "No se pudo guardar el nombre de usuario.")
+            return
+        self._publish_profile()
 
     def _configure_limits(self, request: dict) -> None:
         if self.busy or self.login_pending:
@@ -1296,13 +1316,20 @@ class HarnessServer:
             if action == "projects.list":
                 self._publish_projects()
                 return
-            if action in ("area.select", "project.create", "project.delete", "app.create", "app.delete"):
+            if action in ("area.select", "project.create", "project.delete", "project.rename",
+                          "app.create", "app.delete", "app.rename"):
                 if self.busy or self.login_pending or self.account_pending:
                     self._emit("area.rejected", message="Espera a que termine la operación actual antes de cambiar de espacio.")
                     return
                 try:
                     if action in ("project.delete", "app.delete"):
                         self._delete_project(request.get("project_id"))
+                    elif action in ("project.rename", "app.rename"):
+                        updated = self.projects.rename(request.get("project_id"), request.get("name"))
+                        if self.project and self.project["project_id"] == updated["project_id"]:
+                            self.project = updated
+                        self._publish_area()
+                        self._publish_projects()
                     elif action == "app.create":
                         name = request.get("name")
                         workdir = request.get("workdir")
@@ -1326,6 +1353,9 @@ class HarnessServer:
                 return
             if action == "limits.configure":
                 self._configure_limits(request)
+                return
+            if action == "profile.update":
+                self._update_profile(request)
                 return
             if action == "shell.execute":
                 self._start_local_shell(request)
@@ -1553,6 +1583,7 @@ class HarnessServer:
             self._emit("history.ready", directory=str(self.history.root))
             self._publish_area()
             self._publish_limits()
+            self._publish_profile()
             self._publish_projects()
             self._publish_history()
             self._emit("backend.ready", provider="chatgpt", app_version=get_version())

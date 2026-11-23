@@ -165,26 +165,33 @@ MattePanel {
             onClicked: sidebar.accountRequested()
             contentItem: RowLayout {
                 spacing: 10
-                Rectangle {
-                    implicitWidth: 8; implicitHeight: 8; radius: 4
-                    color: sidebar.bridge.authenticated ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : "#777777"
+                UserAvatar {
+                    id: sidebarAvatar
+                    size: 30
+                    customName: sidebar.bridge.displayName
+                    plan: sidebar.bridge.plan
+                    connected: sidebar.bridge.authenticated
+                    showStatusDot: true
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 3
                     Text {
                         Layout.fillWidth: true
-                        text: sidebar.bridge.authenticated ? sidebar.bridge.email || "Cuenta conectada" : "Conectar ChatGPT"
+                        text: sidebar.bridge.authenticated ? sidebarAvatar.displayName : "Conectar ChatGPT"
                         textFormat: Text.PlainText
-                        elide: Text.ElideMiddle
+                        elide: Text.ElideRight
                         color: GemaTheme.textColor
-                        font.pixelSize: 12
+                        font.pixelSize: 13
                         font.weight: Font.DemiBold
                         style: Text.Raised
                         styleColor: GemaTheme.textShadow
                     }
                     Text {
-                        text: sidebar.bridge.authenticated ? "Cuenta y uso del plan" : "Inicia sesión para conversar"
+                        Layout.fillWidth: true
+                        text: sidebar.bridge.authenticated ? "Perfil y cuenta" : "Inicia sesión para conversar"
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
                         color: GemaTheme.mutedColor
                         font.pixelSize: 10
                         style: Text.Raised

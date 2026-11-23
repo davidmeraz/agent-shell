@@ -30,12 +30,13 @@ FloatingWindow {
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
     property var projectToDelete: ({})
+    property var projectToRename: ({})
     property var accountToRemove: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || shellSettings.visible || limitsDialog.visible
                                            || commandHelp.visible
-                                           || projectDialog.visible || deleteProjectDialog.visible
+                                           || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
     property bool sidebarKeyboardOpen: false
@@ -287,6 +288,15 @@ FloatingWindow {
                 visible: !window.bridge.workspaceSelected
                 bridge: window.bridge
                 onNewProjectRequested: projectDialog.open()
+                onRenameProjectRequested: (projectId, name) => {
+                    window.projectToRename = ({ project_id: projectId, name: name });
+                    renameProjectInput.text = name;
+                    renameProjectDialog.open();
+                    Qt.callLater(() => {
+                        renameProjectInput.forceActiveFocus();
+                        renameProjectInput.selectAll();
+                    });
+                }
                 onDeleteProjectRequested: (projectId, name, workdir) => {
                     window.projectToDelete = ({ project_id: projectId, name: name, workdir: workdir });
                     deleteProjectDialog.open();
@@ -302,6 +312,7 @@ FloatingWindow {
                 onPerformanceRequested: measurement => window.showPerformance(measurement)
                 onSuggestionRequested: text => composer.prepare(text)
                 onLoginRequested: window.bridge.login()
+                onAccountRequested: accountPanel.open()
             }
 
             MessageComposer {
@@ -439,6 +450,67 @@ FloatingWindow {
         }
         onAccepted: window.bridge.deleteProject(window.projectToDelete.project_id)
     }
+    GlassDialog {
+        id: renameProjectDialog
+        objectName: "workRenameProjectDialog"
+        title: window.bridge.activeArea === "app" ? "Renombrar aplicación" : "Renombrar proyecto"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, window.width - 40)
+        function submitRename() {
+            const cleaned = renameProjectInput.text.trim();
+            if (!cleaned || cleaned.length > 80) return;
+            window.bridge.renameProject(window.projectToRename.project_id, cleaned);
+            renameProjectDialog.close();
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                Layout.fillWidth: true
+                text: "Nuevo nombre"
+                color: GemaTheme.mutedColor
+                font.pixelSize: 12
+            }
+            GlassPanel {
+                Layout.fillWidth: true
+                implicitHeight: 38
+                radius: 10
+                highlighted: renameProjectInput.activeFocus
+                TextInput {
+                    id: renameProjectInput
+                    objectName: "workRenameProjectInput"
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    verticalAlignment: TextInput.AlignVCenter
+                    maximumLength: 80
+                    color: "#f5f5f5"
+                    selectionColor: "#ffffff"
+                    selectedTextColor: "#000000"
+                    font.pixelSize: 13
+                    selectByMouse: true
+                    onAccepted: renameProjectDialog.submitRename()
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: null
+            ActionButton {
+                objectName: "workCancelRenameProject"
+                text: "Cancelar"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ActionButton {
+                objectName: "workConfirmRenameProject"
+                text: "Guardar"
+                accent: true
+                enabled: window.bridge.canSelectArea && renameProjectInput.text.trim().length > 0
+                         && renameProjectInput.text.trim().length <= 80
+                onClicked: renameProjectDialog.submitRename()
+            }
+        }
+    }
     Drawer {
         id: narrowSidebar
         objectName: "chatSidebarDrawer"
@@ -555,28 +627,79 @@ FloatingWindow {
     GlassDialog {
         id: accountPanel
         objectName: "chatAccount"
-        title: "Cuenta de ChatGPT"
+        title: "Perfil y cuenta"
         modal: true
         anchors.centerIn: parent
         width: Math.min(460, window.width - 40)
         standardButtons: Dialog.Close
+        onOpened: profileNameInput.text = window.bridge.displayName
         contentItem: ColumnLayout {
-            spacing: 16
-            Text {
+            spacing: 11
+            RowLayout {
                 Layout.fillWidth: true
-                text: window.bridge.authenticated ? window.bridge.email || "Cuenta conectada" : "Conecta tu cuenta"
-                color: "#f5f5f5"
-                font.pixelSize: 16
-                font.bold: true
-                wrapMode: Text.WrapAnywhere
-                textFormat: Text.PlainText
+                spacing: 10
+                UserAvatar {
+                    id: accountAvatarPreview
+                    size: 34
+                    customName: profileNameInput.text.trim() || window.bridge.displayName
+                    plan: window.bridge.plan
+                    connected: window.bridge.authenticated
+                    showStatusDot: true
+                }
+                GlassPanel {
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    radius: 10
+                    highlighted: profileNameInput.activeFocus
+                    TextInput {
+                        id: profileNameInput
+                        objectName: "chatProfileNameInput"
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        verticalAlignment: TextInput.AlignVCenter
+                        maximumLength: 40
+                        color: "#f5f5f5"
+                        selectionColor: "#ffffff"
+                        selectedTextColor: "#000000"
+                        font.pixelSize: 13
+                        selectByMouse: true
+                        onAccepted: window.bridge.updateProfile(profileNameInput.text)
+                        Text {
+                            anchors.fill: parent
+                            verticalAlignment: Text.AlignVCenter
+                            visible: !profileNameInput.text && !profileNameInput.activeFocus
+                            text: "Nombre de usuario…"
+                            color: "#80ffffff"
+                            font.pixelSize: 13
+                        }
+                    }
+                }
+                ActionButton {
+                    objectName: "chatProfileSaveButton"
+                    text: "Guardar"
+                    verticalPadding: 7
+                    accent: profileNameInput.text.trim() !== window.bridge.displayName
+                    enabled: window.bridge.ready && profileNameInput.text.trim() !== window.bridge.displayName
+                    onClicked: window.bridge.updateProfile(profileNameInput.text)
+                }
             }
             Text {
                 Layout.fillWidth: true
-                text: window.bridge.authenticated ? "Las respuestas usan los límites disponibles de tu plan de ChatGPT."
-                                                     : "Inicia sesión en el navegador y autoriza el uso de tu plan de ChatGPT."
+                visible: !!window.bridge.profileError
+                text: window.bridge.profileError
+                textFormat: Text.PlainText
+                color: "#ff9b9b"
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: window.bridge.authenticated
+                    ? accountAvatarPreview.displayName + " · Cuenta de ChatGPT conectada (usa los límites de tu plan)."
+                    : "Inicia sesión en el navegador y autoriza el uso de tu plan de ChatGPT."
                 color: "#bbbbbb"
-                font.pixelSize: 13
+                font.pixelSize: 12
                 wrapMode: Text.Wrap
             }
             GlassComboBox {

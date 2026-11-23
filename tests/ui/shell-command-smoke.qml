@@ -69,9 +69,10 @@ ShellRoot {
                     if (!scenario.check(!!card && inspector.findChild(card, "chatShellOutput").text.trim() === agent.workspace,
                         "salida no renderizada en tarjeta")) return;
                     const state = inspector.findChild(card, "chatShellStatus");
-                    if (!scenario.check(state.text.includes("Completado") && !!card.durationLabel
+                    const pulse = inspector.findChild(card, "chatShellPulseIndicator");
+                    if (!scenario.check(!!pulse && pulse.visible && !pulse.pulsing && !state.text.includes("Completado") && !!card.durationLabel
                         && inspector.findChild(card, "chatShellDirectory").text.startsWith("Local"),
-                        "estado, duración o procedencia ausentes")) return;
+                        "estado, punto de luz, duración o procedencia ausentes")) return;
                     scenario.savedChatId = agent.currentChatId;
                     scenario.submit("/shell printf '%s' 'a b' | tr a-z A-Z; printf 'err' >&2; exit 7 ");
                     scenario.stage = 2;
@@ -80,6 +81,17 @@ ShellRoot {
                     if (!scenario.check(agent.messages.count === 2 && scenario.call(1).output === "A Berr"
                         && scenario.call(1).exit_code === 7 && scenario.call(1).status === "error"
                         && scenario.call(1).command.endsWith(" "), "comillas, tuberías, stderr o código de salida incorrectos")) return;
+                    const list = inspector.findChild(chat, "chatMessageList");
+                    inspector.wait(40);
+                    const card0 = inspector.findChild(list.itemAtIndex(0), "chatToolCall");
+                    const card1 = inspector.findChild(list.itemAtIndex(1), "chatToolCall");
+                    const dot0 = inspector.findChild(card0, "chatShellPulseIndicator");
+                    const dot1 = inspector.findChild(card1, "chatShellPulseIndicator");
+                    const cmd0 = inspector.findChild(card0, "chatShellCommand");
+                    const cmd1 = inspector.findChild(card1, "chatShellCommand");
+                    if (!scenario.check(Math.abs(dot0.mapToItem(card0, 0, 0).x - dot1.mapToItem(card1, 0, 0).x) < 0.5
+                        && Math.abs(cmd0.mapToItem(card0, 0, 0).x - cmd1.mapToItem(card1, 0, 0).x) < 0.5,
+                        "los puntos o los comandos no quedan alineados verticalmente entre tarjetas")) return;
                     scenario.submit("/shell printf ready; sleep 30");
                     scenario.stage = 3;
                 } else if (scenario.stage === 3) {
@@ -88,6 +100,12 @@ ShellRoot {
                         && !inspector.findChild(chat, "chatThinkingIndicator").visible
                         && !inspector.findChild(chat, "chatActiveModel").visible
                         && !agent.submit("/shell pwd"), "ejecución simultánea o indicador de IA en comando local")) return;
+                    const list = inspector.findChild(chat, "chatMessageList");
+                    list.positionViewAtEnd(); inspector.wait(30);
+                    const runningCard = inspector.findChild(list.itemAtIndex(2), "chatToolCall");
+                    const runningPulse = inspector.findChild(runningCard, "chatShellPulseIndicator");
+                    if (!scenario.check(!!runningCard && runningCard.highlighted && !!runningPulse && runningPulse.pulsing,
+                        "el punto de luz pulsante o el borde activo no se activan durante la ejecución")) return;
                     const stop = inspector.findChild(chat, "chatSendButton");
                     if (!scenario.check(stop.text.startsWith("Detener") && stop.enabled && scenario.prompt.text === "",
                         "el botón no permite detener con editor vacío y sin sesión")) return;
@@ -125,9 +143,14 @@ ShellRoot {
                     const output = inspector.findChild(card, "chatShellOutput");
                     const expand = inspector.findChild(card, "chatShellExpand");
                     const copy = inspector.findChild(card, "chatCopyShellOutput");
+                    const minimize = inspector.findChild(card, "chatShellMinimize");
                     const original = scenario.call(3).output;
-                    if (!scenario.check(card.hasMoreOutput && !card.expanded && expand.visible
-                        && output.text.split("\n").length === 8 && !output.text.includes("line 18"),
+                    if (!scenario.check(!!minimize && minimize.visible && card.minimized && !output.visible,
+                        "el comando no inicia contraído por defecto")) return;
+                    const collapsedHeight = card.height;
+                    inspector.mouseClick(minimize); inspector.wait(80);
+                    if (!scenario.check(!card.minimized && card.hasMoreOutput && !card.expanded && expand.visible
+                        && output.text.split("\n").length === 8 && !output.text.includes("line 18") && card.height > collapsedHeight,
                         "salida larga sin vista compacta o botón de ampliación")) return;
                     const height = card.height;
                     output.select(0, 6); const selection = output.selectedText;
@@ -141,6 +164,9 @@ ShellRoot {
                     inspector.mouseClick(expand); inspector.wait(80);
                     if (!scenario.check(!card.expanded && Math.abs(card.height - height) < 1,
                         "colapsar no recupera el tamaño compacto")) return;
+                    inspector.mouseClick(minimize); inspector.wait(80);
+                    if (!scenario.check(card.minimized && !output.visible && Math.abs(card.height - collapsedHeight) < 1,
+                        "minimizar no oculta la salida o reduce la altura")) return;
                     console.log("SHELL_COMMAND_OK: /shell, tarjetas compactas, duración, salida completa, copia, errores, cancelación e historial sin IA");
                     steps.stop(); Qt.callLater(Qt.quit);
                 }

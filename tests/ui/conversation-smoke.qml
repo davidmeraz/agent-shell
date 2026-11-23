@@ -44,14 +44,22 @@ ShellRoot {
             if (!scenario.check(list.ScrollBar.vertical.policy === ScrollBar.AlwaysOff,
                 "la barra de desplazamiento sigue visible")) return;
             const user = inspector.findChild(list.itemAtIndex(0), "chatUserMessage");
+            const userProfile = inspector.findChild(list.itemAtIndex(0), "chatUserProfile");
+            const userProfileName = inspector.findChild(list.itemAtIndex(0), "chatUserProfileName");
             const assistant = inspector.findChild(list.itemAtIndex(1), "chatAssistantMessage");
             const copy = inspector.findChild(list.itemAtIndex(1), "chatCopyResponse");
             const metrics = inspector.findChild(list.itemAtIndex(1), "chatResponseMetrics");
-            if (!scenario.check(!!user && !!assistant && !!copy && !!metrics, "controles de mensajes ausentes")) return;
+            if (!scenario.check(!!user && !!userProfile && userProfile.visible && !!userProfileName
+                && !userProfileName.text.includes("@") && !!assistant && !!copy && !!metrics,
+                "controles o perfil de usuario ausentes o exponiendo correo")) return;
+            agent.updateProfile("Dav3e Pro");
+            inspector.wait(120);
+            if (!scenario.check(agent.displayName === "Dav3e Pro" && userProfileName.text === "Dav3e Pro",
+                "nombre de usuario personalizado no se guarda ni actualiza en el chat")) return;
             if (!scenario.check(user.parent.width < list.width / 2 && user.lineCount === 1
                 && user.textFormat === TextEdit.PlainText,
                 "burbuja corta demasiado ancha, con salto innecesario o interpretada como Markdown")) return;
-            if (!scenario.check(assistant.textFormat === TextEdit.MarkdownText
+            if (!scenario.check(assistant.textFormat === TextEdit.RichText
                 && assistant.getText(0, assistant.length).includes("pwd")
                 && !assistant.getText(0, assistant.length).includes("**Hola**"), "Markdown y código no renderizados")) return;
             assistant.select(0, 4);

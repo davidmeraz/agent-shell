@@ -10,6 +10,7 @@ GlassPanel {
     required property AgentBridge bridge
     readonly property bool isAppArea: bridge.activeArea === "app"
     signal newProjectRequested()
+    signal renameProjectRequested(string projectId, string name)
     signal deleteProjectRequested(string projectId, string name, string workdir)
     radius: 16
     topColor: "#00000000"
@@ -119,6 +120,10 @@ GlassPanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            topMargin: 4
+            bottomMargin: 4
+            leftMargin: 6
+            rightMargin: 6
             spacing: 10
             model: panel.isAppArea ? panel.bridge.apps : panel.bridge.projects
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
@@ -129,11 +134,11 @@ GlassPanel {
                 required property string workdir
                 required property string engine
                 objectName: "workProjectRow"
-                width: projectList.width
+                width: projectList.width - projectList.leftMargin - projectList.rightMargin
                 padding: 16
                 hoverEnabled: true
                 enabled: panel.bridge.canSelectArea
-                scale: projectRow.down ? 0.985 : (projectRow.hovered ? 1.01 : 1.0)
+                scale: projectRow.down ? 0.988 : (projectRow.hovered ? 1.008 : 1.0)
                 Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
                 onClicked: panel.bridge.selectArea(panel.isAppArea ? "app" : "work", projectId)
                 contentItem: RowLayout {
@@ -204,6 +209,46 @@ GlassPanel {
                             style: Text.Raised
                             styleColor: GemaTheme.textShadow
                             elide: Text.ElideMiddle
+                        }
+                    }
+                    ActionButton {
+                        id: renameProjectButton
+                        objectName: "workRenameProject"
+                        enabled: panel.bridge.canSelectArea
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        horizontalPadding: 7
+                        verticalPadding: 7
+                        Accessible.name: "Editar nombre: " + projectRow.name
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Editar nombre"
+                        onClicked: panel.renameProjectRequested(projectRow.projectId, projectRow.name)
+                        contentItem: Item {
+                            Item {
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                rotation: -45
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: 3
+                                    width: 8
+                                    height: 4
+                                    radius: 1
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                                }
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: 0
+                                    width: 3
+                                    height: 2
+                                    radius: 1
+                                    color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                                }
+                            }
                         }
                     }
                     ActionButton {
