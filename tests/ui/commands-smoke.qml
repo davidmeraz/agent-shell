@@ -92,7 +92,13 @@ ShellRoot {
                         "posición de botones superiores incorrecta (izquierda/derecha)")) return;
                     inspector.mouseClick(sidebarBtn); inspector.wait(180);
                     if (!scenario.check(drawer.visible, "el botón superior izquierdo no abre la barra lateral")) return;
-                    drawer.close(); inspector.wait(180);
+                    const settingsBtn = inspector.findChild(sidebar, "chatSidebarSettings");
+                    if (!scenario.check(!!settingsBtn && settingsBtn.visible, "botón Ajustes ausente en la barra lateral")) return;
+                    inspector.mouseClick(settingsBtn); inspector.wait(180);
+                    const settingsDlg = inspector.findChild(chat, "chatSettingsDialog");
+                    if (!scenario.check(!!settingsDlg && settingsDlg.visible && !drawer.visible,
+                        "el botón Ajustes no abre el diálogo o deja abierta la barra lateral")) return;
+                    settingsDlg.close(); inspector.wait(180);
                     inspector.mouseClick(profileBtn); inspector.wait(180);
                     const accountDialog = inspector.findChild(chat, "chatAccount");
                     if (!scenario.check(accountDialog.visible, "el botón superior derecho no abre el perfil")) return;

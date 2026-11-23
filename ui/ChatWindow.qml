@@ -34,7 +34,7 @@ FloatingWindow {
     property var accountToRemove: ({})
     readonly property bool dialogVisible: historyPanel.visible || performancePanel.visible
                                            || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
-                                           || shellSettings.visible || limitsDialog.visible
+                                           || settingsDialog.visible || shellSettings.visible || limitsDialog.visible
                                            || commandHelp.visible
                                            || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
@@ -664,7 +664,7 @@ FloatingWindow {
                 bridge: window.bridge
                 onHistoryRequested: { narrowSidebar.close(); historyPanel.open(); }
                 onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
-                onAccountRequested: { narrowSidebar.close(); accountPanel.open(); }
+                onSettingsRequested: { narrowSidebar.close(); settingsDialog.open(); }
                 onShellRequested: { narrowSidebar.close(); shellSettings.open(); }
                 onProjectRequested: { narrowSidebar.close(); projectDialog.open(); }
                 onDeleteRequested: (chatId, title) => {
@@ -722,6 +722,19 @@ FloatingWindow {
             }
         }
         onAccepted: window.bridge.deleteChat(window.chatToDelete.chat_id)
+    }
+
+    SettingsDialog {
+        id: settingsDialog
+        objectName: "chatSettingsDialog"
+        bridge: window.bridge
+        anchors.centerIn: parent
+        width: Math.min(460, window.width - 40)
+        onLimitsRequested: limitsDialog.open()
+        onShellRequested: shellSettings.open()
+        onAccountRequested: accountPanel.open()
+        onUsageRequested: window.usageWindow.open()
+        onCommandsRequested: commandHelp.open()
     }
 
     ShellSettingsDialog {

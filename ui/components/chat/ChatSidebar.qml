@@ -10,7 +10,7 @@ MattePanel {
     required property AgentBridge bridge
     signal historyRequested()
     signal performanceRequested()
-    signal accountRequested()
+    signal settingsRequested()
     signal shellRequested()
     signal projectRequested()
     signal deleteRequested(string chatId, string title)
@@ -158,27 +158,44 @@ MattePanel {
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
         Button {
-            id: account
+            id: settingsButton
+            objectName: "chatSidebarSettings"
             Layout.fillWidth: true
             padding: 10
             hoverEnabled: true
-            onClicked: sidebar.accountRequested()
+            onClicked: sidebar.settingsRequested()
             contentItem: RowLayout {
                 spacing: 10
-                UserAvatar {
-                    id: sidebarAvatar
-                    size: 30
-                    customName: sidebar.bridge.displayName
-                    plan: sidebar.bridge.plan
-                    connected: sidebar.bridge.authenticated
-                    showStatusDot: true
+                GlassPanel {
+                    implicitWidth: 30
+                    implicitHeight: 30
+                    radius: 10
+                    reflective: false
+                    topColor: settingsButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#2cffffff")
+                        : (GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#18ffffff")
+                    bottomColor: "#0affffff"
+                    edgeColor: settingsButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#5cffffff")
+                        : "#32ffffff"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "⚙"
+                        color: settingsButton.hovered
+                            ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                            : GemaTheme.textColor
+                        font.pixelSize: 15
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 3
+                    spacing: 2
                     Text {
                         Layout.fillWidth: true
-                        text: sidebar.bridge.authenticated ? sidebarAvatar.displayName : "Conectar ChatGPT"
+                        text: "Ajustes"
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         color: GemaTheme.textColor
@@ -189,7 +206,7 @@ MattePanel {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: sidebar.bridge.authenticated ? "Perfil y cuenta" : "Inicia sesión para conversar"
+                        text: "Límites, terminal y preferencias"
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         color: GemaTheme.mutedColor
@@ -200,17 +217,17 @@ MattePanel {
                 }
                 Text {
                     text: "›"
-                    color: account.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
+                    color: settingsButton.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
                     font.pixelSize: 20
                     style: Text.Raised
                     styleColor: GemaTheme.textShadow
                 }
             }
             background: GlassPanel {
-                highlighted: account.activeFocus || account.hovered
-                topColor: account.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#28ffffff") : "#1cffffff"
+                highlighted: settingsButton.activeFocus || settingsButton.hovered
+                topColor: settingsButton.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#28ffffff") : "#1cffffff"
                 bottomColor: "#24060a10"
-                edgeColor: account.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#60ffffff") : "#42ffffff"
+                edgeColor: settingsButton.hovered ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#60ffffff") : "#42ffffff"
             }
         }
         Text {
