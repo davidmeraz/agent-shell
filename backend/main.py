@@ -70,6 +70,7 @@ def main() -> None:
         paths.history_root, sys.stdout, session, ChatGPTClient(session), args.model,
         args.workspace, limits=limits, config_root=paths.config_root,
         agy_client=AgyClient(), claude_client=ClaudeClient(),
+        track_chat_quota=True,
     ).serve(sys.stdin)
 
 

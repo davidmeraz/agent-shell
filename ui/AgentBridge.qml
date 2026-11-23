@@ -24,6 +24,9 @@ QtObject {
     property bool loginBusy: false
     property bool accountBusy: false
     property bool usageBusy: false
+    property bool backendUsageBusy: false
+    property string activeBackendUsageId: ""
+    property bool usageRetryPending: false
     property var accountUsage: ({})
     property string usageError: ""
     property string usageRequestId: ""
@@ -79,6 +82,8 @@ QtObject {
     property var performanceHistory: []
     property bool performanceBusy: false
     property var latestPerformance: ({})
+    property var chatQuota: ({})
+    property bool chatQuotaMeasuring: false
     property string activeTurnId: ""
     property bool shellRunning: false
     property double submittedAt: 0
@@ -114,11 +119,24 @@ QtObject {
     }
 
     function refreshUsage() {
-        if (!ready || usageBusy || accountBusy || loginBusy || claudeLoginBusy || providerBusy) return;
+        if (!ready) return;
+        if (usageBusy || backendUsageBusy || accountBusy || loginBusy || claudeLoginBusy || providerBusy) {
+            usageRetryPending = true;
+            return;
+        }
+        usageRetryPending = false;
         usageBusy = true;
+        backendUsageBusy = true;
         usageError = "";
         usageRequestId = "usage-" + (++usageSequence);
         sendCommand({ type: "usage.read", request_id: usageRequestId });
+    }
+
+    function maybeRetryUsage() {
+        if (usageRetryPending && ready && engineReady && !usageBusy && !backendUsageBusy
+            && !accountBusy && !loginBusy && !claudeLoginBusy && !providerBusy) {
+            refreshUsage();
+        }
     }
 
     function pasteClipboard() {
@@ -550,6 +568,7 @@ QtObject {
         } else if (event.type === "provider.state") {
             const nextProvider = (data.provider === "agy" || data.provider === "claude") ? data.provider : "chatgpt";
             const nextClaudeAuth = !!data.claude_authenticated;
+            if (typeof data.refreshing === "boolean") providerBusy = data.refreshing;
             if (nextProvider !== provider || (nextProvider === "claude" && nextClaudeAuth !== claudeAuthenticated)) {
                 accountUsage = ({});
                 usageError = "";
@@ -587,6 +606,7 @@ QtObject {
                 status = claudeAuthenticated
                     ? ("Conectado con Claude Code" + (claudePlan ? " (" + claudePlan + ")" : "") + ".")
                     : "Inicia sesión en Claude Code para conversar.";
+            maybeRetryUsage();
         } else if (event.type === "provider.rejected") {
             providerBusy = false;
             status = data.message;
@@ -640,6 +660,8 @@ QtObject {
                 latestPerformance = Object.assign({}, chat.performance[chat.performance.length - 1], { chat_id: chat.chat_id });
             currentChatId = chat.chat_id;
             currentTitle = chat.title;
+            chatQuota = chat.quota_spent || ({});
+            chatQuotaMeasuring = false;
             openingChat = false;
             status = engineReady ? "Conversación recuperada. Puedes continuar."
                      : "Conversación recuperada. Conecta un motor de IA para continuar.";
@@ -674,14 +696,32 @@ QtObject {
                 status = authenticated ? "Conectado con tu cuenta de ChatGPT."
                          : data.method === "chatgpt" ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                          : "Inicia sesión con ChatGPT para empezar.";
-        } else if (event.type === "usage.state" && data.request_id === usageRequestId) {
+        } else if (event.type === "usage.started") {
+            backendUsageBusy = true;
+            activeBackendUsageId = data.request_id || "";
+        } else if (event.type === "usage.state" && (data.request_id === usageRequestId || data.auto === true)) {
             accountUsage = data;
             usageError = "";
+        } else if (event.type === "chat.quota.updated") {
+            if (!currentChatId || data.chat_id === currentChatId) {
+                chatQuota = data.quota_spent || ({});
+                chatQuotaMeasuring = !!data.measuring;
+            }
         } else if (event.type === "usage.error" && data.request_id === usageRequestId) {
             accountUsage = ({});
-            usageError = data.message;
-        } else if (event.type === "usage.finished" && data.request_id === usageRequestId) {
-            usageBusy = false;
+            if (data.code === "busy" || data.code === "account_changed") {
+                usageError = "";
+                usageRetryPending = true;
+            } else {
+                usageError = data.message;
+            }
+        } else if (event.type === "usage.finished") {
+            if (!activeBackendUsageId || data.request_id === activeBackendUsageId) {
+                backendUsageBusy = false;
+                activeBackendUsageId = "";
+            }
+            if (data.request_id === usageRequestId) usageBusy = false;
+            maybeRetryUsage();
         } else if (event.type === "auth.refresh.started") {
             accountBusy = true;
             status = "Actualizando la cuenta y los modelos…";
@@ -698,6 +738,7 @@ QtObject {
             else if (!authenticated)
                 status = email ? "Conecta de nuevo tu cuenta y autoriza el uso de tu plan."
                                : "Conecta tu cuenta de ChatGPT para conversar.";
+            maybeRetryUsage();
         } else if (event.type === "models.list") {
             availableModels.clear();
             for (const model of data.models)
@@ -778,6 +819,8 @@ QtObject {
             activeTurnId = "";
             framePending = false;
             latestPerformance = ({});
+            chatQuota = ({});
+            chatQuotaMeasuring = false;
             status = engineReady ? "Nuevo chat listo." : "Inicia sesión con ChatGPT para empezar.";
         } else if (event.type === "error" || event.type === "chat.notice" || event.type === "history.notice") {
             openingChat = false;
@@ -790,6 +833,9 @@ QtObject {
             projectRun = ({});
             projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             usageBusy = false;
+            backendUsageBusy = false;
+            activeBackendUsageId = "";
+            usageRetryPending = false;
             accountUsage = ({});
             usageError = "Motor desconectado. Reinicia Agent Shell.";
             areaBusy = false;
@@ -801,6 +847,7 @@ QtObject {
             claudeLoginBusy = false;
             accountBusy = false;
             providerBusy = false;
+            chatQuotaMeasuring = false;
             performanceBusy = false;
             framePending = false;
             deletingChatId = "";
@@ -822,6 +869,9 @@ QtObject {
             bridge.projectRun = ({});
             bridge.projectRunNotice = "Motor desconectado. Reinicia Agent Shell.";
             bridge.usageBusy = false;
+            bridge.backendUsageBusy = false;
+            bridge.activeBackendUsageId = "";
+            bridge.usageRetryPending = false;
             bridge.accountUsage = ({});
             bridge.usageError = "Motor desconectado. Reinicia Agent Shell.";
             bridge.areaBusy = false;
@@ -833,6 +883,7 @@ QtObject {
             bridge.claudeLoginBusy = false;
             bridge.accountBusy = false;
             bridge.providerBusy = false;
+            bridge.chatQuotaMeasuring = false;
             bridge.performanceBusy = false;
             bridge.framePending = false;
             bridge.historyReady = false;

@@ -233,6 +233,7 @@ class HarnessServer:
         self._emit(
             "provider.state",
             provider=self.provider,
+            refreshing=self.provider_pending,
             agy_available=self.agy_available,
             claude_available=self.claude_available,
             claude_authenticated=self.claude_authenticated,
@@ -391,35 +392,41 @@ class HarnessServer:
         self.provider = target
         self._save_provider_prefs()
 
-        self._publish_provider()
         if target == "agy":
             if self._agy_models:
+                self._publish_provider()
                 self._apply_catalog(self._agy_models, self._agy_model, "")
                 self._agy_model = self.model
                 self._emit("provider.refresh.finished")
             else:
                 self.provider_pending = True
+                self._publish_provider()
                 self._emit("provider.refresh.started")
                 self._spawn(self._load_agy_models)
         elif target == "claude":
             if self.claude_authenticated and self._claude_models:
+                self._publish_provider()
                 self._apply_catalog(self._claude_models, self._claude_model, self._claude_effort)
                 self._claude_model = self.model
                 self._claude_effort = self.reasoning_effort
                 self._emit("provider.refresh.finished")
             else:
                 self.provider_pending = True
+                self._publish_provider()
                 self._emit("provider.refresh.started")
                 self._spawn(self._load_claude_status)
         else:
             if self.authenticated:
                 if self._chatgpt_models:
+                    self._publish_provider()
                     self._apply_catalog(self._chatgpt_models, self._chatgpt_model, self._chatgpt_effort)
                 else:
                     self.account_pending = True
+                    self._publish_provider()
                     self._emit("auth.refresh.started")
                     self._spawn(self._refresh_account)
             else:
+                self._publish_provider()
                 self._apply_catalog([], "", "")
 
     def _update_profile(self, request: dict) -> None:

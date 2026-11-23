@@ -48,6 +48,30 @@ def _validate_record(chat_id: str, record: dict) -> dict:
         raise ValueError("Conversación de Antigravity inválida")
     if record.get("claude_session_id") is not None and not isinstance(record["claude_session_id"], str):
         raise ValueError("Sesión de Claude inválida")
+    if "quota_spent" in record:
+        qs = record["quota_spent"]
+        if not isinstance(qs, dict):
+            raise ValueError("Cuota del historial inválida")
+        clean_qs: dict[str, dict] = {}
+        for engine, entry in qs.items():
+            if engine not in ("chatgpt", "agy", "claude") or not isinstance(entry, dict):
+                continue
+            sess = entry.get("session_pct", 0.0)
+            week = entry.get("weekly_pct", 0.0)
+            turns = entry.get("turns", 0)
+            tokens = entry.get("tokens", 0)
+            if (isinstance(sess, bool) or not isinstance(sess, (int, float)) or sess < 0
+                    or isinstance(week, bool) or not isinstance(week, (int, float)) or week < 0
+                    or type(turns) is not int or turns < 0
+                    or type(tokens) is not int or tokens < 0):
+                raise ValueError("Datos de cuota del historial inválidos")
+            clean_qs[engine] = {
+                "session_pct": round(float(sess), 2),
+                "weekly_pct": round(float(week), 2),
+                "turns": turns,
+                "tokens": tokens,
+            }
+        record["quota_spent"] = clean_qs
     area, project_id = record.get("area", "chat"), record.get("project_id", "")
     if (area not in ("chat", "work", "app") or not isinstance(project_id, str)
             or (area == "chat" and project_id != "")

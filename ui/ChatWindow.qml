@@ -278,13 +278,6 @@ FloatingWindow {
                 }
             }
 
-            ProviderSwitcher {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: -6
-                visible: window.bridge.agyAvailable || window.bridge.claudeAvailable
-                bridge: window.bridge
-            }
-
             GlassPanel {
                 Layout.fillWidth: true
                 implicitHeight: loginRow.implicitHeight + 20
@@ -465,6 +458,14 @@ FloatingWindow {
                 onSuggestionRequested: text => composer.prepare(text)
                 onLoginRequested: window.bridge.login()
                 onAccountRequested: accountPanel.open()
+            }
+
+            ProviderSwitcher {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: -6
+                Layout.bottomMargin: -4
+                visible: window.bridge.workspaceSelected && (window.bridge.agyAvailable || window.bridge.claudeAvailable)
+                bridge: window.bridge
             }
 
             MessageComposer {

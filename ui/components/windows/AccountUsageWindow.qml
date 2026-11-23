@@ -28,6 +28,12 @@ FloatingWindow {
     property bool geminiOnly: false
     readonly property bool hasData: !!bridge.accountUsage.checked_at
     readonly property bool isAgyUsage: hasData && bridge.accountUsage.source === "agy"
+    readonly property bool isLoading: !hasData && !bridge.usageError
+        && (bridge.usageBusy || bridge.backendUsageBusy || bridge.usageRetryPending
+            || bridge.accountBusy || bridge.providerBusy || !bridge.ready)
+    readonly property string engineSymbol: bridge.provider === "agy" ? "✦"
+        : bridge.provider === "claude" ? "◆" : "◎"
+    readonly property color accentGlow: GemaTheme.synced ? GemaTheme.accent : "#dce8f7"
     readonly property var visibleLimits: {
         if (!hasData) return [];
         const raw = bridge.accountUsage.limits || [];
@@ -76,7 +82,7 @@ FloatingWindow {
     onMainWindowTitleChanged: schedulePlacement()
     function refreshWhenAvailable() {
         if (visible && bridge.ready && bridge.engineReady && !hasData
-            && !bridge.accountBusy && !bridge.loginBusy && !bridge.claudeLoginBusy && !bridge.providerBusy && !bridge.usageBusy)
+            && !bridge.accountBusy && !bridge.loginBusy && !bridge.claudeLoginBusy && !bridge.providerBusy)
             bridge.refreshUsage();
     }
     Connections {
@@ -184,6 +190,37 @@ FloatingWindow {
                             font.pixelSize: 11
                             font.weight: Font.DemiBold
                         }
+                        // Indicador discreto cuando se actualiza en segundo plano (F5 / 60s) con datos ya visibles.
+                        Item {
+                            id: liveRefreshSpinner
+                            objectName: "usageRefreshingDot"
+                            visible: usage.hasData && usage.bridge.usageBusy
+                            implicitWidth: 14
+                            implicitHeight: 14
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 7
+                                color: "transparent"
+                                border.width: 1
+                                border.color: "#28ffffff"
+                            }
+                            Item {
+                                anchors.fill: parent
+                                RotationAnimation on rotation {
+                                    from: 0; to: 360
+                                    duration: 900
+                                    loops: Animation.Infinite
+                                    running: liveRefreshSpinner.visible && GemaTheme.animations
+                                }
+                                Rectangle {
+                                    width: 4; height: 4; radius: 2
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.top: parent.top
+                                    anchors.topMargin: -1.5
+                                    color: usage.accentGlow
+                                }
+                            }
+                        }
                         Button {
                             id: geminiFilterButton
                             objectName: "usageGeminiOnlyButton"
@@ -238,15 +275,217 @@ FloatingWindow {
                         text: usage.bridge.usageError
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
                         color: "#bbbbbb"
                         font.pixelSize: 12
                     }
-                    Text {
+                    // Estado de carga centrado con órbita de vidrio, onda radial y riel luminoso.
+                    Item {
+                        id: loadingState
+                        objectName: "usageLoadingState"
                         Layout.fillWidth: true
-                        visible: !usage.hasData && !usage.bridge.usageError
-                        text: usage.bridge.usageBusy ? "Consultando uso…" : "Sin datos de uso"
-                        color: "#bbbbbb"
-                        font.pixelSize: 12
+                        Layout.preferredHeight: 94
+                        visible: usage.isLoading
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: 9
+
+                            Item {
+                                id: orbitalMedallion
+                                Layout.alignment: Qt.AlignHCenter
+                                implicitWidth: 42
+                                implicitHeight: 42
+
+                                // Onda radial expansiva suave.
+                                Rectangle {
+                                    id: pulseRipple
+                                    anchors.centerIn: parent
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#55dce8f7"
+                                    opacity: 0.0
+                                    scale: 0.85
+
+                                    ParallelAnimation {
+                                        running: loadingState.visible && GemaTheme.animations
+                                        loops: Animation.Infinite
+                                        NumberAnimation {
+                                            target: pulseRipple
+                                            property: "scale"
+                                            from: 0.88; to: 1.48
+                                            duration: 1500
+                                            easing.type: Easing.OutCubic
+                                        }
+                                        SequentialAnimation {
+                                            NumberAnimation {
+                                                target: pulseRipple
+                                                property: "opacity"
+                                                from: 0.0; to: 0.55
+                                                duration: 280
+                                                easing.type: Easing.OutQuad
+                                            }
+                                            NumberAnimation {
+                                                target: pulseRipple
+                                                property: "opacity"
+                                                from: 0.55; to: 0.0
+                                                duration: 1220
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Anillo orbital base.
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: 36
+                                    height: 36
+                                    radius: 18
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: "#24ffffff"
+                                }
+
+                                // Medallón central de vidrio con el símbolo del motor activo.
+                                GlassPanel {
+                                    id: centerBadge
+                                    anchors.centerIn: parent
+                                    width: 28
+                                    height: 28
+                                    radius: 14
+                                    reflective: false
+                                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.20) : "#20ffffff"
+                                    bottomColor: "#0affffff"
+                                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.42) : "#36ffffff"
+
+                                    Text {
+                                        id: engineGlyph
+                                        anchors.centerIn: parent
+                                        text: usage.engineSymbol
+                                        color: usage.accentGlow
+                                        font.pixelSize: 12
+                                        style: Text.Raised
+                                        styleColor: GemaTheme.textShadow
+
+                                        SequentialAnimation on scale {
+                                            running: loadingState.visible && GemaTheme.animations
+                                            loops: Animation.Infinite
+                                            onRunningChanged: if (!running) engineGlyph.scale = 1.0
+                                            NumberAnimation { from: 0.92; to: 1.10; duration: 750; easing.type: Easing.InOutSine }
+                                            NumberAnimation { from: 1.10; to: 0.92; duration: 750; easing.type: Easing.InOutSine }
+                                        }
+                                    }
+                                }
+
+                                // Perlas luminosas orbitando suavemente alrededor del medallón.
+                                Item {
+                                    id: orbitCarrier
+                                    anchors.centerIn: parent
+                                    width: 36
+                                    height: 36
+                                    RotationAnimation on rotation {
+                                        from: 0; to: 360
+                                        duration: 1350
+                                        loops: Animation.Infinite
+                                        running: loadingState.visible && GemaTheme.animations
+                                    }
+                                    Rectangle {
+                                        width: 11; height: 11; radius: 5.5
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                        anchors.topMargin: -5.5
+                                        color: GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#38dce8f7"
+                                    }
+                                    Rectangle {
+                                        width: 5; height: 5; radius: 2.5
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                        anchors.topMargin: -2.5
+                                        color: usage.accentGlow
+                                    }
+                                    Rectangle {
+                                        width: 3; height: 3; radius: 1.5
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.bottom: parent.bottom
+                                        anchors.bottomMargin: -1.5
+                                        color: "#66ffffff"
+                                    }
+                                }
+                            }
+
+                            Text {
+                                objectName: "usageLoadingLabel"
+                                Layout.alignment: Qt.AlignHCenter
+                                text: usage.bridge.providerBusy
+                                    ? "Sincronizando cuotas…"
+                                    : "Consultando uso…"
+                                textFormat: Text.PlainText
+                                horizontalAlignment: Text.AlignHCenter
+                                color: "#c8d4e2"
+                                font.pixelSize: 11
+                                font.weight: Font.Medium
+                                style: Text.Raised
+                                styleColor: GemaTheme.textShadow
+                            }
+
+                            // Riel luminoso fluido centrado bajo el texto.
+                            Rectangle {
+                                id: shimmerTrack
+                                Layout.alignment: Qt.AlignHCenter
+                                implicitWidth: 118
+                                implicitHeight: 2.5
+                                radius: 1.5
+                                color: "#1cffffff"
+                                clip: true
+
+                                Rectangle {
+                                    id: shimmerComet
+                                    width: 46
+                                    height: parent.height
+                                    radius: parent.radius
+                                    x: -width
+                                    gradient: Gradient {
+                                        orientation: Gradient.Horizontal
+                                        GradientStop { position: 0.0; color: "#00ffffff" }
+                                        GradientStop { position: 0.5; color: usage.accentGlow }
+                                        GradientStop { position: 1.0; color: "#00ffffff" }
+                                    }
+                                    SequentialAnimation on x {
+                                        running: loadingState.visible && GemaTheme.animations
+                                        loops: Animation.Infinite
+                                        NumberAnimation {
+                                            from: -shimmerComet.width
+                                            to: shimmerTrack.implicitWidth
+                                            duration: 1150
+                                            easing.type: Easing.InOutSine
+                                        }
+                                        NumberAnimation {
+                                            from: shimmerTrack.implicitWidth
+                                            to: -shimmerComet.width
+                                            duration: 1150
+                                            easing.type: Easing.InOutSine
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 72
+                        visible: !usage.hasData && !usage.bridge.usageError && !usage.isLoading
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Sin datos de uso"
+                            textFormat: Text.PlainText
+                            horizontalAlignment: Text.AlignHCenter
+                            color: "#9aa6b4"
+                            font.pixelSize: 11
+                        }
                     }
                     Repeater {
                         objectName: "chatUsageLimits"

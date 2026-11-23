@@ -62,172 +62,29 @@ GlassPanel {
 
     Column {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 560)
-        spacing: pane.height < 260 ? 12 : 18
+        width: Math.min(parent.width - 48, 420)
+        spacing: 14
         visible: pane.bridge.messages.count === 0
 
-        GlassPanel {
+        HeroOrb {
             anchors.horizontalCenter: parent.horizontalCenter
-            implicitWidth: heroBadgeRow.implicitWidth + 24
-            implicitHeight: 28
-            radius: 14
-            topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.20) : "#20ffffff"
-            bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.10) : "#10ffffff"
-            edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.48) : "#38ffffff"
-            RowLayout {
-                id: heroBadgeRow
-                anchors.centerIn: parent
-                spacing: 7
-                Text {
-                    text: GemaTheme.gemSymbol
-                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                    font.pixelSize: 12
-                    style: Text.Raised
-                    styleColor: GemaTheme.textShadow
-                }
-                Text {
-                    text: pane.bridge.activeArea === "app"
-                          ? "GEMA UI KIT · " + (pane.bridge.projectEngine === "rust" ? "RUST ENGINE" : "PYTHON ENGINE")
-                          : pane.bridge.activeArea === "work"
-                            ? "WORK · " + (pane.bridge.projectName ? pane.bridge.projectName.toUpperCase() : "ESPACIO DE DESARROLLO")
-                            : "AGENT SHELL · " + GemaTheme.gemName.toUpperCase()
-                    color: GemaTheme.textColor
-                    font.pixelSize: 10
-                    font.weight: Font.Bold
-                    font.letterSpacing: 1.1
-                    style: Text.Raised
-                    styleColor: GemaTheme.textShadow
-                }
-            }
+            bridge: pane.bridge
         }
 
         Text {
             width: parent.width
-            text: pane.bridge.activeArea === "app"
-                  ? "Diseña tu aplicación Gema UI Kit"
-                  : pane.bridge.activeArea === "work" ? "¿Qué vamos a construir?" : "¿De qué hablamos?"
-            color: GemaTheme.textColor
-            font.pixelSize: pane.width < 580 ? 26 : 33
-            font.bold: true
-            font.letterSpacing: -0.4
-            style: Text.Raised
-            styleColor: GemaTheme.textShadow
-            horizontalAlignment: Text.AlignHCenter
-        }
-        Text {
-            width: parent.width
-            text: pane.bridge.engineReady
-                ? (pane.bridge.activeArea === "app"
-                   ? "Construye con vidrio mate transparente (Quickshell + " + (pane.bridge.projectEngine === "rust" ? "Rust" : "Python") + "). Usa 'Probar' e 'Iniciar' arriba."
-                   : pane.bridge.activeArea === "work" ? "Planifica, crea y prueba en la carpeta de tu proyecto." : "Una idea, una pregunta o algo que quieras aprender.")
-                : pane.bridge.provider === "claude"
-                  ? "Inicia sesión en Claude Code con tu plan Pro o Max para comenzar."
-                  : "Conecta tu cuenta de ChatGPT" + (pane.bridge.agyAvailable ? " o usa Antigravity (Gemini)" : "") + " para comenzar."
+            visible: !pane.bridge.engineReady
+            text: pane.bridge.provider === "claude"
+                ? "Inicia sesión en Claude Code con tu plan Pro o Max para comenzar."
+                : "Conecta tu cuenta de ChatGPT" + (pane.bridge.agyAvailable ? " o usa Gemini (agy)" : "") + " para comenzar."
             color: GemaTheme.mutedColor
-            font.pixelSize: 13
+            font.pixelSize: 12
             style: Text.Raised
             styleColor: GemaTheme.textShadow
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
         }
-        ColumnLayout {
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.min(parent.width, 520)
-            spacing: 8
-            visible: pane.bridge.engineReady && pane.height >= 260
-            Repeater {
-                model: pane.bridge.activeArea === "app" ? [
-                    { icon: "◈", label: "Añadir panel Glass", desc: "Tarjetas MattePanel, GlassPanel y controles interactivos", prompt: "Diseña en AppWindow.qml una interfaz con paneles GlassPanel/MattePanel y controles de Gema UI Kit para: " },
-                    { icon: "⚡", label: "Conectar función al motor", desc: "Nueva acción por tubería JSON-Lines v2 sobre stdio", prompt: "Agrega una nueva acción en AppBridge.qml y en el motor backend por JSON-Lines stdio para: " },
-                    { icon: "✦", label: "Mejorar diseño Glassmorphism", desc: "Refinar transparencias, reflejos de agua y micro-interacciones", prompt: "Refina el diseño Glassmorphism de la aplicación (transparencias, bordes luminosos, reflejos y layout) para: " }
-                ] : pane.bridge.activeArea === "work" ? [
-                    { icon: "❖", label: "Explorar proyecto", desc: "Analizar arquitectura, módulos y punto de arranque", prompt: "Inspecciona este proyecto y explícame su estructura y cómo se ejecuta." },
-                    { icon: "⚡", label: "Crear una función", desc: "Implementar y verificar código real en el repositorio", prompt: "Quiero implementar esta función en el proyecto: " },
-                    { icon: "✦", label: "Resolver un error", desc: "Diagnosticar fallos y aplicar la solución con pruebas", prompt: "Investiga y corrige este error en el proyecto: " }
-                ] : [
-                    { icon: "◈", label: "Explorar una idea", desc: "Diseñar conceptos, arquitecturas o planes paso a paso", prompt: "Ayúdame a desarrollar esta idea: " },
-                    { icon: "❖", label: "Aprender algo", desc: "Explicaciones claras y visuales con ejemplos reales", prompt: "Explícame de forma sencilla este tema: " },
-                    { icon: "✦", label: "Escribir o programar", desc: "Redactar textos, scripts o prototipos rápidamente", prompt: "Ayúdame a escribir este texto: " }
-                ]
-                delegate: Button {
-                    id: suggestionCard
-                    required property var modelData
-                    Layout.fillWidth: true
-                    implicitHeight: 54
-                    hoverEnabled: true
-                    enabled: pane.bridge.canSend
-                    scale: suggestionCard.down ? 0.985 : (suggestionCard.hovered ? 1.012 : 1.0)
-                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
-                    onClicked: pane.suggestionRequested(modelData.prompt)
-                    contentItem: RowLayout {
-                        spacing: 12
-                        GlassPanel {
-                            implicitWidth: 32
-                            implicitHeight: 32
-                            radius: 9
-                            topColor: suggestionCard.hovered
-                                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#2effffff")
-                                      : (GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#18ffffff")
-                            bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.08) : "#0cffffff"
-                            edgeColor: suggestionCard.hovered
-                                       ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#60ffffff")
-                                       : "#2cffffff"
-                            Text {
-                                anchors.centerIn: parent
-                                text: suggestionCard.modelData.icon
-                                color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                                font.pixelSize: 14
-                                style: Text.Raised
-                                styleColor: GemaTheme.textShadow
-                            }
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-                            Text {
-                                Layout.fillWidth: true
-                                text: suggestionCard.modelData.label
-                                color: GemaTheme.textColor
-                                font.pixelSize: 13
-                                font.weight: Font.DemiBold
-                                style: Text.Raised
-                                styleColor: GemaTheme.textShadow
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                text: suggestionCard.modelData.desc
-                                color: GemaTheme.subtleColor
-                                font.pixelSize: 11
-                                style: Text.Raised
-                                styleColor: GemaTheme.textShadow
-                                elide: Text.ElideRight
-                            }
-                        }
-                        Text {
-                            text: "→"
-                            color: suggestionCard.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.subtleColor
-                            font.pixelSize: 15
-                            font.bold: true
-                            style: Text.Raised
-                            styleColor: GemaTheme.textShadow
-                            Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
-                        }
-                    }
-                    background: GlassPanel {
-                        radius: 12
-                        highlighted: suggestionCard.activeFocus || suggestionCard.hovered
-                        topColor: suggestionCard.hovered
-                                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#28ffffff")
-                                  : "#1cffffff"
-                        bottomColor: "#22060a10"
-                        edgeColor: suggestionCard.hovered
-                                   ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#58ffffff")
-                                   : "#3cffffff"
-                    }
-                }
-            }
-        }
+
         Row {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: !pane.bridge.engineReady

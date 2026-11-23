@@ -361,6 +361,132 @@ class HarnessClaudeIntegrationTests(unittest.TestCase):
         self.assertEqual(restarted.model, "claude-opus")
         self.assertEqual(restarted.reasoning_effort, "high")
 
+    def test_chat_quota_tracking_accumulates_per_provider_and_persists_in_history(self):
+        class _CountingClaude(_FakeClaudeClient):
+            def __init__(self):
+                super().__init__()
+                self._usages = [
+                    (10.0, 2.0),
+                    (14.5, 3.0),
+                    (17.0, 3.5),
+                ]
+
+            def usage(self):
+                sess, week = self._usages.pop(0) if self._usages else (17.0, 3.5)
+                return {
+                    "source": "claude",
+                    "account": {"email": "dev@example.invalid", "plan": "pro"},
+                    "limits": [{
+                        "id": "claude", "name": "Claude", "description": "",
+                        "primary": {"used_percent": sess, "window_minutes": 300, "resets_at": 1795439400.0},
+                        "secondary": {"used_percent": week, "window_minutes": 10080, "resets_at": 1795719600.0},
+                        "credits": None,
+                    }],
+                    "summary": None,
+                    "checked_at": "2026-11-23T08:30:00+00:00",
+                }
+
+        class _CountingAgy:
+            def __init__(self):
+                self._usages = [(40.0, 50.0), (42.4, 50.8)]
+
+            def is_available(self):
+                return True
+
+            def models(self, force=False):
+                return [{
+                    "slug": "gemini-4-neon-high", "display_name": "Gemini 4 Neon (High)",
+                    "family": "gemini", "reasoning_efforts": [], "default_reasoning_effort": "",
+                }]
+
+            def usage(self):
+                sess, week = self._usages.pop(0) if self._usages else (42.4, 50.8)
+                return {
+                    "source": "agy",
+                    "account": {"email": "", "plan": "Antigravity"},
+                    "limits": [{
+                        "id": "gemini-models", "name": "Gemini Models", "description": "",
+                        "primary": {"used_percent": sess, "window_minutes": 300, "resets_at": 1795430256.0},
+                        "secondary": {"used_percent": week, "window_minutes": 10080, "resets_at": 1795981056.0},
+                        "credits": None,
+                    }],
+                    "summary": None,
+                    "checked_at": "2026-11-23T08:31:00+00:00",
+                }
+
+            def stream_turn(self, prompt, model, workspace, control, *, conversation_id="", image="", mode="auto"):
+                control.mark("request")
+                control.mark("headers")
+                yield {"type": "init", "conversation_id": "agy-q-1", "model": model}
+                yield {
+                    "type": "text_delta", "conversation_id": "agy-q-1", "step_index": 1, "state": "DONE",
+                    "text": "OK Gemini", "done": True,
+                    "usage": {"input_tokens": 1200, "output_tokens": 10, "total_tokens": 1210},
+                }
+                yield {
+                    "type": "result", "conversation_id": "agy-q-1", "status": "SUCCESS",
+                    "response": "OK Gemini", "usage": {"input_tokens": 1200, "output_tokens": 10, "total_tokens": 1210},
+                    "error": "",
+                }
+
+            def close(self):
+                pass
+
+        out = QueueOutput()
+        srv = HarnessServer(
+            self.root / "chats-q",
+            out,
+            _OfflineSession(),
+            client=None,
+            workspace=self.root,
+            config_root=self.root / "config-q",
+            agy_client=_CountingAgy(),
+            claude_client=_CountingClaude(),
+            track_chat_quota=True,
+        )
+        self.addCleanup(lambda: [w.join(3) for w in srv._workers])
+
+        # 2 turnos con Claude en el mismo chat: 10% -> 14.5% (+4.5%), luego 14.5% -> 17.0% (+2.5%) = 7.0% total.
+        srv.handle({"type": "provider.select", "provider": "claude"})
+        out.wait_for("provider.refresh.finished")
+        srv.handle({"type": "chat.send", "prompt": "Turno 1"})
+        out.wait_for("chat.finished")
+        while True:
+            q = out.wait_for("chat.quota.updated")
+            if not q["measuring"]:
+                break
+        self.assertAlmostEqual(q["quota_spent"]["claude"]["session_pct"], 4.5, places=1)
+        self.assertAlmostEqual(q["quota_spent"]["claude"]["weekly_pct"], 1.0, places=1)
+
+        srv.handle({"type": "chat.send", "prompt": "Turno 2"})
+        out.wait_for("chat.finished")
+        while True:
+            q2 = out.wait_for("chat.quota.updated")
+            if not q2["measuring"]:
+                break
+        self.assertAlmostEqual(q2["quota_spent"]["claude"]["session_pct"], 7.0, places=1)
+        self.assertAlmostEqual(q2["quota_spent"]["claude"]["weekly_pct"], 1.5, places=1)
+        self.assertEqual(q2["quota_spent"]["claude"]["turns"], 2)
+
+        # Cambiar a Gemini (agy) en el MISMO chat: 40.0% -> 42.4% (+2.4% sesión, +0.8% semanal).
+        srv.handle({"type": "provider.select", "provider": "agy"})
+        out.wait_for("provider.refresh.finished")
+        srv.handle({"type": "chat.send", "prompt": "Turno 3 Gemini"})
+        out.wait_for("chat.finished")
+        while True:
+            q3 = out.wait_for("chat.quota.updated")
+            if not q3["measuring"]:
+                break
+        self.assertAlmostEqual(q3["quota_spent"]["claude"]["session_pct"], 7.0, places=1)
+        self.assertAlmostEqual(q3["quota_spent"]["agy"]["session_pct"], 2.4, places=1)
+        self.assertAlmostEqual(q3["quota_spent"]["agy"]["weekly_pct"], 0.8, places=1)
+
+        # Persiste en SQLite al reabrir el chat.
+        chat_id = srv.conversation["chat_id"]
+        saved = srv.history.load(chat_id)
+        self.assertAlmostEqual(saved["quota_spent"]["claude"]["session_pct"], 7.0, places=1)
+        self.assertAlmostEqual(saved["quota_spent"]["agy"]["session_pct"], 2.4, places=1)
+
 
 if __name__ == "__main__":
     unittest.main()
