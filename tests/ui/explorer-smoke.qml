@@ -135,17 +135,29 @@ ShellRoot {
                     && new Set(windows.map(viewer => viewer.viewerId)).size === 2,
                     "no hay dos visores independientes")) return;
                 const paths = windows.map(viewer => viewer.filePath).join("|");
-                scenario.explorer.select(scenario.row("src/renamed.txt"));
-                if (!scenario.check(windows.map(viewer => viewer.filePath).join("|") === paths
-                    && !scenario.explorer.viewerNotice, "archivo abierto duplicado")) return;
+                // Con 2 archivos abiertos, abrir un 3° crea una ventana flotante independiente.
                 scenario.explorer.select(scenario.row("src/fourth.txt"));
-                if (!scenario.check(!!scenario.explorer.viewerNotice
+                if (!scenario.check(scenario.explorer.floatingWindows.length === 1
+                    && scenario.explorer.floatingWindows[0].visible
+                    && scenario.explorer.floatingWindows[0].floatingMode
+                    && scenario.explorer.floatingWindows[0].filePath === "src/fourth.txt"
                     && windows.map(viewer => viewer.filePath).join("|") === paths,
-                    "tercer archivo reemplaza un visor ocupado")) return;
+                    "tercer archivo no abre en ventana flotante o altera los dos visores fijos")) return;
+                // Volver a seleccionar el archivo flotante lo cierra.
+                scenario.explorer.select(scenario.row("src/fourth.txt"));
+                if (!scenario.check(!scenario.explorer.floatingWindows[0].visible,
+                    "volver a seleccionar el archivo flotante no lo cierra")) return;
+                // Volver a seleccionar un visor fijo ya abierto (src/renamed.txt) lo cierra.
+                scenario.explorer.select(scenario.row("src/renamed.txt"));
+                if (!scenario.check(windows[0].visible && !windows[1].visible,
+                    "volver a seleccionar un archivo ya abierto no cierra su visor")) return;
+                // Volver a seleccionarlo lo reabre en el visor libre #2, y liberar #1 permite abrir fourth.txt ahí.
+                scenario.explorer.select(scenario.row("src/renamed.txt"));
                 windows[0].visible = false;
                 scenario.explorer.select(scenario.row("src/fourth.txt"));
                 if (!scenario.check(windows[0].visible && windows[0].filePath === "src/fourth.txt"
-                    && windows[1].visible, "no reutiliza el visor libre")) return;
+                    && windows[1].visible && windows[1].filePath === "src/renamed.txt",
+                    "no reutiliza el visor libre")) return;
                 scenario.stage = 15;
             } else if (scenario.stage === 15) {
                 if (scenario.explorer.firstFileWindow.preview !== "cuarto") return;

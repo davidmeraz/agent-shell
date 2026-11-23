@@ -14,13 +14,14 @@ FloatingWindow {
     id: viewer
     required property AgentBridge bridge
     required property int viewerId
+    property bool floatingMode: false
     property string mainWindowTitle: ""
     property string projectId: ""
     property string projectName: ""
     objectName: "projectFileWindow"
-    title: "Visor " + viewerId + " · " + (filePath || projectName)
-    implicitWidth: 820
-    implicitHeight: viewerId === 1 ? 1330 : 655
+    title: (floatingMode ? "Flotante " + viewerId : "Visor " + viewerId) + " · " + (filePath || projectName)
+    implicitWidth: floatingMode ? 740 : 820
+    implicitHeight: floatingMode ? 620 : (viewerId === 1 ? 1330 : 655)
     minimumSize: Qt.size(420, 320)
     color: "transparent"
     visible: false
@@ -223,9 +224,10 @@ FloatingWindow {
         if (switching) fileTransition.restart();
         // Wayland delega la posición al compositor; sólo se aplica al abrir.
         if (!wasVisible && Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") && Quickshell.env("QT_QPA_PLATFORM") !== "offscreen") {
+            const roleId = floatingMode ? Math.min(20, 4 + Math.max(1, viewerId - 2)) : viewerId;
             placement.command = [Quickshell.env("AGENT_SHELL_PYTHON") || Quickshell.shellDir + "/.venv/bin/python",
                 Quickshell.shellDir + "/scripts/place-text-viewer.py",
-                String(Quickshell.processId), title, String(viewerId), mainWindowTitle];
+                String(Quickshell.processId), title, String(roleId), mainWindowTitle];
             placement.running = true;
         }
     }

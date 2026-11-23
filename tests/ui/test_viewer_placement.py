@@ -24,6 +24,12 @@ class ViewerPlacementTests(unittest.TestCase):
         self.assertEqual(placement.geometry(monitor, 2), (30, 755, 820, 655))
         self.assertEqual(placement.geometry(monitor, 3), (870, 240, 820, 1170))
         self.assertEqual(placement.geometry(monitor, 4), (870, 80, 820, 140))
+        f5 = placement.geometry(monitor, 5)
+        f6 = placement.geometry(monitor, 6)
+        self.assertGreaterEqual(f5[2], 520)
+        self.assertGreaterEqual(f5[3], 440)
+        self.assertEqual(f6[0] - f5[0], 28)
+        self.assertEqual(f6[1] - f5[1], 24)
 
     def test_scale_offset_and_reserved_edges(self):
         monitor = dict(id=1, x=-1280, y=100, width=2560, height=1440, scale=2,

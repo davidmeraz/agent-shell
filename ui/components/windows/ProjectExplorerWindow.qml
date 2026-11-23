@@ -40,16 +40,41 @@ FloatingWindow {
     readonly property ProjectFileWindow firstFileWindow: ProjectFileWindow {
         bridge: explorer.bridge; viewerId: 1; mainWindowTitle: explorer.mainWindowTitle
         projectId: explorer.projectId; projectName: explorer.projectName
+        onVisibleChanged: explorer.bumpOpenState()
+        onFilePathChanged: explorer.bumpOpenState()
     }
     readonly property ProjectFileWindow secondFileWindow: ProjectFileWindow {
         bridge: explorer.bridge; viewerId: 2; mainWindowTitle: explorer.mainWindowTitle
         projectId: explorer.projectId; projectName: explorer.projectName
+        onVisibleChanged: explorer.bumpOpenState()
+        onFilePathChanged: explorer.bumpOpenState()
     }
     readonly property var fileWindows: [firstFileWindow, secondFileWindow]
+    property var floatingWindows: []
+    property int floatingSerial: 2
+    property int openRevision: 0
+    readonly property var allFileWindows: fileWindows.concat(floatingWindows)
     property var activeFileWindow: firstFileWindow
-    readonly property var openPaths: [firstFileWindow, secondFileWindow]
-        .filter(viewer => viewer.visible).map(viewer => viewer.filePath)
+    readonly property var openPaths: {
+        const _rev = openRevision;
+        return allFileWindows.filter(viewer => viewer && viewer.visible).map(viewer => viewer.filePath);
+    }
     readonly property var syntaxPalette: GemaTheme.codePalette
+    Component {
+        id: floatingViewerFactory
+        ProjectFileWindow { floatingMode: true }
+    }
+    function bumpOpenState() { openRevision += 1; }
+    function clearFloatingWindows() {
+        for (const fw of floatingWindows) {
+            if (!fw) continue;
+            fw.clear();
+            fw.destroy();
+        }
+        floatingWindows = [];
+        floatingSerial = 2;
+        bumpOpenState();
+    }
     readonly property var breadcrumbSegments: {
         const parts = currentBrowsePath ? currentBrowsePath.split("/") : [];
         const items = [{ label: projectName || "Raíz", path: "" }];
@@ -74,8 +99,11 @@ FloatingWindow {
     property var refreshAfter: ({})
 
     function viewerNumber(path) {
-        if (firstFileWindow.visible && firstFileWindow.filePath === path) return 1;
-        if (secondFileWindow.visible && secondFileWindow.filePath === path) return 2;
+        const _rev = openRevision;
+        for (const viewer of allFileWindows) {
+            if (viewer && viewer.visible && viewer.filePath === path)
+                return viewer.viewerId;
+        }
         return 0;
     }
 
@@ -123,6 +151,7 @@ FloatingWindow {
             clearActivity();
             currentBrowsePath = "";
             for (const viewer of fileWindows) viewer.clear();
+            clearFloatingWindows();
         }
         project = next;
         if (!projectId) visible = false;
@@ -186,8 +215,8 @@ FloatingWindow {
             activeFileWindow = viewer;
             viewer.followChange(data);
         } else if (data.action === "deleted") {
-            for (const viewer of fileWindows) {
-                if (viewer.filePath === data.path || (data.directory && viewer.filePath.startsWith(data.path + "/")))
+            for (const viewer of allFileWindows) {
+                if (viewer && (viewer.filePath === data.path || (data.directory && viewer.filePath.startsWith(data.path + "/"))))
                     viewer.markDeleted();
             }
             if (data.directory && (currentBrowsePath === data.path || currentBrowsePath.startsWith(data.path + "/"))) {
@@ -258,21 +287,42 @@ FloatingWindow {
         for (const row of rows) if (row.directory && expanded[row.path]) request("list", row.path);
     }
     function openFile(path) {
-        const existing = fileWindows.find(viewer => viewer.visible && viewer.filePath === path);
+        // Si el archivo ya está abierto (derecha, izquierda o flotante), seleccionarlo de nuevo lo cierra.
+        const existing = allFileWindows.find(viewer => viewer && viewer.visible && viewer.filePath === path);
         if (existing) {
-            activeFileWindow = existing;
-            existing.refresh();
+            existing.visible = false;
             viewerNotice = "";
+            bumpOpenState();
             return;
         }
+        // 1° archivo a la derecha (#1), 2° archivo a la izquierda (#2).
         const available = fileWindows.find(viewer => !viewer.visible);
-        if (!available) {
-            viewerNotice = "Los 2 visores están abiertos. Cierra uno para abrir otro archivo.";
+        if (available) {
+            viewerNotice = "";
+            activeFileWindow = available;
+            available.openFile(path);
+            bumpOpenState();
             return;
+        }
+        // Con los dos visores fijos ocupados, abre archivos adicionales en ventanas flotantes.
+        let floating = floatingWindows.find(viewer => viewer && !viewer.visible);
+        if (!floating) {
+            const nextId = ++floatingSerial;
+            floating = floatingViewerFactory.createObject(explorer, {
+                bridge: explorer.bridge,
+                viewerId: nextId,
+                mainWindowTitle: Qt.binding(() => explorer.mainWindowTitle),
+                projectId: Qt.binding(() => explorer.projectId),
+                projectName: Qt.binding(() => explorer.projectName)
+            });
+            floating.visibleChanged.connect(() => explorer.bumpOpenState());
+            floating.filePathChanged.connect(() => explorer.bumpOpenState());
+            floatingWindows = floatingWindows.concat([floating]);
         }
         viewerNotice = "";
-        activeFileWindow = available;
-        available.openFile(path);
+        activeFileWindow = floating;
+        floating.openFile(path);
+        bumpOpenState();
     }
     function select(row) {
         if (row.directory) {

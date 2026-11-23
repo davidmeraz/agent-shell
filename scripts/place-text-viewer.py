@@ -9,13 +9,14 @@ import subprocess
 import sys
 import time
 
-# 0: carpetas; 1: texto derecho; 2: texto izquierdo; 3: chat; 4: uso.
+# 0: carpetas; 1: texto derecho; 2: texto izquierdo; 3: chat; 4: uso; 5..20: visores flotantes extra.
 ROLES = (0, 1, 2, 3, 4)
+FLOATING_ROLES = tuple(range(5, 21))
 USAGE_TITLE = "Agent Shell · Uso del plan"
 
 
 def geometry(monitor: dict, viewer_id: int, usage_height: int = 140) -> tuple[int, int, int, int]:
-    """Tres columnas centradas; redondeo simétrico hasta un píxel lógico."""
+    """Tres columnas centradas; los roles >= 5 ubican visores flotantes centrados en cascada."""
     scale = monitor.get("scale", 1) or 1
     width, height = monitor["width"], monitor["height"]
     if monitor.get("transform", 0) % 2:
@@ -29,17 +30,26 @@ def geometry(monitor: dict, viewer_id: int, usage_height: int = 140) -> tuple[in
     full_height = max(1, height - 2 * margin)
     half_height = max(1, (full_height - gap) // 2)
     quota = min(full_height, max(0, usage_height))
-    positions = {
-        0: (margin, margin, column, half_height),
-        1: (width - margin - column, margin, column, full_height),
-        2: (margin, height - margin - half_height, column, half_height),
-        3: (round((width - column) / 2), margin + quota + (gap if quota else 0),
-            column, max(1, full_height - quota - (gap if quota else 0))),
-        4: (round((width - column) / 2), margin, column, max(140, quota)),
-    }
-    x, y, w, h = positions[viewer_id]
-    min_w, min_h = {0: (320, 400), 1: (420, 320), 2: (420, 320),
-                    3: (560, 560), 4: (260, 140)}[viewer_id]
+    if viewer_id >= 5:
+        cascade = (viewer_id - 5) % 5
+        float_w = max(520, min(860, round(width * 0.44)))
+        float_h = max(440, min(820, round(height * 0.64)))
+        x = round((width - float_w) / 2) + (cascade - 1) * 28
+        y = round((height - float_h) / 2) + (cascade - 1) * 24
+        w, h = float_w, float_h
+        min_w, min_h = (420, 320)
+    else:
+        positions = {
+            0: (margin, margin, column, half_height),
+            1: (width - margin - column, margin, column, full_height),
+            2: (margin, height - margin - half_height, column, half_height),
+            3: (round((width - column) / 2), margin + quota + (gap if quota else 0),
+                column, max(1, full_height - quota - (gap if quota else 0))),
+            4: (round((width - column) / 2), margin, column, max(140, quota)),
+        }
+        x, y, w, h = positions[viewer_id]
+        min_w, min_h = {0: (320, 400), 1: (420, 320), 2: (420, 320),
+                        3: (560, 560), 4: (260, 140)}[viewer_id]
     # Si tres columnas no caben, conserva legibilidad y limita la superposición
     # al área útil. No puede garantizarse un mosaico en una pantalla pequeña.
     fit_w, fit_h = min(width, max(min_w, w)), min(height, max(min_h, h))
@@ -142,7 +152,7 @@ def main() -> int:
     try:
         pid, title, viewer_id = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
         main_title = sys.argv[4] if len(sys.argv) > 4 else ""
-        if viewer_id not in ROLES:
+        if viewer_id not in ROLES and viewer_id not in FLOATING_ROLES:
             raise ValueError("Identificador de visor inválido")
         if not place(pid, title, viewer_id, main_title):
             raise RuntimeError("No se encontró el visor o su ventana principal en el compositor")
