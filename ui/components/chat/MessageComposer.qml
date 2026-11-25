@@ -20,6 +20,13 @@ GlassPanel {
     property string attachedImage: ""
     property string pendingPasteId: ""
     property bool areaTransition: false
+    property real typingEnergy: 0.0
+    readonly property int basePromptHeight: composer.compact || composer.narrow ? 48 : 64
+    readonly property int targetPromptHeight: {
+        const contentH = Math.ceil(prompt.contentHeight) + 12;
+        if (contentH <= basePromptHeight) return basePromptHeight;
+        return Math.min(144, contentH);
+    }
     signal performanceRequested(var measurement)
     signal imagePreviewRequested(string imageUrl)
     readonly property var contextMeasurement: bridge.latestPerformance
@@ -36,8 +43,7 @@ GlassPanel {
     readonly property string architectEngine: architect.provider === "chatgpt" ? "ChatGPT"
         : architect.provider === "agy" ? "Gemini/Antigravity"
         : architect.provider === "claude" ? "Claude" : String(architect.provider || "")
-    readonly property string architectDetail: (architectEngine ? " · " + architectEngine : "")
-        + (architect.effort ? " · " + architect.effort : "")
+    readonly property string architectDetail: architect.effort ? " · " + architect.effort : ""
     readonly property string unifiedModelNotice: "Modo unificado: el arquitecto (" + architectName
         + ") es de solo lectura; el selector de modelos está desactivado."
     readonly property var modelQuery: unified ? null : ChatCommands.modelQuery(prompt.text)
@@ -66,11 +72,15 @@ GlassPanel {
         }
         return "";
     }
-    implicitHeight: editorLayout.implicitHeight + 24
-    radius: 18
-    topColor: promptHover.hovered || prompt.activeFocus ? "#24ffffff" : "#1cffffff"
-    bottomColor: "#28060a10"
-    edgeColor: prompt.activeFocus ? "#70ffffff" : promptHover.hovered ? "#52ffffff" : "#42ffffff"
+    implicitHeight: editorLayout.implicitHeight + 22
+    radius: 22
+    topColor: prompt.activeFocus
+        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#22ffffff")
+        : (promptHover.hovered ? "#20ffffff" : "#18ffffff")
+    bottomColor: "#24060a10"
+    edgeColor: prompt.activeFocus
+        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.72) : "#76ffffff")
+        : (promptHover.hovered ? "#4cffffff" : "#34ffffff")
     highlighted: prompt.activeFocus
 
     function prepare(text) {
@@ -173,6 +183,46 @@ GlassPanel {
             if (!composer.bridge.ready) composer.cancelPaste();
         }
     }
+    // Brillo especular superior que reacciona suavemente al foco y a cada pulsación de tecla.
+    Rectangle {
+        id: typingGlowBar
+        anchors.top: parent.top
+        anchors.topMargin: 1
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: parent.width * (prompt.activeFocus ? (0.42 + 0.36 * composer.typingEnergy) : 0.22)
+        height: 1.5
+        radius: 1
+        opacity: prompt.activeFocus ? (0.36 + 0.58 * composer.typingEnergy) : (promptHover.hovered ? 0.24 : 0.0)
+        Behavior on opacity { NumberAnimation { duration: GemaTheme.animations ? 180 : 0; easing.type: Easing.OutCubic } }
+        Behavior on width { NumberAnimation { duration: GemaTheme.animations ? 220 : 0; easing.type: Easing.OutCubic } }
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: "#00ffffff" }
+            GradientStop { position: 0.3; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.75) : "#88ffffff" }
+            GradientStop { position: 0.5; color: GemaTheme.synced ? GemaTheme.accent : "#ffffff" }
+            GradientStop { position: 0.7; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.75) : "#88ffffff" }
+            GradientStop { position: 1.0; color: "#00ffffff" }
+        }
+    }
+
+    SequentialAnimation {
+        id: typingPulseAnim
+        NumberAnimation {
+            target: composer
+            property: "typingEnergy"
+            to: 1.0
+            duration: GemaTheme.animations ? 90 : 0
+            easing.type: Easing.OutQuad
+        }
+        NumberAnimation {
+            target: composer
+            property: "typingEnergy"
+            to: 0.0
+            duration: GemaTheme.animations ? 480 : 0
+            easing.type: Easing.OutCubic
+        }
+    }
+
     Timer {
         id: pasteTimeout
         interval: 6500
@@ -251,28 +301,54 @@ GlassPanel {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Layout.fillWidth: true
-            Layout.preferredHeight: composer.compact || composer.narrow ? 64 : 88
-            Layout.minimumHeight: 48
+            Layout.preferredHeight: composer.targetPromptHeight
+            Layout.minimumHeight: 40
             clip: true
+            Behavior on Layout.preferredHeight {
+                NumberAnimation { duration: GemaTheme.animations ? 160 : 0; easing.type: Easing.OutCubic }
+            }
             TextArea {
                 selectionColor: "#ffffff"
                 selectedTextColor: "#000000"
                 id: prompt
                 objectName: "chatPrompt"
-                placeholderText: composer.bridge.activeArea === "app"
-                    ? "Describe qué quieres añadir a tu aplicación Gema UI Kit o /shell comando…"
-                    : composer.bridge.activeArea === "work"
-                      ? "Describe lo que quieres construir o /shell comando…"
-                      : composer.bridge.engineReady ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
-                placeholderTextColor: "#aaaaaa"
+                placeholderText: ""
                 color: "#f5f5f5"
                 font.pixelSize: 14
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
-                onTextChanged: { composer.commandsDismissed = false; completionList.currentIndex = 0; }
+                onTextChanged: {
+                    composer.commandsDismissed = false;
+                    completionList.currentIndex = 0;
+                    if (GemaTheme.animations && prompt.activeFocus && prompt.text.length > 0)
+                        typingPulseAnim.restart();
+                }
                 padding: 4
                 background: null
+                // Placeholder animado con desvanecimiento y desplazamiento suave al escribir
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.leftMargin: prompt.leftPadding + 1
+                    anchors.topMargin: prompt.topPadding
+                    text: composer.bridge.activeArea === "app"
+                        ? "Describe qué quieres añadir a tu aplicación o escribe /comando…"
+                        : composer.bridge.activeArea === "work"
+                          ? "Describe lo que quieres construir o escribe /comando…"
+                          : composer.bridge.engineReady ? "Escribe un mensaje o /comando…" : "Escribe /shell comando o conecta ChatGPT…"
+                    color: prompt.activeFocus ? "#9aa6b8" : "#808b9a"
+                    font.pixelSize: 14
+                    elide: Text.ElideRight
+                    opacity: prompt.text.length === 0 ? 1.0 : 0.0
+                    transform: Translate {
+                        x: prompt.text.length === 0 ? 0 : 8
+                        Behavior on x { NumberAnimation { duration: GemaTheme.animations ? 160 : 0; easing.type: Easing.OutCubic } }
+                    }
+                    Behavior on opacity { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                }
                 Keys.onPressed: event => {
                     if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && !NativeApp.clipboardText) {
                         composer.pasteImage();
@@ -318,49 +394,74 @@ GlassPanel {
                 }
             }
         }
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: prompt.activeFocus ? "#30ffffff" : "#18ffffff" }
         RowLayout {
             objectName: "chatComposerActions"
             Layout.fillWidth: true
-            Layout.minimumHeight: 40
-            Layout.maximumHeight: 40
-            Layout.preferredHeight: 40
+            Layout.minimumHeight: 36
+            Layout.maximumHeight: 36
+            Layout.preferredHeight: 36
             spacing: 8
-            ActionButton {
+            Button {
+                id: pasteButton
                 objectName: "chatPasteImageButton"
-                implicitWidth: 36
-                implicitHeight: 36
-                horizontalPadding: 0
-                verticalPadding: 0
-                font.pixelSize: 16
-                text: "＋"
+                implicitWidth: 34
+                implicitHeight: 34
+                padding: 0
+                hoverEnabled: true
                 enabled: composer.bridge.ready && !composer.bridge.busy && !composer.pendingPasteId
+                scale: down ? 0.92 : (hovered ? 1.06 : 1.0)
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
                 Accessible.name: "Pegar imagen del portapapeles"
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 ToolTip.text: "Pegar imagen del portapapeles"
                 onClicked: composer.pasteImage()
+                contentItem: Item {
+                    GemaIcon {
+                        anchors.centerIn: parent
+                        name: "plus"
+                        size: 16
+                        color: !pasteButton.enabled ? "#666666"
+                             : pasteButton.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
+                }
+                background: GlassPanel {
+                    radius: 17
+                    reflective: pasteButton.hovered
+                    highlighted: pasteButton.activeFocus || pasteButton.hovered
+                    topColor: pasteButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#26ffffff")
+                        : "#14ffffff"
+                    bottomColor: "#0affffff"
+                    edgeColor: pasteButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#54ffffff")
+                        : "#2cffffff"
+                    opacity: pasteButton.enabled ? 1.0 : 0.45
+                }
             }
             // Este espacio permanece reservado cuando las sugerencias se ocultan.
             Item {
                 objectName: "chatCommandSlot"
                 Layout.fillWidth: true
-                implicitHeight: 40
+                implicitHeight: 36
                 RowLayout {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     visible: !composer.showCommands
-                    spacing: 6
+                    spacing: 8
                     Rectangle {
                         objectName: "chatUnifiedArchitect"
-                        Layout.preferredWidth: Math.min(architectRow.implicitWidth + 16, parent.width * 0.6)
-                        Layout.preferredHeight: 22
+                        Layout.preferredWidth: Math.min(architectRow.implicitWidth + 18, parent.width * 0.62)
+                        Layout.preferredHeight: 24
                         visible: composer.unified
-                        radius: 11
-                        color: "#14ffffff"
+                        radius: 12
+                        color: GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#16ffffff"
                         border.width: 1
-                        border.color: architectHover.hovered ? "#50ffffff" : "#28ffffff"
+                        border.color: architectHover.hovered
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#50ffffff")
+                            : (GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#28ffffff")
                         activeFocusOnTab: true
                         Accessible.role: Accessible.StaticText
                         Accessible.name: "Arquitecto unificado, solo lectura: " + composer.architectName
@@ -369,35 +470,41 @@ GlassPanel {
                         HoverHandler { id: architectHover }
                         ToolTip.visible: architectHover.hovered
                         ToolTip.delay: 400
-                        ToolTip.text: "El sistema elige automáticamente el mejor modelo con cuota disponible; no se puede cambiar en modo unificado."
+                        ToolTip.text: composer.architectName + (composer.architectEngine ? " · " + composer.architectEngine : "")
+                            + (composer.architect.effort ? " · " + composer.architect.effort : "")
+                            + "\nEl sistema elige automáticamente el mejor modelo con cuota disponible."
                         RowLayout {
                             id: architectRow
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 5
-                            Text { text: "◆"; color: "#cccccc"; font.pixelSize: 9 }
+                            anchors.leftMargin: 9
+                            anchors.rightMargin: 10
+                            spacing: 6
+                            GemaIcon {
+                                name: "brand"
+                                size: 12
+                                color: GemaTheme.synced ? GemaTheme.accent : "#e6e6e6"
+                            }
                             Text {
                                 objectName: "chatUnifiedArchitectName"
                                 Layout.fillWidth: true
                                 text: composer.architectName + composer.architectDetail
                                 textFormat: Text.PlainText
-                                color: "#e6e6e6"
+                                color: GemaTheme.textColor
                                 font.pixelSize: 11
-                                font.weight: Font.Medium
+                                font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
-                            Text { text: "auto"; color: "#aaaaaa"; font.pixelSize: 9; opacity: 0.7 }
                         }
                     }
                     Text {
                         objectName: "chatActiveModel"
-                        Layout.preferredWidth: Math.min(implicitWidth, parent.width * 0.4)
+                        Layout.preferredWidth: Math.min(implicitWidth, parent.width * 0.45)
                         visible: composer.activeModelLabel !== "" && !composer.narrow
                         text: composer.activeModelLabel
                         textFormat: Text.PlainText
-                        color: "#aaaaaa"
+                        color: GemaTheme.mutedColor
                         font.pixelSize: 11
+                        font.weight: Font.Medium
                         elide: Text.ElideRight
                         Accessible.role: Accessible.StaticText
                         Accessible.name: "Modelo activo: " + text
@@ -413,18 +520,13 @@ GlassPanel {
                                 + ChatCommands.effortLabel(composer.bridge.reasoningEffort || "auto") + " · Cambia con /modelos"
                     }
                     Text {
-                        visible: (composer.activeModelLabel !== "" || composer.unified) && composer.statusText !== "" && !composer.narrow
-                        text: "·"
-                        color: "#888888"
-                        font.pixelSize: 11
-                    }
-                    Text {
                         objectName: "chatComposerStatus"
                         Layout.fillWidth: true
                         text: composer.statusText
                         textFormat: Text.PlainText
-                        color: composer.bridge.busy || composer.bridge.loginBusy ? "#d6d6d6" : "#aaaaaa"
-                        font.pixelSize: 11
+                        color: composer.bridge.busy || composer.bridge.loginBusy ? GemaTheme.textColor : GemaTheme.subtleColor
+                        opacity: composer.bridge.busy || composer.bridge.loginBusy ? 0.92 : 0.48
+                        font.pixelSize: 10
                         elide: Text.ElideRight
                         HoverHandler { id: statusHover }
                         ToolTip.visible: visible && statusHover.hovered
@@ -440,7 +542,36 @@ GlassPanel {
                     anchors.verticalCenter: parent.verticalCenter
                     height: 28
                     visible: composer.showCommands
-                    spacing: 8
+                    spacing: 6
+                    property real slideOffset: 0
+                    transform: Translate { y: inlineSuggestions.slideOffset }
+                    onVisibleChanged: {
+                        if (visible && GemaTheme.animations) {
+                            inlineSuggestions.opacity = 0;
+                            inlineSuggestions.slideOffset = 2;
+                            commandPaletteEnter.restart();
+                        } else {
+                            inlineSuggestions.opacity = 1;
+                            inlineSuggestions.slideOffset = 0;
+                        }
+                    }
+                    ParallelAnimation {
+                        id: commandPaletteEnter
+                        NumberAnimation {
+                            target: inlineSuggestions
+                            property: "opacity"
+                            from: 0; to: 1
+                            duration: 150
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: inlineSuggestions
+                            property: "slideOffset"
+                            from: 2; to: 0
+                            duration: 160
+                            easing.type: Easing.OutCubic
+                        }
+                    }
                     ListView {
                         id: completionList
                         objectName: "chatCommandList"
@@ -460,28 +591,58 @@ GlassPanel {
                             required property var modelData
                             required property int index
                             readonly property string blocked: ChatCommands.blockedReason(composer.modelMode ? "/modelos" : modelData.value, composer.bridge)
-                            width: Math.min(200, label.implicitWidth + 20)
-                            height: 28
+                            readonly property bool activeChoice: completionList.currentIndex === optionButton.index
+                            width: Math.min(210, labelRow.implicitWidth + 20)
+                            height: 26
+                            anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+                            padding: 0
                             enabled: !blocked
                             hoverEnabled: true
                             focusPolicy: Qt.NoFocus
+                            scale: down ? 0.94 : (hovered ? 1.03 : 1.0)
+                            Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
                             onClicked: { completionList.currentIndex = index; composer.executeSelected(); }
-                            contentItem: Text {
-                                id: label
-                                text: (composer.modelMode && modelData.selected ? "• " : "") + modelData.label
-                                font.pixelSize: 11
-                                color: optionButton.enabled ? "#dddddd" : "#777777"
-                                elide: Text.ElideRight
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
+                            contentItem: RowLayout {
+                                id: labelRow
+                                anchors.centerIn: parent
+                                spacing: 5
+                                Rectangle {
+                                    visible: optionButton.activeChoice || (composer.modelMode && !!optionButton.modelData.selected)
+                                    implicitWidth: 5
+                                    implicitHeight: 5
+                                    radius: 2.5
+                                    color: optionButton.enabled
+                                        ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                        : "#666666"
+                                }
+                                Text {
+                                    id: label
+                                    text: optionButton.modelData.label
+                                    font.pixelSize: 11
+                                    font.weight: optionButton.activeChoice ? Font.DemiBold : Font.Medium
+                                    color: !optionButton.enabled ? "#6e7784"
+                                         : optionButton.activeChoice ? "#ffffff"
+                                         : (optionButton.hovered ? "#eef2f8" : GemaTheme.mutedColor)
+                                    elide: Text.ElideRight
+                                    Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                                }
                             }
-                            background: Rectangle {
-                                radius: 7
-                                color: completionList.currentIndex === optionButton.index || optionButton.hovered ? "#20ffffff" : "transparent"
-                                border.width: 1
-                                border.color: completionList.currentIndex === optionButton.index ? "#60ffffff" : "#20ffffff"
+                            background: GlassPanel {
+                                radius: 14
+                                reflective: optionButton.activeChoice
+                                highlighted: optionButton.activeChoice || optionButton.hovered
+                                topColor: optionButton.activeChoice
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.30) : "#2effffff")
+                                    : (optionButton.hovered ? "#1effffff" : "#10ffffff")
+                                bottomColor: optionButton.activeChoice
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.12) : "#14ffffff")
+                                    : "#08ffffff"
+                                edgeColor: optionButton.activeChoice
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.75) : "#6cffffff")
+                                    : (optionButton.hovered ? "#42ffffff" : "#22ffffff")
                             }
                             ToolTip.visible: hovered
+                            ToolTip.delay: 260
                             ToolTip.text: blocked || modelData.description
                         }
                     }
@@ -494,15 +655,33 @@ GlassPanel {
                                : composer.bridge.provider === "claude"
                                  ? "Conecta Claude Code para ver los modelos"
                                  : "Conecta ChatGPT para ver tus modelos")
-                        color: "#aaaaaa"
+                        color: GemaTheme.subtleColor
                         font.pixelSize: 11
                         elide: Text.ElideRight
                     }
-                    Text {
-                        visible: composer.completions.length > 0 && inlineSuggestions.width >= 360
-                        text: "←→ · Enter"
-                        color: "#888888"
-                        font.pixelSize: 10
+                    Row {
+                        visible: composer.completions.length > 0 && inlineSuggestions.width >= 350
+                        spacing: 4
+                        Repeater {
+                            model: ["Tab", "↵"]
+                            delegate: Rectangle {
+                                required property string modelData
+                                implicitWidth: keyText.implicitWidth + 10
+                                implicitHeight: 20
+                                radius: 6
+                                color: "#12ffffff"
+                                border.width: 1
+                                border.color: "#26ffffff"
+                                Text {
+                                    id: keyText
+                                    anchors.centerIn: parent
+                                    text: parent.modelData
+                                    color: GemaTheme.subtleColor
+                                    font.pixelSize: 9
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -546,25 +725,60 @@ GlassPanel {
                 font.pixelSize: 10
                 Accessible.name: prompt.text.length + " de 16000 caracteres"
             }
-            ActionButton {
+            Button {
                 id: sendButton
                 objectName: "chatSendButton"
-                implicitWidth: composer.narrow ? 42 : 108
-                implicitHeight: 38
-                horizontalPadding: composer.narrow ? 0 : 14
+                implicitWidth: 34
+                implicitHeight: 34
+                padding: 0
+                hoverEnabled: true
                 Layout.alignment: Qt.AlignVCenter
-                font.pixelSize: 13
-                text: composer.bridge.busy ? (composer.narrow ? "◼" : "Detener  ◼") : (composer.narrow ? "↑" : "Enviar  ↑")
-                accent: true
-                enabled: composer.bridge.busy || (composer.canSubmit
+                readonly property bool readyToSend: composer.bridge.busy || (composer.canSubmit
                     && (!!prompt.text.trim() || !!composer.attachedImage) && prompt.text.length <= 16000)
+                property real readyPopScale: 1.0
+                onReadyToSendChanged: {
+                    if (readyToSend && GemaTheme.animations)
+                        sendReadyPop.restart();
+                }
+                SequentialAnimation {
+                    id: sendReadyPop
+                    NumberAnimation { target: sendButton; property: "readyPopScale"; to: 1.12; duration: 110; easing.type: Easing.OutCubic }
+                    NumberAnimation { target: sendButton; property: "readyPopScale"; to: 1.0; duration: 150; easing.type: Easing.OutBack }
+                }
+                enabled: readyToSend
+                scale: (down ? 0.92 : (hovered && enabled ? 1.07 : 1.0)) * readyPopScale
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
                 Accessible.name: composer.bridge.busy ? "Detener ejecución" : "Enviar mensaje"
                 ToolTip.visible: hovered
-                ToolTip.delay: 500
+                ToolTip.delay: 420
                 ToolTip.text: composer.bridge.busy ? "Detener ejecución" : "Enviar (Enter) · Salto de línea: Shift+Enter"
                 onClicked: {
                     if (composer.bridge.busy) composer.bridge.cancel();
                     else composer.send();
+                }
+                contentItem: Item {
+                    GemaIcon {
+                        anchors.centerIn: parent
+                        name: composer.bridge.busy ? "stop" : "send"
+                        size: composer.bridge.busy ? 15 : 16
+                        color: !sendButton.enabled ? "#68707c"
+                             : "#ffffff"
+                    }
+                }
+                background: GlassPanel {
+                    radius: 17
+                    reflective: sendButton.enabled
+                    highlighted: sendButton.activeFocus || (sendButton.hovered && sendButton.enabled)
+                    topColor: sendButton.enabled
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(sendButton.hovered ? 0.56 : 0.42) : (sendButton.hovered ? "#44ffffff" : "#34ffffff"))
+                        : "#12ffffff"
+                    bottomColor: sendButton.enabled
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#1cffffff")
+                        : "#08ffffff"
+                    edgeColor: sendButton.enabled
+                        ? (GemaTheme.synced ? GemaTheme.accent : "#88ffffff")
+                        : "#24ffffff"
+                    opacity: sendButton.enabled ? 1.0 : 0.55
                 }
             }
         }

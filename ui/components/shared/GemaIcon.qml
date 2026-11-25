@@ -165,6 +165,27 @@ Item {
                     ctx.restore();
                     ctx.stroke();
                 }
+            } else if (root.name === "plus") {
+                // Cruz minimalista fina
+                ctx.beginPath();
+                ctx.moveTo(12, 5.2);
+                ctx.lineTo(12, 18.8);
+                ctx.moveTo(5.2, 12);
+                ctx.lineTo(18.8, 12);
+                ctx.stroke();
+            } else if (root.name === "send") {
+                // Flecha ascendente limpia de envío
+                ctx.beginPath();
+                ctx.moveTo(12, 18.5);
+                ctx.lineTo(12, 5.8);
+                ctx.moveTo(6.8, 10.8);
+                ctx.lineTo(12, 5.5);
+                ctx.lineTo(17.2, 10.8);
+                ctx.stroke();
+            } else if (root.name === "stop") {
+                // Cuadrado redondeado de detención
+                roundedRectPath(7, 7, 10, 10, 2.4);
+                ctx.fill();
             } else if (root.name === "usage") {
                 // Medidor circular minimalista de cuota / crédito
                 ctx.beginPath();
