@@ -128,11 +128,17 @@ NativeScope {
                 if (!check(agent.status === "Respuesta completada.", "el sondeo borra el estado del turno")) return;
                 if (!check(!chat.usageWindow.visible && cards.every(card => card.visible), "no hay tres tarjetas")) return;
                 if (!check(new Set(cards.map(card => card.implicitHeight)).size === 1, "alturas distintas")) return;
-                const chatgptWorker = findVisualChild(chat.contentItem, "unifiedWorkerName_chatgpt");
-                const claudeWorker = findVisualChild(chat.contentItem, "unifiedWorkerName_claude");
+                if (!check(!chat.showUnifiedTeamWindow && !chat.unifiedTeamWindow.visible,
+                    "la ventana flotante del equipo unificado debe empezar desactivada")) return;
+                chat.showUnifiedTeamWindow = true;
+                if (!check(chat.unifiedTeamWindow.visible,
+                    "activar la opción no muestra la ventana flotante del equipo unificado")) return;
+                const teamWin = chat.unifiedTeamWindow;
+                const chatgptWorker = findVisualChild(teamWin.contentItem, "unifiedWorkerName_chatgpt");
+                const claudeWorker = findVisualChild(teamWin.contentItem, "unifiedWorkerName_claude");
                 if (!check(chatgptWorker && chatgptWorker.text.indexOf("GPT-6.1-Terra") >= 0
                     && claudeWorker && claudeWorker.text.indexOf("Claude Sonnet 5.5") >= 0, "obreros dedicados incorrectos")) return;
-                const badge = inspector.findChild(chat, "unifiedThresholdBadge");
+                const badge = inspector.findChild(teamWin, "unifiedThresholdBadge");
                 if (!check(badge && badge.text.indexOf("35%") >= 0, "umbral 35% ausente en UnifiedTeam")) return;
                 if (!check(cards[1].limits.length === 1, "Gemini no arranca contraído")) return;
                 if (!check(inspector.findChild(cards[2], "providerUsageNotice_claude").text === "Consultando uso…", "sin estado de carga")) return;
@@ -141,7 +147,7 @@ NativeScope {
                 if (!check(chat.agentWindows.cards.every(card => !card.visible), "hay subagentes sin delegar")) return;
                 receive("chat.busy", { turn_id: "t1" });
                 receive("chat.finished", { status: "completed" });
-                const state = inspector.findChild(chat, "unifiedArchitectState");
+                const state = inspector.findChild(teamWin, "unifiedArchitectState");
                 if (!check(state.text === "ARQUITECTO · SIN DELEGAR", "no avisa que el arquitecto no delegó: " + state.text)) return;
                 // Lanzar ambos obreros (ChatGPT y Claude) en paralelo
                 receive("chat.busy", { turn_id: "t2" });
@@ -192,10 +198,10 @@ NativeScope {
                 chatgptWin.dismissed();
                 if (!check(!chatgptWin.wanted && claudeWin.wanted, "cerrar un obrero afecta al otro")) return;
                 receive("chat.finished", { status: "completed" });
-                if (!check(claudeWin.visible && inspector.findChild(chat, "unifiedArchitectState").text === "ARQUITECTO · 3 DELEGACIONES",
+                if (!check(claudeWin.visible && inspector.findChild(chat.unifiedTeamWindow, "unifiedArchitectState").text === "ARQUITECTO · 3 DELEGACIONES",
                     "las ventanas no permanecen al terminar o la cuenta es incorrecta")) return;
                 // Abrir el diálogo de configuración unificada desde el botón ⚙
-                const configBtn = inspector.findChild(chat, "unifiedConfigButton");
+                const configBtn = inspector.findChild(chat.unifiedTeamWindow, "unifiedConfigButton");
                 if (!check(configBtn && configBtn.visible, "falta botón de configuración en UnifiedTeam")) return;
                 configBtn.clicked();
             } else if (stage === 3) {

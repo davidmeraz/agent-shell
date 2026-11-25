@@ -39,6 +39,7 @@ NativeWindow {
     readonly property bool wideLayout: width >= 880
     readonly property bool projectOpen: (bridge.activeArea === "work" || bridge.activeArea === "app") && !!bridge.projectId
     property bool sidebarKeyboardOpen: false
+    property bool showUnifiedTeamWindow: false
     readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy && !bridge.projectRunPreparing
     property string performanceModel: ""
     property double elapsedMs: 0
@@ -66,6 +67,12 @@ NativeWindow {
     readonly property AgentWindows agentWindows: AgentWindows {
         bridge: window.bridge
         mainWindow: window
+    }
+    readonly property UnifiedTeamWindow unifiedTeamWindow: UnifiedTeamWindow {
+        bridge: window.bridge
+        enabledInSettings: window.showUnifiedTeamWindow
+        onConfigureRequested: unifiedConfigDialog.open()
+        onClosedByUser: window.showUnifiedTeamWindow = false
     }
     function openUsage() {
         if (bridge.unifiedMode) unifiedUsage.open();
@@ -565,16 +572,6 @@ NativeWindow {
                 bridge: window.bridge
             }
 
-            UnifiedTeam {
-                Layout.fillWidth: true
-                Layout.topMargin: -6
-                Layout.bottomMargin: -4
-                visible: window.bridge.workspaceSelected && window.bridge.unifiedMode && window.bridge.engineReady
-                compact: window.height < 680
-                bridge: window.bridge
-                onConfigureRequested: unifiedConfigDialog.open()
-            }
-
             MessageComposer {
                 id: composer
                 Layout.fillWidth: true
@@ -868,10 +865,12 @@ NativeWindow {
         id: settingsDialog
         objectName: "chatSettingsDialog"
         bridge: window.bridge
+        showUnifiedTeamWindow: window.showUnifiedTeamWindow
         anchors.centerIn: parent
         width: Math.min(460, window.width - 40)
         onLimitsRequested: limitsDialog.open()
         onUnifiedRequested: unifiedConfigDialog.open()
+        onToggleUnifiedTeamWindow: window.showUnifiedTeamWindow = !window.showUnifiedTeamWindow
         onShellRequested: shellSettings.open()
         onAccountRequested: accountPanel.open()
         onUsageRequested: window.openUsage()

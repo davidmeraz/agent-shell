@@ -8,8 +8,10 @@ import "../shared"
 GlassDialog {
     id: dialog
     required property AgentBridge bridge
+    property bool showUnifiedTeamWindow: false
     signal limitsRequested()
     signal unifiedRequested()
+    signal toggleUnifiedTeamWindow()
     signal shellRequested()
     signal accountRequested()
     signal usageRequested()
@@ -294,6 +296,105 @@ GlassDialog {
                 ? dialog.bridge.unifiedConfig.quota_threshold : 35) + "%"
             enabled: dialog.bridge.ready && !dialog.bridge.busy
             onClicked: { dialog.close(); dialog.unifiedRequested(); }
+        }
+
+        Button {
+            id: unifiedTeamToggleRow
+            objectName: "settingsUnifiedTeamWindowRow"
+            visible: dialog.bridge.agyAvailable || dialog.bridge.claudeAvailable
+            Layout.fillWidth: true
+            implicitHeight: 50
+            padding: 10
+            hoverEnabled: true
+            scale: down ? 0.985 : (hovered ? 1.008 : 1.0)
+            Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 130 : 0; easing.type: Easing.OutCubic } }
+            onClicked: dialog.toggleUnifiedTeamWindow()
+            contentItem: RowLayout {
+                spacing: 11
+                GlassPanel {
+                    implicitWidth: 30
+                    implicitHeight: 30
+                    radius: 9
+                    reflective: false
+                    topColor: unifiedTeamToggleRow.hovered || dialog.showUnifiedTeamWindow
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                        : (GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#18ffffff")
+                    bottomColor: "#0affffff"
+                    edgeColor: unifiedTeamToggleRow.hovered || dialog.showUnifiedTeamWindow
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#58ffffff")
+                        : "#2cffffff"
+                    GemaIcon {
+                        anchors.centerIn: parent
+                        name: "app"
+                        size: 14
+                        color: unifiedTeamToggleRow.hovered || dialog.showUnifiedTeamWindow
+                            ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                            : GemaTheme.textColor
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Ventana de equipo unificado"
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        color: GemaTheme.textColor
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Muestra arquitecto, cascada y obreros en una ventana flotante"
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        color: GemaTheme.subtleColor
+                        font.pixelSize: 10
+                    }
+                }
+                // Interruptor minimalista ON/OFF
+                Rectangle {
+                    implicitWidth: 38
+                    implicitHeight: 22
+                    radius: 11
+                    color: dialog.showUnifiedTeamWindow
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.45) : "#48ffffff")
+                        : "#1cffffff"
+                    border.width: 1
+                    border.color: dialog.showUnifiedTeamWindow
+                        ? (GemaTheme.synced ? GemaTheme.accent : "#90ffffff")
+                        : "#36ffffff"
+                    Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    Behavior on border.color { ColorAnimation { duration: GemaTheme.animDuration } }
+
+                    Rectangle {
+                        width: 16
+                        height: 16
+                        radius: 8
+                        y: 3
+                        x: dialog.showUnifiedTeamWindow ? 19 : 3
+                        color: dialog.showUnifiedTeamWindow ? "#ffffff" : "#b0bac8"
+                        Behavior on x { NumberAnimation { duration: GemaTheme.animations ? 150 : 0; easing.type: Easing.OutCubic } }
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
+                }
+            }
+            background: GlassPanel {
+                radius: 12
+                reflective: false
+                highlighted: unifiedTeamToggleRow.hovered || unifiedTeamToggleRow.activeFocus
+                topColor: unifiedTeamToggleRow.hovered
+                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.20) : "#24ffffff")
+                    : "#14ffffff"
+                bottomColor: "#0affffff"
+                edgeColor: unifiedTeamToggleRow.hovered
+                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.54) : "#50ffffff")
+                    : "#26ffffff"
+            }
         }
 
         SettingsRow {
