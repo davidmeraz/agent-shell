@@ -11,11 +11,29 @@ GlassDialog {
     required property AgentBridge bridge
     readonly property bool isAppMode: bridge.activeArea === "app"
     property string selectedEngine: "python"
+    property bool customDirectoryEdited: false
     title: isAppMode ? "Nueva aplicación · Gema UI Kit" : "Nuevo proyecto"
     modal: true
     closePolicy: bridge.areaBusy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+    function parentWorkspaceDir(rawPath) {
+        const cleaned = (rawPath || "").replace(/\/+$/, "");
+        if (!cleaned) return "";
+        const slash = cleaned.lastIndexOf("/");
+        return slash > 0 ? cleaned.slice(0, slash) : cleaned;
+    }
+
+    function slugifyAppName(rawName) {
+        return (rawName || "")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9áéíóúñü_-]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+    }
+
     onOpened: {
         projectName.text = "";
+        customDirectoryEdited = false;
         directory.text = bridge.workspace;
         selectedEngine = "python";
         bridge.areaError = "";
@@ -30,7 +48,10 @@ GlassDialog {
     FolderDialog {
         id: folderPicker
         title: dialog.isAppMode ? "Carpeta de la aplicación" : "Carpeta del proyecto"
-        onAccepted: directory.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""))
+        onAccepted: {
+            dialog.customDirectoryEdited = true;
+            directory.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""));
+        }
     }
     contentItem: ColumnLayout {
         spacing: 12
@@ -48,6 +69,12 @@ GlassDialog {
             selectedTextColor: "#000000"
             padding: 12
             background: GlassPanel { radius: 10; highlighted: projectName.activeFocus }
+            onTextEdited: {
+                if (!dialog.isAppMode || dialog.customDirectoryEdited) return;
+                const base = dialog.parentWorkspaceDir(dialog.bridge.workspace);
+                const slug = dialog.slugifyAppName(projectName.text);
+                if (base && slug) directory.text = base + "/" + slug;
+            }
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -74,6 +101,15 @@ GlassDialog {
                     onClicked: dialog.selectedEngine = "rust"
                 }
             }
+            Text {
+                Layout.fillWidth: true
+                text: dialog.selectedEngine === "rust"
+                    ? "Motor Rust compilado sin dependencias externas + interfaz QML Glassmorphism conectada por stdio JSON-Lines v2."
+                    : "Motor Python ágil con librería estándar + interfaz QML Glassmorphism conectada por stdio JSON-Lines v2."
+                color: GemaTheme.subtleColor
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
         }
         RowLayout {
             Layout.fillWidth: true
@@ -98,11 +134,12 @@ GlassDialog {
             selectedTextColor: "#000000"
             padding: 12
             background: GlassPanel { radius: 10; highlighted: directory.activeFocus }
+            onTextEdited: dialog.customDirectoryEdited = true
         }
         Text {
             Layout.fillWidth: true
             text: dialog.isAppMode
-                ? "Generará automáticamente la estructura Gema UI Kit con estilo Matte Transparent Glassmorphism (MattePanel, GlassPanel, WaterReflection, ActionButton), puente IPC stdio y scripts para Probar e Iniciar."
+                ? "Si la carpeta no existe se creará automáticamente con toda la estructura Gema UI Kit (shell.qml, ui/components/*, backend y scripts). Si ya contiene una app Gema, se vinculará sin sobrescribir tus archivos."
                 : "Elige una carpeta existente, vacía o con un proyecto. Work conservará sus conversaciones por separado."
             color: "#aaaaaa"
             font.pixelSize: 12

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
+from ..core.paths import xdg_data_home
 from ..tools.shell import resolve_workspace
 
 VALID_ENGINES = ("python", "rust")
@@ -910,3 +912,71 @@ def scaffold_gema_app(workdir: str | Path, name: str, engine: str = "python") ->
         _write_if_missing(folder / "backend" / "main.py", _python_backend(name), executable=True)
 
     return folder
+
+
+def _resolve_applications_dir(applications_dir: Path | None = None) -> Path:
+    if applications_dir is not None:
+        return Path(applications_dir).expanduser()
+    env_dir = os.environ.get("AGENT_SHELL_APPLICATIONS_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return xdg_data_home() / "applications"
+
+
+def desktop_entry_path(project_id: str, applications_dir: Path | None = None) -> Path:
+    return _resolve_applications_dir(applications_dir) / f"gema-app-{project_id}.desktop"
+
+
+def is_desktop_entry_installed(project_id: str, applications_dir: Path | None = None) -> bool:
+    try:
+        target = desktop_entry_path(project_id, applications_dir)
+        return target.is_file() and not target.is_symlink()
+    except OSError:
+        return False
+
+
+def install_desktop_entry(project: dict, applications_dir: Path | None = None) -> Path:
+    project_id = str(project.get("project_id") or "").strip()
+    name = " ".join(str(project.get("name") or "App Gema").splitlines()).strip() or "App Gema"
+    engine = "Rust" if project.get("engine") == "rust" else "Python"
+    folder = resolve_workspace(project["workdir"])
+    run_script = folder / "scripts" / "run.sh"
+    shell_qml = folder / "shell.qml"
+    if run_script.is_file():
+        exec_cmd = shlex.quote(str(run_script))
+    elif shell_qml.is_file():
+        exec_cmd = f"qs --no-duplicate --path {shlex.quote(str(shell_qml))}"
+    else:
+        raise ValueError("La carpeta de la aplicación no contiene scripts/run.sh ni shell.qml.")
+    target = desktop_entry_path(project_id, applications_dir)
+    if target.is_symlink():
+        raise ValueError("No se permiten enlaces simbólicos en el lanzador de escritorio.")
+    target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    content = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Version=1.0\n"
+        f"Name={name}\n"
+        f"Comment=Aplicación Gema UI Kit ({engine})\n"
+        f"Exec={exec_cmd}\n"
+        f"Path={folder}\n"
+        "Icon=agent-shell\n"
+        "Terminal=false\n"
+        "Categories=Utility;\n"
+        "StartupNotify=false\n"
+    )
+    target.write_text(content, encoding="utf-8")
+    if os.name == "posix":
+        os.chmod(target, 0o755)
+    return target
+
+
+def uninstall_desktop_entry(project_id: str, applications_dir: Path | None = None) -> bool:
+    target = desktop_entry_path(project_id, applications_dir)
+    if target.is_symlink():
+        raise ValueError("No se permiten enlaces simbólicos en el lanzador de escritorio.")
+    if not target.exists():
+        return False
+    target.unlink(missing_ok=True)
+    return True
+

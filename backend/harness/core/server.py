@@ -17,11 +17,18 @@ from ..tools.clipboard import read_clipboard
 from ..account.codex_usage import CodexUsageReader, UsageError
 from ..work.activity import ProjectActivity
 from ..work.bootstrap import build_work_bootstrap
-from ..work.gema_kit import GEMA_UI_INSTRUCTIONS, scaffold_gema_app
+from ..work.gema_kit import (
+    GEMA_UI_INSTRUCTIONS,
+    install_desktop_entry,
+    is_desktop_entry_installed,
+    scaffold_gema_app,
+    uninstall_desktop_entry,
+)
 from ..chat.images import validate_image, user_content
 from ..work.explorer import ProjectExplorer
 from ..work.git_flow import DEFAULT_MAX_COMMITS, GitFlowReader
 from .events import EventEmitter
+from .paths import default_history_root
 from ..chat.context import append_result, close_pending_calls, replay_items, visible_chat
 from ..chat.compaction import (
     build_compacted_context,
@@ -141,6 +148,13 @@ class HarnessServer:
         self._claude_model = saved_provider.get("claude_model", "")
         self._claude_effort = saved_provider.get("claude_effort", "")
         self.projects = ProjectStore(self.history.root / "projects", db=self.history.db)
+        env_apps_dir = os.environ.get("AGENT_SHELL_APPLICATIONS_DIR", "").strip()
+        if env_apps_dir:
+            self._applications_dir: Path | None = Path(env_apps_dir).expanduser()
+        elif self.history.root != default_history_root().resolve():
+            self._applications_dir = self.history.root / "applications"
+        else:
+            self._applications_dir = None
         self.active_area = "chat"
         self.project: dict | None = None
         self._area_chats: dict[str, dict | None] = {}
@@ -823,8 +837,30 @@ class HarnessServer:
     def _visible_project(self, project):
         visible = {key: value for key, value in project.items() if key != "launch_profile"}
         workdir = Path(project["workdir"])
-        has_gema_script = project.get("kind") == "app" and (workdir / "scripts" / "run.sh").is_file()
+        kind = project.get("kind", "work")
+        folder_exists = workdir.is_dir()
+        has_run_sh = folder_exists and (workdir / "scripts" / "run.sh").is_file()
+        has_shell_qml = folder_exists and (workdir / "shell.qml").is_file()
+        has_check_sh = folder_exists and (workdir / "scripts" / "check.sh").is_file()
+        has_git = folder_exists and (workdir / ".git").exists()
+        has_gema_script = kind == "app" and has_run_sh
         visible["has_launch_profile"] = bool(has_gema_script or self.project_runner.cache.load(project["project_id"], workdir))
+        visible["folder_exists"] = bool(folder_exists)
+        visible["has_run_script"] = bool(has_run_sh or has_shell_qml)
+        visible["has_check_script"] = bool(has_check_sh)
+        visible["has_git"] = bool(has_git)
+        try:
+            with self.history.db.read() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM chats WHERE area = ? AND project_id = ?",
+                    (kind, project["project_id"]),
+                ).fetchone()
+            visible["chat_count"] = int(row[0]) if row else 0
+        except (OSError, sqlite3.Error, ValueError, TypeError):
+            visible["chat_count"] = 0
+        visible["desktop_installed"] = bool(
+            kind == "app" and is_desktop_entry_installed(project["project_id"], self._applications_dir)
+        )
         return visible
 
     def _select_area(self, area: str, project_id: str | None = None) -> None:
@@ -922,6 +958,11 @@ class HarnessServer:
             self._last_app_id = ""
         if self.project and self.project["project_id"] == project_id:
             self._select_area(target_kind, "")
+        if target_kind == "app":
+            try:
+                uninstall_desktop_entry(project_id, self._applications_dir)
+            except (OSError, ValueError):
+                pass
         self._area_chats.pop("work:" + project_id, None)
         self._area_chats.pop("app:" + project_id, None)
         self._emit("project.deleted", project_id=project_id, kind=target_kind, chat_ids=chats)
@@ -2733,12 +2774,19 @@ class HarnessServer:
                     else:
                         if set(request) - {"type", "project_id"}:
                             raise ValueError("La instrucción de ejecución la prepara el backend.")
-                        if self.active_area not in ("work", "app") or not self.project or project_id != self.project["project_id"]:
+                        if self.active_area not in ("work", "app") or not isinstance(project_id, str) or not project_id:
+                            raise ValueError("Selecciona el proyecto o aplicación que quieres ejecutar.")
+                        if self.project is not None and project_id != self.project["project_id"]:
                             raise ValueError("Selecciona el proyecto o aplicación que quieres ejecutar.")
                         if self.busy or self.login_pending or self.account_pending:
                             raise ValueError("Espera a que termine la operación actual.")
+                        try:
+                            project = self.projects.load(project_id)
+                        except (OSError, ValueError) as exc:
+                            raise ValueError("Selecciona el proyecto o aplicación que quieres ejecutar.") from exc
+                        if project.get("kind", "work") != self.active_area:
+                            raise ValueError("Selecciona el proyecto o aplicación que quieres ejecutar.")
                         can_detect = self.authenticated and self.model in {row["slug"] for row in self.models}
-                        project = self.projects.load(project_id)
                         has_direct_script = (
                             project.get("kind") == "app"
                             and (Path(project["workdir"]) / "scripts" / "run.sh").is_file()
@@ -2753,12 +2801,47 @@ class HarnessServer:
                 return
             if action == "app.test":
                 project_id = request.get("project_id")
+                if self.active_area == "app" and self.project is None and isinstance(project_id, str) and project_id:
+                    try:
+                        self._select_area("app", project_id)
+                    except (OSError, ValueError, KeyError, TypeError) as error:
+                        self._emit("area.rejected", message=str(error) if isinstance(error, ValueError)
+                                   else "No se pudo abrir la aplicación para probarla.")
+                        return
                 if self.active_area != "app" or not self.project or project_id != self.project["project_id"]:
                     self._emit("shell.rejected", message="Selecciona una aplicación en App para probarla.")
                     return
                 check_script = Path(self.workspace) / "scripts" / "check.sh"
                 cmd = "./scripts/check.sh" if check_script.is_file() else "qmllint shell.qml ui/*.qml ui/components/*.qml"
                 self._start_local_shell({"command": cmd})
+                return
+            if action == "app.desktop":
+                project_id = request.get("project_id")
+                if self.busy or self.login_pending or self.account_pending:
+                    self._emit("area.rejected", message="Espera a que termine la operación actual.")
+                    return
+                try:
+                    if not isinstance(project_id, str) or not project_id:
+                        raise ValueError("Selecciona una aplicación válida.")
+                    target_app = self.projects.load(project_id)
+                    if target_app.get("kind") != "app":
+                        raise ValueError("Solo las aplicaciones de Gema UI Kit pueden instalarse en el sistema.")
+                    currently_installed = is_desktop_entry_installed(project_id, self._applications_dir)
+                    raw_install = request.get("install")
+                    should_install = (not currently_installed) if raw_install is None else bool(raw_install)
+                    if should_install:
+                        install_desktop_entry(target_app, self._applications_dir)
+                        msg = f"Acceso directo de '{target_app['name']}' instalado en el menú de aplicaciones."
+                    else:
+                        uninstall_desktop_entry(project_id, self._applications_dir)
+                        msg = f"Acceso directo de '{target_app['name']}' retirado del menú de aplicaciones."
+                    if self.project and self.project["project_id"] == project_id:
+                        self._publish_area()
+                    self._publish_projects()
+                    self._emit("app.desktop.state", project_id=project_id, installed=should_install, message=msg)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    self._emit("area.rejected", message=str(error) if isinstance(error, ValueError)
+                               else "No se pudo actualizar el acceso directo de la aplicación.")
                 return
             if action == "usage.read":
                 request_id = request.get("request_id")

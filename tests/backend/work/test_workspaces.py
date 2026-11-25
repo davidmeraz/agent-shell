@@ -436,4 +436,31 @@ class WorkspaceTests(unittest.TestCase):
         latest = events[-1]["data"]
         self.assertEqual(len(latest["projects"]), 1)
         self.assertEqual(len(latest["apps"]), 1)
-        self.assertEqual(latest["apps"][0]["project_id"], app_id)
+        app_row = latest["apps"][0]
+        self.assertEqual(app_row["project_id"], app_id)
+        self.assertTrue(app_row["folder_exists"])
+        self.assertTrue(app_row["has_run_script"])
+        self.assertTrue(app_row["has_check_script"])
+        self.assertEqual(app_row["chat_count"], 1)
+        self.assertFalse(app_row["desktop_installed"])
+
+        # Verifica instalación y desinstalación del acceso directo .desktop desde el panel de Apps
+        self.select("app", "")
+        self.assertIsNone(self.server.project)
+        self.server.handle({"type": "app.desktop", "project_id": app_id, "install": True})
+        desktop_state = self.output.wait_for("app.desktop.state")
+        self.assertEqual(desktop_state["project_id"], app_id)
+        self.assertTrue(desktop_state["installed"])
+        desktop_file = self.server._applications_dir / f"gema-app-{app_id}.desktop"
+        self.assertTrue(desktop_file.is_file())
+        self.assertIn("Name=Notas Gema", desktop_file.read_text(encoding="utf-8"))
+
+        # Verifica que app.test desde el centro de Apps abre la app y ejecuta check.sh
+        self.server.handle({"type": "app.test", "project_id": app_id})
+        self.assertEqual(self.output.wait_for("shell.finished")["status"], "completed")
+        self.assertEqual(self.server.project["project_id"], app_id)
+
+        # Al eliminar la aplicación también se limpia su archivo .desktop
+        self.server.handle({"type": "app.delete", "project_id": app_id})
+        self.output.wait_for("project.deleted")
+        self.assertFalse(desktop_file.exists())

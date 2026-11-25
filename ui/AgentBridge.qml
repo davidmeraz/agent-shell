@@ -57,6 +57,10 @@ QtObject {
     property string projectId: ""
     property string projectName: ""
     property string projectEngine: "python"
+    property bool projectDesktopInstalled: false
+    property bool projectHasRunScript: false
+    property bool projectHasCheckScript: false
+    property bool projectFolderExists: true
     property bool areaBusy: false
     property string areaError: ""
     property var projectRun: ({})
@@ -286,25 +290,74 @@ QtObject {
 
     function testApp() {
         if (!canTestApp) return;
+        testAppById(projectId);
+    }
+
+    function testAppById(targetId) {
+        const id = targetId || projectId;
+        if (!id || !ready || !historyReady || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy
+            || openingChat || deletingChatId || areaBusy || activeArea !== "app")
+            return;
         submittedAt = Date.now();
         activeTurnId = "";
         framePending = false;
         shellRunning = true;
         busy = true;
         status = "Probando aplicación Gema UI Kit…";
-        sendCommand({ type: "app.test", project_id: projectId });
+        sendCommand({ type: "app.test", project_id: id });
+    }
+
+    function canLaunchProjectId(targetId) {
+        const id = targetId || projectId;
+        if (!id || !ready || !historyReady || busy || loginBusy || claudeLoginBusy || accountBusy || providerBusy
+            || openingChat || deletingChatId || areaBusy || projectRunActive)
+            return false;
+        return (authenticated && availableModels.count > 0) || !!projectRunCaches[id];
     }
 
     function runProject() {
         if (!canRunProject) return;
+        runProjectById(projectId);
+    }
+
+    function runProjectById(targetId) {
+        const id = targetId || projectId;
+        if (!canLaunchProjectId(id)) return;
         projectRunPending = true;
         projectRunNotice = "";
-        sendCommand({ type: "project.run", project_id: projectId });
+        sendCommand({ type: "project.run", project_id: id });
     }
 
     function stopProject() {
         if (!projectRunActive || !projectRun.execution_id) return;
         sendCommand({ type: "project.run.stop", project_id: projectRun.project_id, execution_id: projectRun.execution_id });
+    }
+
+    function toggleAppDesktop(targetId, install) {
+        const id = targetId || projectId;
+        if (!canSelectArea || !id) return;
+        areaError = "";
+        const request = { type: "app.desktop", project_id: id };
+        if (install !== undefined) request.install = !!install;
+        sendCommand(request);
+    }
+
+    function _normalizeProjectRow(item) {
+        return {
+            projectId: item.project_id,
+            name: item.name,
+            workdir: item.workdir,
+            engine: item.engine || "python",
+            updatedAt: item.updated_at || "",
+            createdAt: item.created_at || "",
+            folderExists: item.folder_exists !== false,
+            hasLaunchProfile: !!item.has_launch_profile,
+            hasRunScript: !!item.has_run_script,
+            hasCheckScript: !!item.has_check_script,
+            hasGit: !!item.has_git,
+            chatCount: item.chat_count || 0,
+            desktopInstalled: !!item.desktop_installed
+        };
     }
 
     function openChat(chatId) {
@@ -554,11 +607,18 @@ QtObject {
             projectId = data.project ? data.project.project_id : "";
             projectName = data.project ? data.project.name : "";
             projectEngine = data.project && data.project.engine ? data.project.engine : "python";
+            projectDesktopInstalled = !!(data.project && data.project.desktop_installed);
+            projectHasRunScript = !!(data.project && data.project.has_run_script);
+            projectHasCheckScript = !!(data.project && data.project.has_check_script);
+            projectFolderExists = data.project ? data.project.folder_exists !== false : true;
             if (data.project) projectRunCaches = Object.assign({}, projectRunCaches,
                 { [data.project.project_id]: !!data.project.has_launch_profile });
             areaBusy = false;
             areaError = "";
             if (previousKey !== areaKey) areaChanged(previousKey, areaKey);
+        } else if (event.type === "app.desktop.state") {
+            if (data.project_id === projectId) projectDesktopInstalled = !!data.installed;
+            status = data.message || (data.installed ? "Acceso directo instalado en el sistema." : "Acceso directo retirado del sistema.");
         } else if (event.type === "area.rejected") {
             areaBusy = false;
             areaError = data.message;
@@ -584,10 +644,10 @@ QtObject {
         } else if (event.type === "projects.list") {
             projects.clear();
             for (const project of data.projects || [])
-                projects.append({ projectId: project.project_id, name: project.name, workdir: project.workdir, engine: project.engine || "python" });
+                projects.append(_normalizeProjectRow(project));
             apps.clear();
             for (const app of data.apps || [])
-                apps.append({ projectId: app.project_id, name: app.name, workdir: app.workdir, engine: app.engine || "python" });
+                apps.append(_normalizeProjectRow(app));
             const allItems = (data.projects || []).concat(data.apps || []);
             projectRunCaches = Object.assign({}, projectRunCaches, ...allItems.map(project =>
                 ({ [project.project_id]: !!project.has_launch_profile })));
