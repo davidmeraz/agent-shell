@@ -9,9 +9,6 @@ GlassPanel {
     id: panel
     required property AgentBridge bridge
     readonly property bool isAppArea: bridge.activeArea === "app"
-    property string searchQuery: ""
-    property string engineFilter: "all"
-    property bool showKitInfo: false
     readonly property ListModel activeModel: isAppArea ? bridge.apps : bridge.projects
     readonly property string runningProjectId: bridge.projectRunActive && bridge.projectRun.project_id
                                                ? String(bridge.projectRun.project_id) : ""
@@ -25,12 +22,6 @@ GlassPanel {
     bottomColor: "#00000000"
     edgeColor: "#00000000"
     reflective: false
-
-    onIsAppAreaChanged: {
-        searchQuery = "";
-        engineFilter = "all";
-        showKitInfo = false;
-    }
 
     function formatUpdatedDate(isoText) {
         if (!isoText) return "";
@@ -48,32 +39,6 @@ GlassPanel {
         return Qt.formatDate(parsed, "dd/MM/yyyy");
     }
 
-    function matchesRow(name, workdir, engine, desktopInstalled) {
-        if (panel.isAppArea) {
-            if (panel.engineFilter === "python" && engine !== "python") return false;
-            if (panel.engineFilter === "rust" && engine !== "rust") return false;
-            if (panel.engineFilter === "desktop" && !desktopInstalled) return false;
-        }
-        const q = panel.searchQuery.trim().toLowerCase();
-        if (!q) return true;
-        return (name || "").toLowerCase().indexOf(q) >= 0
-            || (workdir || "").toLowerCase().indexOf(q) >= 0
-            || (engine || "").toLowerCase().indexOf(q) >= 0;
-    }
-
-    function countAppsBy(predicateName) {
-        let total = 0;
-        const m = panel.activeModel;
-        for (let i = 0; i < m.count; ++i) {
-            const row = m.get(i);
-            if (!row) continue;
-            if (predicateName === "rust" && row.engine === "rust") total++;
-            else if (predicateName === "python" && row.engine !== "rust") total++;
-            else if (predicateName === "desktop" && row.desktopInstalled) total++;
-        }
-        return total;
-    }
-
     function findProjectName(targetId) {
         if (!targetId) return "";
         const m = panel.activeModel;
@@ -87,116 +52,81 @@ GlassPanel {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 22
-        spacing: 14
+        spacing: 16
 
-        // Cabecera principal con título, botón de arquitectura Gema UI Kit y creación.
-        RowLayout {
+        // Cabecera centrada y refinada
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 12
+            Layout.topMargin: 4
+            spacing: 8
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 4
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 10
 
-                RowLayout {
-                    spacing: 8
+                GlassPanel {
+                    implicitWidth: 32
+                    implicitHeight: 32
+                    radius: 10
+                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
+                    bottomColor: "#0cffffff"
+                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#44ffffff"
                     Text {
+                        anchors.centerIn: parent
                         text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
                         color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                        font.pixelSize: 20
+                        font.pixelSize: 15
                         style: Text.Raised
                         styleColor: GemaTheme.textShadow
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: panel.isAppArea ? "App · Gema UI Kit" : "Work · Proyectos"
-                        color: GemaTheme.textColor
-                        font.pixelSize: 24
-                        font.bold: true
-                        font.letterSpacing: -0.3
-                        style: Text.Raised
-                        styleColor: GemaTheme.textShadow
-                        elide: Text.ElideRight
                     }
                 }
+
                 Text {
-                    Layout.fillWidth: true
-                    text: panel.isAppArea
-                        ? "Gestiona, inicia e instala tus aplicaciones nativas Matte Transparent Glassmorphism (Quickshell + Python/Rust)."
-                        : "Un espacio para construir, explorar y ejecutar tus proyectos con la IA."
-                    color: GemaTheme.mutedColor
-                    font.pixelSize: 12
+                    text: panel.isAppArea ? "Aplicaciones" : "Proyectos"
+                    color: GemaTheme.textColor
+                    font.pixelSize: 26
+                    font.bold: true
+                    font.letterSpacing: -0.4
                     style: Text.Raised
                     styleColor: GemaTheme.textShadow
-                    wrapMode: Text.Wrap
                 }
-            }
 
-            ActionButton {
-                objectName: "appStackInfoToggle"
-                visible: panel.isAppArea
-                text: panel.showKitInfo ? "Ocultar Stack" : "◈ Stack UI"
-                accent: panel.showKitInfo
-                font.pixelSize: 12
-                horizontalPadding: 11
-                verticalPadding: 8
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: "Ver componentes y arquitectura del stack Gema UI Kit"
-                onClicked: panel.showKitInfo = !panel.showKitInfo
-            }
-
-            ActionButton {
-                objectName: "workNewProject"
-                text: panel.isAppArea ? "+  Nueva App" : "+  Nuevo proyecto"
-                accent: panel.isAppArea
-                enabled: panel.bridge.canSelectArea
-                onClicked: panel.newProjectRequested()
-            }
-        }
-
-        // Tarjeta desplegable de referencia del Stack Gema UI Kit (oculta por defecto para dar protagonismo a las apps).
-        GlassPanel {
-            Layout.fillWidth: true
-            visible: panel.isAppArea && (panel.showKitInfo || panel.bridge.apps.count === 0)
-            implicitHeight: kitInfo.implicitHeight + 22
-            radius: 12
-            topColor: "#1affffff"
-            bottomColor: "#0cffffff"
-            edgeColor: "#34ffffff"
-            ColumnLayout {
-                id: kitInfo
-                anchors.fill: parent
-                anchors.margins: 11
-                spacing: 6
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
+                GlassPanel {
+                    visible: panel.isAppArea
+                    implicitWidth: kitBadge.implicitWidth + 14
+                    implicitHeight: 22
+                    radius: 7
+                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1cffffff"
+                    bottomColor: "#0affffff"
+                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.45) : "#34ffffff"
                     Text {
-                        Layout.fillWidth: true
-                        text: "Stack Gema UI Kit · Matte Transparent Glassmorphism"
-                        color: "#f2f4f8"
-                        font.pixelSize: 12
-                        font.bold: true
-                    }
-                    Text {
-                        text: "Wayland / Hyprland · JSON-Lines v2"
-                        color: GemaTheme.synced ? GemaTheme.accent : "#c4dcff"
+                        id: kitBadge
+                        anchors.centerIn: parent
+                        text: "Gema UI Kit"
+                        color: GemaTheme.synced ? GemaTheme.accent : GemaTheme.mutedColor
                         font.pixelSize: 10
                         font.weight: Font.DemiBold
+                        font.letterSpacing: 0.3
+                        style: Text.Raised
+                        styleColor: GemaTheme.textShadow
                     }
                 }
-                Text {
-                    Layout.fillWidth: true
-                    text: "Cada aplicación incluye ventana translúcida con blur nativo (MattePanel, GlassPanel, WaterReflection, ActionButton, GlassDialog, GlassComboBox), puente IPC stdio en Python o Rust, validación qmllint y lanzador para el menú del sistema."
-                    color: "#c4ccd8"
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
+            }
+
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                implicitWidth: 160
+                implicitHeight: 1
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "#00ffffff" }
+                    GradientStop { position: 0.5; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#48ffffff" }
+                    GradientStop { position: 1.0; color: "#00ffffff" }
                 }
             }
         }
 
-        // Banner en vivo cuando una aplicación o proyecto está en ejecución o acaba de reportar estado.
+        // Banner en vivo cuando una aplicación o proyecto está en ejecución o reportó error
         GlassPanel {
             id: liveRunBanner
             objectName: "appHubRunBanner"
@@ -282,108 +212,6 @@ GlassPanel {
             }
         }
 
-        // Barra de búsqueda, métricas y filtros por motor/instalación.
-        ColumnLayout {
-            Layout.fillWidth: true
-            visible: panel.activeModel.count > 0
-            spacing: 10
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                // Buscador rápido
-                GlassPanel {
-                    Layout.fillWidth: true
-                    implicitHeight: 36
-                    radius: 10
-                    topColor: searchField.activeFocus ? "#22ffffff" : "#15ffffff"
-                    bottomColor: "#0cffffff"
-                    edgeColor: searchField.activeFocus
-                               ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.70) : "#68ffffff")
-                               : "#30ffffff"
-                    highlighted: searchField.activeFocus
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 8
-                        spacing: 8
-
-                        Text {
-                            text: "⌕"
-                            color: GemaTheme.subtleColor
-                            font.pixelSize: 14
-                        }
-                        TextInput {
-                            id: searchField
-                            objectName: "workProjectSearch"
-                            Layout.fillWidth: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            color: GemaTheme.textColor
-                            selectionColor: "#ffffff"
-                            selectedTextColor: "#000000"
-                            font.pixelSize: 12
-                            selectByMouse: true
-                            clip: true
-                            onTextChanged: panel.searchQuery = text
-
-                            Text {
-                                anchors.fill: parent
-                                verticalAlignment: Text.AlignVCenter
-                                visible: !searchField.text
-                                text: panel.isAppArea
-                                      ? "Buscar aplicación por nombre, ruta o motor…"
-                                      : "Buscar proyecto por nombre o carpeta…"
-                                color: "#8892a0"
-                                font.pixelSize: 12
-                                elide: Text.ElideRight
-                            }
-                        }
-                        ActionButton {
-                            visible: searchField.text.length > 0
-                            text: "×"
-                            implicitWidth: 22
-                            implicitHeight: 22
-                            horizontalPadding: 0
-                            verticalPadding: 0
-                            font.pixelSize: 12
-                            onClicked: {
-                                searchField.text = "";
-                                panel.searchQuery = "";
-                            }
-                        }
-                    }
-                }
-
-                // Filtros rápidos en modo App
-                RowLayout {
-                    visible: panel.isAppArea
-                    spacing: 5
-
-                    Repeater {
-                        model: [
-                            { id: "all", label: "Todas (" + panel.bridge.apps.count + ")" },
-                            { id: "python", label: "Python (" + panel.countAppsBy("python") + ")" },
-                            { id: "rust", label: "Rust (" + panel.countAppsBy("rust") + ")" },
-                            { id: "desktop", label: "En menú (" + panel.countAppsBy("desktop") + ")" }
-                        ]
-                        delegate: ActionButton {
-                            required property var modelData
-                            text: modelData.label
-                            accent: panel.engineFilter === modelData.id
-                            font.pixelSize: 11
-                            horizontalPadding: 10
-                            verticalPadding: 7
-                            onClicked: panel.engineFilter = modelData.id
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
-
         Text {
             Layout.fillWidth: true
             visible: !!panel.bridge.areaError
@@ -391,46 +219,10 @@ GlassPanel {
             color: "#f0d0d0"
             font.pixelSize: 12
             wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
         }
 
-        // Estado vacío cuando aún no hay aplicaciones o proyectos creados.
-        GlassPanel {
-            Layout.fillWidth: true
-            visible: panel.activeModel.count === 0
-            implicitHeight: emptyCol.implicitHeight + 36
-            radius: 14
-            topColor: "#14ffffff"
-            bottomColor: "#08ffffff"
-            edgeColor: "#28ffffff"
-
-            ColumnLayout {
-                id: emptyCol
-                anchors.fill: parent
-                anchors.margins: 18
-                spacing: 10
-
-                Text {
-                    Layout.fillWidth: true
-                    text: panel.isAppArea
-                        ? "Crea tu primera aplicación Gema UI Kit"
-                        : "Vincula tu primer proyecto local"
-                    color: GemaTheme.textColor
-                    font.pixelSize: 16
-                    font.bold: true
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: panel.isAppArea
-                        ? "Pulsa '+ Nueva App' para generar una aplicación nativa con diseño Matte Transparent Glassmorphism, motor Python o Rust, ejecución con un clic e integración directa en el menú de Hyprland."
-                        : "Vincula una carpeta local para crear, modificar y probar proyectos con la IA. Cada proyecto conserva su propio historial y herramientas."
-                    color: GemaTheme.mutedColor
-                    font.pixelSize: 13
-                    wrapMode: Text.Wrap
-                }
-            }
-        }
-
-        // Lista de tarjetas de aplicaciones / proyectos.
+        // Lista de tarjetas de aplicaciones / proyectos con tarjeta minimalista "+" al final
         ListView {
             id: projectList
             objectName: "workProjectList"
@@ -438,10 +230,10 @@ GlassPanel {
             Layout.fillHeight: true
             clip: true
             topMargin: 2
-            bottomMargin: 4
+            bottomMargin: 8
             leftMargin: 4
             rightMargin: 4
-            spacing: (panel.searchQuery.trim() === "" && panel.engineFilter === "all") ? 10 : 4
+            spacing: 10
             model: panel.activeModel
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -460,15 +252,12 @@ GlassPanel {
                 property int chatCount: 0
                 property bool desktopInstalled: false
 
-                readonly property bool matchesFilter: panel.matchesRow(name, workdir, engine, desktopInstalled)
                 readonly property bool isRunningThis: panel.bridge.projectRunActive
                                                       && panel.bridge.projectRun.project_id === projectId
                 readonly property bool canLaunchThis: folderExists && panel.bridge.canLaunchProjectId(projectId)
 
                 objectName: "workProjectRow"
                 width: projectList.width - projectList.leftMargin - projectList.rightMargin
-                visible: matchesFilter
-                height: matchesFilter ? implicitHeight : 0
                 padding: panel.isAppArea ? 15 : 14
                 hoverEnabled: true
                 enabled: panel.bridge.canSelectArea
@@ -549,7 +338,6 @@ GlassPanel {
                                     elide: Text.ElideRight
                                 }
 
-                                // Insignia de ejecución activa
                                 GlassPanel {
                                     visible: projectRow.isRunningThis
                                     implicitWidth: runBadgeText.implicitWidth + 14
@@ -568,7 +356,6 @@ GlassPanel {
                                     }
                                 }
 
-                                // Insignia de alerta si la carpeta fue movida o eliminada
                                 GlassPanel {
                                     visible: !projectRow.folderExists
                                     implicitWidth: missingBadgeText.implicitWidth + 14
@@ -587,7 +374,6 @@ GlassPanel {
                                     }
                                 }
 
-                                // Insignia de acceso directo instalado en el sistema
                                 GlassPanel {
                                     visible: panel.isAppArea && projectRow.desktopInstalled
                                     implicitWidth: menuBadgeText.implicitWidth + 14
@@ -606,7 +392,6 @@ GlassPanel {
                                     }
                                 }
 
-                                // Insignia de motor Gema UI Kit
                                 GlassPanel {
                                     visible: panel.isAppArea
                                     implicitWidth: engineTag.implicitWidth + 14
@@ -638,31 +423,32 @@ GlassPanel {
                                 elide: Text.ElideMiddle
                             }
 
-                            // Fila de metadatos y estado técnico
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 10
 
                                 Text {
-                                    visible: panel.isAppArea
-                                    text: projectRow.hasRunScript ? "✓ Lanzador Quickshell" : "⚠ Sin scripts/run.sh"
-                                    color: projectRow.hasRunScript ? GemaTheme.mutedColor : "#e0b090"
+                                    visible: panel.isAppArea && projectRow.hasRunScript
+                                    text: "✓ Lanzador Quickshell"
+                                    color: GemaTheme.mutedColor
                                     font.pixelSize: 10
                                 }
                                 Text {
                                     visible: panel.isAppArea && projectRow.hasCheckScript
-                                    text: "·  ✓ Check IPC/QML"
+                                    text: (projectRow.hasRunScript ? "·  " : "") + "✓ Check IPC/QML"
                                     color: GemaTheme.mutedColor
                                     font.pixelSize: 10
                                 }
                                 Text {
                                     visible: projectRow.hasGit
-                                    text: (panel.isAppArea ? "·  " : "") + "⎇ Git"
+                                    text: ((panel.isAppArea && (projectRow.hasRunScript || projectRow.hasCheckScript)) ? "·  " : "") + "⎇ Git"
                                     color: GemaTheme.mutedColor
                                     font.pixelSize: 10
                                 }
                                 Text {
-                                    text: ((panel.isAppArea || projectRow.hasGit) ? "·  " : "")
+                                    readonly property bool hasPrev: projectRow.hasGit
+                                                                    || (panel.isAppArea && (projectRow.hasRunScript || projectRow.hasCheckScript))
+                                    text: (hasPrev ? "·  " : "")
                                           + (projectRow.chatCount > 0
                                              ? (projectRow.chatCount + (projectRow.chatCount === 1 ? " conversación IA" : " conversaciones IA"))
                                              : "Sin conversaciones aún")
@@ -680,7 +466,6 @@ GlassPanel {
                             }
                         }
 
-                        // Controles rápidos en la misma fila para proyectos de Work (y edición/borrado en ambos)
                         ActionButton {
                             objectName: "workRowRunButton"
                             visible: !panel.isAppArea && (projectRow.isRunningThis || projectRow.hasLaunchProfile)
@@ -782,7 +567,6 @@ GlassPanel {
                         }
                     }
 
-                    // Barra inferior de acciones rápidas exclusiva para cada tarjeta de App
                     Rectangle {
                         visible: panel.isAppArea
                         Layout.fillWidth: true
@@ -882,19 +666,72 @@ GlassPanel {
                 ToolTip.text: workdir
                 Accessible.name: name + ", " + workdir
             }
-        }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            Text {
-                Layout.fillWidth: true
-                text: panel.isAppArea
-                    ? "Inicia tus apps directamente desde cada tarjeta, instálalas en tu menú de escritorio o pulsa en ellas para evolucionarlas con la IA."
-                    : "La terminal trabaja en la carpeta del proyecto."
-                color: "#888888"
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
+            // Tarjeta minimalista "+" al final de la lista para crear una nueva app o proyecto
+            footer: Item {
+                width: projectList.width - projectList.leftMargin - projectList.rightMargin
+                height: createCard.implicitHeight + (projectList.count > 0 ? 10 : 0)
+
+                ItemDelegate {
+                    id: createCard
+                    objectName: "workNewProject"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    implicitHeight: 54
+                    hoverEnabled: true
+                    enabled: panel.bridge.canSelectArea
+                    scale: createCard.down ? 0.99 : (createCard.hovered ? 1.006 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
+                    Accessible.name: panel.isAppArea ? "Nueva aplicación" : "Nuevo proyecto"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 350
+                    ToolTip.text: panel.isAppArea ? "Crear nueva aplicación Gema UI Kit" : "Vincular nuevo proyecto"
+                    onClicked: panel.newProjectRequested()
+
+                    contentItem: Item {
+                        // Ícono minimalista "+" centrado
+                        Item {
+                            anchors.centerIn: parent
+                            width: 18
+                            height: 18
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 16
+                                height: 1.6
+                                radius: 0.8
+                                color: createCard.hovered
+                                       ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                       : GemaTheme.mutedColor
+                                Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                            }
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 1.6
+                                height: 16
+                                radius: 0.8
+                                color: createCard.hovered
+                                       ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                       : GemaTheme.mutedColor
+                                Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                            }
+                        }
+                    }
+
+                    background: GlassPanel {
+                        radius: 13
+                        reflective: createCard.hovered
+                        highlighted: createCard.activeFocus || createCard.hovered
+                        topColor: createCard.hovered
+                                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.20) : "#20ffffff")
+                                  : "#0cffffff"
+                        bottomColor: "#0a060a10"
+                        edgeColor: createCard.hovered
+                                   ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#50ffffff")
+                                   : "#24ffffff"
+                    }
+                }
             }
         }
     }

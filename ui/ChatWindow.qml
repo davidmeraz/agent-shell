@@ -429,122 +429,6 @@ NativeWindow {
                     Layout.minimumWidth: 0
                     spacing: 6
 
-                    GlassPanel {
-                        Layout.fillWidth: true
-                        visible: window.projectOpen && window.bridge.activeArea === "app"
-                        implicitHeight: appStudioBar.implicitHeight + 12
-                        radius: 11
-                        topColor: "#18ffffff"
-                        bottomColor: "#0cffffff"
-                        edgeColor: "#32ffffff"
-
-                        RowLayout {
-                            id: appStudioBar
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            anchors.topMargin: 6
-                            anchors.bottomMargin: 6
-                            spacing: 6
-
-                            ActionButton {
-                                objectName: "appBackToHubButton"
-                                text: "← Mis Apps"
-                                font.pixelSize: 11
-                                horizontalPadding: 9
-                                verticalPadding: 5
-                                enabled: window.bridge.canSelectArea
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 400
-                                ToolTip.text: "Volver al centro de gestión de aplicaciones Gema UI Kit"
-                                onClicked: window.bridge.selectArea("app", "")
-                            }
-
-                            GlassPanel {
-                                objectName: "appProjectBadge"
-                                implicitWidth: gemaBadgeRow.implicitWidth + 16
-                                implicitHeight: 24
-                                radius: 7
-                                topColor: window.bridge.projectRunHere && window.bridge.projectRunActive
-                                          ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#28ffffff")
-                                          : "#1cffffff"
-                                bottomColor: "#10ffffff"
-                                RowLayout {
-                                    id: gemaBadgeRow
-                                    anchors.centerIn: parent
-                                    spacing: 6
-                                    Rectangle {
-                                        width: 6
-                                        height: 6
-                                        radius: 3
-                                        color: window.bridge.projectRunHere && window.bridge.projectRunActive
-                                               ? "#68f098"
-                                               : (GemaTheme.synced ? GemaTheme.accent : "#c4dcff")
-                                    }
-                                    Text {
-                                        id: gemaBadge
-                                        text: (window.bridge.projectName ? window.bridge.projectName + " · " : "")
-                                              + "Gema UI · " + (window.bridge.projectEngine === "rust" ? "Rust" : "Python")
-                                        color: "#f0f2f6"
-                                        font.pixelSize: 10
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            ActionButton {
-                                objectName: "appDesktopButton"
-                                text: window.bridge.projectDesktopInstalled ? "⬡ En menú ✓" : "⬡ Instalar"
-                                accent: window.bridge.projectDesktopInstalled
-                                font.pixelSize: 11
-                                horizontalPadding: 9
-                                verticalPadding: 5
-                                enabled: window.bridge.canSelectArea
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 420
-                                ToolTip.text: window.bridge.projectDesktopInstalled
-                                              ? "Instalada en el menú de aplicaciones del sistema. Pulsa para retirar el lanzador .desktop."
-                                              : "Instalar acceso directo .desktop para abrir esta aplicación desde tu lanzador de Hyprland."
-                                onClicked: window.bridge.toggleAppDesktop(window.bridge.projectId, !window.bridge.projectDesktopInstalled)
-                            }
-
-                            ActionButton {
-                                objectName: "appTestButton"
-                                text: "✓ Probar"
-                                font.pixelSize: 11
-                                horizontalPadding: 9
-                                verticalPadding: 5
-                                enabled: window.bridge.canTestApp
-                                Accessible.name: "Probar sintaxis QML y motor de la aplicación Gema UI Kit"
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 450
-                                ToolTip.text: "Valida los componentes QML Glassmorphism (qmllint) y la conexión IPC del motor."
-                                onClicked: window.bridge.testApp()
-                            }
-
-                            ActionButton {
-                                objectName: "appQuickRunButton"
-                                readonly property bool appRunningHere: window.bridge.projectRunHere && window.bridge.projectRunActive
-                                text: appRunningHere ? "■ Detener" : "▶ Iniciar"
-                                accent: true
-                                font.pixelSize: 11
-                                horizontalPadding: 10
-                                verticalPadding: 5
-                                enabled: window.bridge.canRunProject || (appRunningHere && window.bridge.projectRun.phase !== "stopping")
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 420
-                                ToolTip.text: appRunningHere
-                                              ? "Detener la ventana en ejecución de esta aplicación."
-                                              : "Iniciar la ventana Glassmorphism de la aplicación en Hyprland."
-                                onClicked: {
-                                    if (appRunningHere) window.bridge.stopProject();
-                                    else window.bridge.runProject();
-                                }
-                            }
-                        }
-                    }
                     Text {
                         objectName: "workRunStatus"
                         // Los resultados normales siguen en el tooltip de Ejecutar.
@@ -574,24 +458,18 @@ NativeWindow {
                         onAccountRequested: accountPanel.open()
                     }
                 }
-                GlassPanel {
+                Item {
                     id: projectActionsPanel
                     objectName: "workProjectActions"
-                    readonly property int inset: 3
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     visible: window.projectOpen
-                    implicitWidth: projectActions.implicitWidth + 2 * inset
-                    implicitHeight: projectActions.implicitHeight + 2 * inset
-                    radius: 12
-                    topColor: "#16ffffff"
-                    bottomColor: "#0cffffff"
-                    edgeColor: "#32ffffff"
+                    implicitWidth: projectActions.implicitWidth
+                    implicitHeight: projectActions.implicitHeight
 
                     ColumnLayout {
                         id: projectActions
                         anchors.fill: parent
-                        anchors.margins: projectActionsPanel.inset
-                        spacing: 4
+                        spacing: 6
 
                         ProjectActionButton {
                             objectName: "workExplorerButton"
