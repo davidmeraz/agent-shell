@@ -9,7 +9,6 @@ MattePanel {
     id: sidebar
     required property AgentBridge bridge
     signal settingsRequested()
-    signal projectRequested()
     signal deleteRequested(string chatId, string title)
 
     ColumnLayout {
@@ -49,43 +48,6 @@ MattePanel {
                     style: Text.Raised
                     styleColor: GemaTheme.textShadow
                 }
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            visible: sidebar.bridge.activeArea === "work" || sidebar.bridge.activeArea === "app"
-            Text {
-                Layout.fillWidth: true
-                text: sidebar.bridge.projectName || (sidebar.bridge.activeArea === "app" ? "Tus aplicaciones" : "Tus proyectos")
-                color: GemaTheme.textColor
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-                style: Text.Raised
-                styleColor: GemaTheme.textShadow
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-            }
-            ActionButton {
-                text: sidebar.bridge.activeArea === "app" ? "Apps" : "Proyectos"
-                font.pixelSize: 11
-                horizontalPadding: 8
-                verticalPadding: 6
-                enabled: sidebar.bridge.canSelectArea
-                onClicked: sidebar.bridge.selectArea(sidebar.bridge.activeArea, "")
-            }
-        }
-        ActionButton {
-            Layout.fillWidth: true
-            text: sidebar.bridge.activeArea === "app"
-                  ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nueva App")
-                  : sidebar.bridge.activeArea === "work"
-                    ? (sidebar.bridge.projectId ? "+  Nueva conversación" : "+  Nuevo proyecto")
-                    : "+  Nuevo chat"
-            accent: true
-            enabled: sidebar.bridge.canBrowseHistory
-            onClicked: {
-                if ((sidebar.bridge.activeArea === "work" || sidebar.bridge.activeArea === "app") && !sidebar.bridge.projectId) sidebar.projectRequested();
-                else sidebar.bridge.newChat();
             }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#22ffffff" }

@@ -88,27 +88,6 @@ GlassPanel {
                     style: Text.Raised
                     styleColor: GemaTheme.textShadow
                 }
-
-                GlassPanel {
-                    visible: panel.isAppArea
-                    implicitWidth: kitBadge.implicitWidth + 14
-                    implicitHeight: 22
-                    radius: 7
-                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.18) : "#1cffffff"
-                    bottomColor: "#0affffff"
-                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.45) : "#34ffffff"
-                    Text {
-                        id: kitBadge
-                        anchors.centerIn: parent
-                        text: "Gema UI Kit"
-                        color: GemaTheme.synced ? GemaTheme.accent : GemaTheme.mutedColor
-                        font.pixelSize: 10
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: 0.3
-                        style: Text.Raised
-                        styleColor: GemaTheme.textShadow
-                    }
-                }
             }
 
             Rectangle {

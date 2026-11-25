@@ -807,7 +807,6 @@ NativeWindow {
                 waterReflection: false
                 bridge: window.bridge
                 onSettingsRequested: { narrowSidebar.close(); settingsDialog.open(); }
-                onProjectRequested: { narrowSidebar.close(); projectDialog.open(); }
                 onDeleteRequested: (chatId, title) => {
                     narrowSidebar.close();
                     window.requestDeleteChat(chatId, title);
