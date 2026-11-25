@@ -265,311 +265,219 @@ GlassPanel {
                 Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 140 : 0; easing.type: Easing.OutCubic } }
                 onClicked: panel.bridge.selectArea(panel.isAppArea ? "app" : "work", projectId)
 
-                contentItem: ColumnLayout {
-                    spacing: panel.isAppArea ? 10 : 0
+                contentItem: RowLayout {
+                    spacing: 12
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
+                    // Emblema minimalista con punto solo si está activa o falta la carpeta
+                    GlassPanel {
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: 38
+                        implicitHeight: 38
+                        radius: 10
+                        topColor: projectRow.isRunningThis
+                                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.36) : "#34ffffff")
+                                  : projectRow.hovered
+                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#24ffffff")
+                                    : (GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#16ffffff")
+                        bottomColor: "#0affffff"
+                        edgeColor: projectRow.isRunningThis
+                                   ? (GemaTheme.synced ? GemaTheme.accent : "#88ffffff")
+                                   : projectRow.hovered
+                                     ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#4cffffff")
+                                     : "#26ffffff"
 
-                        // Emblema minimalista con punto solo si está activa o falta la carpeta
-                        GlassPanel {
-                            Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: 38
-                            implicitHeight: 38
-                            radius: 10
-                            topColor: projectRow.isRunningThis
-                                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.36) : "#34ffffff")
-                                      : projectRow.hovered
-                                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#24ffffff")
-                                        : (GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#16ffffff")
-                            bottomColor: "#0affffff"
-                            edgeColor: projectRow.isRunningThis
-                                       ? (GemaTheme.synced ? GemaTheme.accent : "#88ffffff")
-                                       : projectRow.hovered
-                                         ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#4cffffff")
-                                         : "#26ffffff"
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
-                                color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                                font.pixelSize: 16
-                                style: Text.Raised
-                                styleColor: GemaTheme.textShadow
-                            }
-
-                            Rectangle {
-                                visible: projectRow.isRunningThis || !projectRow.folderExists
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.margins: 3
-                                width: 7
-                                height: 7
-                                radius: 3.5
-                                color: !projectRow.folderExists ? "#ff9070" : "#68f098"
-                                border.width: 1
-                                border.color: "#80000000"
-                            }
+                        Text {
+                            anchors.centerIn: parent
+                            text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
+                            color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                            font.pixelSize: 16
+                            style: Text.Raised
+                            styleColor: GemaTheme.textShadow
                         }
 
-                        // Información minimalista: solo nombre + insignia sutil y ruta
-                        ColumnLayout {
+                        Rectangle {
+                            visible: projectRow.isRunningThis || !projectRow.folderExists
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 3
+                            width: 7
+                            height: 7
+                            radius: 3.5
+                            color: !projectRow.folderExists ? "#ff9070" : "#68f098"
+                            border.width: 1
+                            border.color: "#80000000"
+                        }
+                    }
+
+                    // Información minimalista: solo nombre + insignia sutil y ruta
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 3
+
+                        RowLayout {
                             Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: 3
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: projectRow.name
-                                    textFormat: Text.PlainText
-                                    color: GemaTheme.textColor
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    style: Text.Raised
-                                    styleColor: GemaTheme.textShadow
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    visible: panel.isAppArea
-                                    text: projectRow.engine === "rust" ? "Rust" : "Python"
-                                    color: GemaTheme.synced ? GemaTheme.accentAlpha(0.88) : GemaTheme.mutedColor
-                                    font.pixelSize: 10
-                                    font.weight: Font.DemiBold
-                                    style: Text.Raised
-                                    styleColor: GemaTheme.textShadow
-                                }
-
-                                Text {
-                                    visible: projectRow.isRunningThis
-                                    text: "● " + (panel.bridge.projectRun.phase === "running" ? "Activa" : "Iniciando…")
-                                    color: "#7ef5a8"
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    visible: !projectRow.folderExists
-                                    text: "Sin carpeta"
-                                    color: "#ffb49c"
-                                    font.pixelSize: 10
-                                    font.weight: Font.DemiBold
-                                }
-                            }
+                            spacing: 8
 
                             Text {
                                 Layout.fillWidth: true
-                                text: projectRow.workdir
+                                Layout.minimumWidth: 0
+                                text: projectRow.name
                                 textFormat: Text.PlainText
-                                color: GemaTheme.subtleColor
-                                font.pixelSize: 11
+                                color: GemaTheme.textColor
+                                font.pixelSize: 15
+                                font.bold: true
                                 style: Text.Raised
                                 styleColor: GemaTheme.textShadow
-                                elide: Text.ElideMiddle
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                visible: panel.isAppArea
+                                text: projectRow.engine === "rust" ? "Rust" : "Python"
+                                color: GemaTheme.synced ? GemaTheme.accentAlpha(0.88) : GemaTheme.mutedColor
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                                style: Text.Raised
+                                styleColor: GemaTheme.textShadow
+                            }
+
+                            Text {
+                                visible: projectRow.isRunningThis
+                                text: "● " + (panel.bridge.projectRun.phase === "running" ? "Activa" : "Iniciando…")
+                                color: "#7ef5a8"
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+
+                            Text {
+                                visible: !projectRow.folderExists
+                                text: "Sin carpeta"
+                                color: "#ffb49c"
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
                             }
                         }
 
-                        ActionButton {
-                            objectName: "workRowRunButton"
-                            Layout.alignment: Qt.AlignVCenter
-                            visible: !panel.isAppArea && (projectRow.isRunningThis || projectRow.hasLaunchProfile)
-                            text: projectRow.isRunningThis ? "■" : "▶"
-                            accent: projectRow.isRunningThis
-                            enabled: projectRow.isRunningThis
-                                     ? panel.bridge.projectRun.phase !== "stopping"
-                                     : projectRow.canLaunchThis
-                            implicitWidth: 30
-                            implicitHeight: 30
-                            horizontalPadding: 0
-                            verticalPadding: 0
+                        Text {
+                            Layout.fillWidth: true
+                            text: projectRow.workdir
+                            textFormat: Text.PlainText
+                            color: GemaTheme.subtleColor
                             font.pixelSize: 11
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: projectRow.isRunningThis ? "Detener proyecto en ejecución" : "Ejecutar inicio guardado"
-                            onClicked: {
-                                if (projectRow.isRunningThis) panel.bridge.stopProject();
-                                else panel.bridge.runProjectById(projectRow.projectId);
-                            }
+                            style: Text.Raised
+                            styleColor: GemaTheme.textShadow
+                            elide: Text.ElideMiddle
                         }
+                    }
 
-                        ActionButton {
-                            id: renameProjectButton
-                            objectName: "workRenameProject"
-                            Layout.alignment: Qt.AlignVCenter
-                            enabled: panel.bridge.canSelectArea
-                            implicitWidth: 30
-                            implicitHeight: 30
-                            horizontalPadding: 7
-                            verticalPadding: 7
-                            Accessible.name: "Editar nombre: " + projectRow.name
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: "Editar nombre"
-                            onClicked: panel.renameProjectRequested(projectRow.projectId, projectRow.name)
-                            contentItem: Item {
-                                Item {
-                                    anchors.centerIn: parent
-                                    width: 14
-                                    height: 14
-                                    rotation: -45
-                                    Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        x: 3
-                                        width: 8
-                                        height: 4
-                                        radius: 1
-                                        color: "transparent"
-                                        border.width: 1
-                                        border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
-                                    }
-                                    Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        x: 0
-                                        width: 3
-                                        height: 2
-                                        radius: 1
-                                        color: "transparent"
-                                        border.width: 1
-                                        border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
-                                    }
-                                }
-                            }
+                    ActionButton {
+                        objectName: "workRowRunButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        visible: projectRow.isRunningThis || projectRow.hasLaunchProfile || (panel.isAppArea && projectRow.hasRunScript)
+                        text: projectRow.isRunningThis ? "■" : "▶"
+                        accent: projectRow.isRunningThis || panel.isAppArea
+                        enabled: projectRow.isRunningThis
+                                 ? panel.bridge.projectRun.phase !== "stopping"
+                                 : projectRow.canLaunchThis
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        horizontalPadding: 0
+                        verticalPadding: 0
+                        font.pixelSize: 11
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: projectRow.isRunningThis
+                                      ? "Detener " + projectRow.name
+                                      : (panel.isAppArea ? "Iniciar aplicación" : "Ejecutar inicio guardado")
+                        onClicked: {
+                            if (projectRow.isRunningThis) panel.bridge.stopProject();
+                            else panel.bridge.runProjectById(projectRow.projectId);
                         }
+                    }
 
-                        ActionButton {
-                            id: deleteProjectButton
-                            objectName: "workDeleteProject"
-                            Layout.alignment: Qt.AlignVCenter
-                            enabled: !(panel.bridge.projectRunActive && panel.bridge.projectRun.project_id === projectRow.projectId)
-                            implicitWidth: 30
-                            implicitHeight: 30
-                            horizontalPadding: 7
-                            verticalPadding: 7
-                            Accessible.name: "Eliminar proyecto: " + projectRow.name
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: panel.isAppArea ? "Eliminar aplicación de la lista" : "Eliminar proyecto"
-                            onClicked: panel.deleteProjectRequested(projectRow.projectId, projectRow.name, projectRow.workdir)
-                            contentItem: Item {
+                    ActionButton {
+                        id: renameProjectButton
+                        objectName: "workRenameProject"
+                        Layout.alignment: Qt.AlignVCenter
+                        enabled: panel.bridge.canSelectArea
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        horizontalPadding: 7
+                        verticalPadding: 7
+                        Accessible.name: "Editar nombre: " + projectRow.name
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Editar nombre"
+                        onClicked: panel.renameProjectRequested(projectRow.projectId, projectRow.name)
+                        contentItem: Item {
+                            Item {
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                rotation: -45
                                 Rectangle {
-                                    anchors.centerIn: parent
-                                    anchors.verticalCenterOffset: 2
-                                    width: 10; height: 11; radius: 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: 3
+                                    width: 8
+                                    height: 4
+                                    radius: 1
                                     color: "transparent"
                                     border.width: 1
-                                    border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                                    border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
                                 }
                                 Rectangle {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    y: parent.height / 2 - 5
-                                    width: 14; height: 1
-                                    color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
-                                }
-                                Rectangle {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    y: parent.height / 2 - 8
-                                    width: 6; height: 3; radius: 1
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: 0
+                                    width: 3
+                                    height: 2
+                                    radius: 1
                                     color: "transparent"
                                     border.width: 1
-                                    border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                                    border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
                                 }
                             }
                         }
                     }
 
-                    Rectangle {
-                        visible: panel.isAppArea
-                        Layout.fillWidth: true
-                        implicitHeight: 1
-                        color: "#14ffffff"
-                    }
-
-                    // Cuatro botones del mismo tamaño y alineados de borde a borde
-                    RowLayout {
-                        visible: panel.isAppArea
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        ActionButton {
-                            objectName: "appCardRunButton"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 1
-                            implicitHeight: 32
-                            text: projectRow.isRunningThis ? "■  Detener" : "▶  Iniciar"
-                            accent: true
-                            enabled: projectRow.isRunningThis
-                                     ? panel.bridge.projectRun.phase !== "stopping"
-                                     : projectRow.canLaunchThis
-                            font.pixelSize: 11
-                            horizontalPadding: 8
-                            verticalPadding: 0
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: projectRow.isRunningThis
-                                          ? "Detener la ventana en ejecución de " + projectRow.name
-                                          : "Lanzar inmediatamente la ventana de " + projectRow.name + " en Hyprland"
-                            onClicked: {
-                                if (projectRow.isRunningThis) panel.bridge.stopProject();
-                                else panel.bridge.runProjectById(projectRow.projectId);
+                    ActionButton {
+                        id: deleteProjectButton
+                        objectName: "workDeleteProject"
+                        Layout.alignment: Qt.AlignVCenter
+                        enabled: !(panel.bridge.projectRunActive && panel.bridge.projectRun.project_id === projectRow.projectId)
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        horizontalPadding: 7
+                        verticalPadding: 7
+                        Accessible.name: "Eliminar proyecto: " + projectRow.name
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: panel.isAppArea ? "Eliminar aplicación de la lista" : "Eliminar proyecto"
+                        onClicked: panel.deleteProjectRequested(projectRow.projectId, projectRow.name, projectRow.workdir)
+                        contentItem: Item {
+                            Rectangle {
+                                anchors.centerIn: parent
+                                anchors.verticalCenterOffset: 2
+                                width: 10; height: 11; radius: 2
+                                color: "transparent"
+                                border.width: 1
+                                border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
                             }
-                        }
-
-                        ActionButton {
-                            objectName: "appCardOpenButton"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 1
-                            implicitHeight: 32
-                            text: "✦  Editar"
-                            enabled: panel.bridge.canSelectArea && projectRow.folderExists
-                            font.pixelSize: 11
-                            horizontalPadding: 8
-                            verticalPadding: 0
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: "Abrir el estudio de IA, explorador de archivos y flujo Git de " + projectRow.name
-                            onClicked: panel.bridge.selectArea("app", projectRow.projectId)
-                        }
-
-                        ActionButton {
-                            objectName: "appCardTestButton"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 1
-                            implicitHeight: 32
-                            text: "✓  Probar"
-                            enabled: panel.bridge.canSelectArea && projectRow.folderExists && !panel.bridge.busy
-                            font.pixelSize: 11
-                            horizontalPadding: 8
-                            verticalPadding: 0
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: "Abrir y validar sintaxis QML (qmllint) + motor IPC de " + projectRow.name
-                            onClicked: panel.bridge.testAppById(projectRow.projectId)
-                        }
-
-                        ActionButton {
-                            objectName: "appCardDesktopButton"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 1
-                            implicitHeight: 32
-                            text: projectRow.desktopInstalled ? "⬡  En menú ✓" : "⬡  Menú"
-                            accent: projectRow.desktopInstalled
-                            enabled: panel.bridge.canSelectArea && projectRow.folderExists
-                            font.pixelSize: 11
-                            horizontalPadding: 8
-                            verticalPadding: 0
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: projectRow.desktopInstalled
-                                          ? "Instalada en el menú de aplicaciones (~/.local/share/applications). Pulsa para quitar el acceso directo."
-                                          : "Crear lanzador .desktop para abrir " + projectRow.name + " desde rofi, walker o tu menú de Hyprland."
-                            onClicked: panel.bridge.toggleAppDesktop(projectRow.projectId, !projectRow.desktopInstalled)
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: parent.height / 2 - 5
+                                width: 14; height: 1
+                                color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                            }
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: parent.height / 2 - 8
+                                width: 6; height: 3; radius: 1
+                                color: "transparent"
+                                border.width: 1
+                                border.color: deleteProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                            }
                         }
                     }
                 }
