@@ -891,11 +891,10 @@ class HarnessServer:
             return
         self._area_chats[self._area_key()] = self.conversation
         self.active_area, self.project, self.workspace = area, project, workspace
-        if project:
-            if area == "app":
-                self._last_app_id = project["project_id"]
-            else:
-                self._last_project_id = project["project_id"]
+        if area == "app":
+            self._last_app_id = project["project_id"] if project else ""
+        elif area == "work":
+            self._last_project_id = project["project_id"] if project else ""
         self.conversation = self._area_chats.get(key)
         self._performance = None
         self._generation += 1

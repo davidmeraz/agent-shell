@@ -244,6 +244,23 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIsNone(self.server.conversation)
         self.assertEqual(self.server.workspace, self.root)
 
+    def test_returning_to_project_list_persists_across_area_switch(self):
+        project_id = self.create()
+        self.send("trabajo en curso")
+        # Volver explícitamente a la lista de proyectos de Work
+        state = self.select("work", "")
+        self.assertEqual(state, {"area": "work", "project": None})
+        # Cambiar a App y regresar a Work debe conservar la vista de lista, no reabrir el proyecto
+        self.select("app")
+        back = self.select("work")
+        self.assertEqual(back, {"area": "work", "project": None})
+        self.assertIsNone(self.server.project)
+        # Si en cambio se cambia de pestaña estando dentro del proyecto, sí debe restaurarlo
+        self.select("work", project_id)
+        self.select("app")
+        restored = self.select("work")
+        self.assertEqual(restored["project"]["project_id"], project_id)
+
     def test_project_folder_update_is_persisted_and_chat_folder_is_independent(self):
         project_id = self.create()
         self.server.handle({"type": "shell.configure", "workdir": str(self.folders[1])})
