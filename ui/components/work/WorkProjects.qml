@@ -258,7 +258,7 @@ GlassPanel {
 
                 objectName: "workProjectRow"
                 width: projectList.width - projectList.leftMargin - projectList.rightMargin
-                padding: panel.isAppArea ? 15 : 14
+                padding: 13
                 hoverEnabled: true
                 enabled: panel.bridge.canSelectArea
                 scale: projectRow.down ? 0.992 : (projectRow.hovered ? 1.005 : 1.0)
@@ -270,145 +270,97 @@ GlassPanel {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 14
+                        spacing: 12
 
-                        // Emblema de cristal con punto de estado en vivo
+                        // Emblema minimalista con punto solo si está activa o falta la carpeta
                         GlassPanel {
-                            implicitWidth: panel.isAppArea ? 44 : 38
-                            implicitHeight: panel.isAppArea ? 44 : 38
-                            radius: panel.isAppArea ? 12 : 10
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: 38
+                            implicitHeight: 38
+                            radius: 10
                             topColor: projectRow.isRunningThis
-                                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.38) : "#36ffffff")
+                                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.36) : "#34ffffff")
                                       : projectRow.hovered
-                                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#28ffffff")
-                                        : (GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#18ffffff")
-                            bottomColor: "#0cffffff"
+                                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#24ffffff")
+                                        : (GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#16ffffff")
+                            bottomColor: "#0affffff"
                             edgeColor: projectRow.isRunningThis
-                                       ? (GemaTheme.synced ? GemaTheme.accent : "#90ffffff")
+                                       ? (GemaTheme.synced ? GemaTheme.accent : "#88ffffff")
                                        : projectRow.hovered
-                                         ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#50ffffff")
-                                         : "#28ffffff"
+                                         ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#4cffffff")
+                                         : "#26ffffff"
 
                             Text {
                                 anchors.centerIn: parent
                                 text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
                                 color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                                font.pixelSize: panel.isAppArea ? 18 : 16
+                                font.pixelSize: 16
                                 style: Text.Raised
                                 styleColor: GemaTheme.textShadow
                             }
 
                             Rectangle {
-                                visible: panel.isAppArea || projectRow.isRunningThis || !projectRow.folderExists
+                                visible: projectRow.isRunningThis || !projectRow.folderExists
                                 anchors.right: parent.right
                                 anchors.bottom: parent.bottom
                                 anchors.margins: 3
-                                width: 8
-                                height: 8
-                                radius: 4
-                                color: !projectRow.folderExists ? "#ff9070"
-                                       : projectRow.isRunningThis ? "#68f098"
-                                       : projectRow.hasRunScript || projectRow.hasLaunchProfile
-                                         ? (GemaTheme.synced ? GemaTheme.accent : "#a8d4ff")
-                                         : "#707884"
+                                width: 7
+                                height: 7
+                                radius: 3.5
+                                color: !projectRow.folderExists ? "#ff9070" : "#68f098"
                                 border.width: 1
                                 border.color: "#80000000"
                             }
                         }
 
-                        // Información principal: nombre, insignias, ruta y metadatos
+                        // Información minimalista: solo nombre + insignia sutil y ruta
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 5
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: 3
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 7
+                                spacing: 8
 
                                 Text {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     text: projectRow.name
                                     textFormat: Text.PlainText
                                     color: GemaTheme.textColor
-                                    font.pixelSize: 16
+                                    font.pixelSize: 15
                                     font.bold: true
                                     style: Text.Raised
                                     styleColor: GemaTheme.textShadow
                                     elide: Text.ElideRight
                                 }
 
-                                GlassPanel {
-                                    visible: projectRow.isRunningThis
-                                    implicitWidth: runBadgeText.implicitWidth + 14
-                                    implicitHeight: 20
-                                    radius: 6
-                                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#2c68f098"
-                                    bottomColor: "#14ffffff"
-                                    edgeColor: GemaTheme.synced ? GemaTheme.accent : "#8068f098"
-                                    Text {
-                                        id: runBadgeText
-                                        anchors.centerIn: parent
-                                        text: "● " + (panel.bridge.projectRun.phase === "running" ? "En ejecución" : "Iniciando…")
-                                        color: "#ffffff"
-                                        font.pixelSize: 10
-                                        font.bold: true
-                                    }
-                                }
-
-                                GlassPanel {
-                                    visible: !projectRow.folderExists
-                                    implicitWidth: missingBadgeText.implicitWidth + 14
-                                    implicitHeight: 20
-                                    radius: 6
-                                    topColor: "#28ff8060"
-                                    bottomColor: "#14000000"
-                                    edgeColor: "#70ff9070"
-                                    Text {
-                                        id: missingBadgeText
-                                        anchors.centerIn: parent
-                                        text: "Carpeta no encontrada"
-                                        color: "#ffd0c0"
-                                        font.pixelSize: 10
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-
-                                GlassPanel {
-                                    visible: panel.isAppArea && projectRow.desktopInstalled
-                                    implicitWidth: menuBadgeText.implicitWidth + 14
-                                    implicitHeight: 20
-                                    radius: 6
-                                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#22ffffff"
-                                    bottomColor: "#10ffffff"
-                                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#44ffffff"
-                                    Text {
-                                        id: menuBadgeText
-                                        anchors.centerIn: parent
-                                        text: "⬡ En menú"
-                                        color: GemaTheme.textColor
-                                        font.pixelSize: 10
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-
-                                GlassPanel {
+                                Text {
                                     visible: panel.isAppArea
-                                    implicitWidth: engineTag.implicitWidth + 14
-                                    implicitHeight: 20
-                                    radius: 6
-                                    topColor: "#1cffffff"
-                                    bottomColor: "#10ffffff"
-                                    Text {
-                                        id: engineTag
-                                        anchors.centerIn: parent
-                                        text: "Gema UI · " + (projectRow.engine === "rust" ? "Rust" : "Python")
-                                        color: GemaTheme.mutedColor
-                                        font.pixelSize: 10
-                                        font.weight: Font.DemiBold
-                                        style: Text.Raised
-                                        styleColor: GemaTheme.textShadow
-                                    }
+                                    text: projectRow.engine === "rust" ? "Rust" : "Python"
+                                    color: GemaTheme.synced ? GemaTheme.accentAlpha(0.88) : GemaTheme.mutedColor
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    style: Text.Raised
+                                    styleColor: GemaTheme.textShadow
+                                }
+
+                                Text {
+                                    visible: projectRow.isRunningThis
+                                    text: "● " + (panel.bridge.projectRun.phase === "running" ? "Activa" : "Iniciando…")
+                                    color: "#7ef5a8"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    visible: !projectRow.folderExists
+                                    text: "Sin carpeta"
+                                    color: "#ffb49c"
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
                                 }
                             }
 
@@ -422,61 +374,22 @@ GlassPanel {
                                 styleColor: GemaTheme.textShadow
                                 elide: Text.ElideMiddle
                             }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10
-
-                                Text {
-                                    visible: panel.isAppArea && projectRow.hasRunScript
-                                    text: "✓ Lanzador Quickshell"
-                                    color: GemaTheme.mutedColor
-                                    font.pixelSize: 10
-                                }
-                                Text {
-                                    visible: panel.isAppArea && projectRow.hasCheckScript
-                                    text: (projectRow.hasRunScript ? "·  " : "") + "✓ Check IPC/QML"
-                                    color: GemaTheme.mutedColor
-                                    font.pixelSize: 10
-                                }
-                                Text {
-                                    visible: projectRow.hasGit
-                                    text: ((panel.isAppArea && (projectRow.hasRunScript || projectRow.hasCheckScript)) ? "·  " : "") + "⎇ Git"
-                                    color: GemaTheme.mutedColor
-                                    font.pixelSize: 10
-                                }
-                                Text {
-                                    readonly property bool hasPrev: projectRow.hasGit
-                                                                    || (panel.isAppArea && (projectRow.hasRunScript || projectRow.hasCheckScript))
-                                    text: (hasPrev ? "·  " : "")
-                                          + (projectRow.chatCount > 0
-                                             ? (projectRow.chatCount + (projectRow.chatCount === 1 ? " conversación IA" : " conversaciones IA"))
-                                             : "Sin conversaciones aún")
-                                    color: GemaTheme.subtleColor
-                                    font.pixelSize: 10
-                                }
-                                Text {
-                                    readonly property string relDate: panel.formatUpdatedDate(projectRow.updatedAt)
-                                    visible: relDate.length > 0
-                                    text: "·  " + relDate
-                                    color: GemaTheme.subtleColor
-                                    font.pixelSize: 10
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
                         }
 
                         ActionButton {
                             objectName: "workRowRunButton"
+                            Layout.alignment: Qt.AlignVCenter
                             visible: !panel.isAppArea && (projectRow.isRunningThis || projectRow.hasLaunchProfile)
-                            text: projectRow.isRunningThis ? "■ Detener" : "▶ Ejecutar"
+                            text: projectRow.isRunningThis ? "■" : "▶"
                             accent: projectRow.isRunningThis
                             enabled: projectRow.isRunningThis
                                      ? panel.bridge.projectRun.phase !== "stopping"
                                      : projectRow.canLaunchThis
+                            implicitWidth: 30
+                            implicitHeight: 30
+                            horizontalPadding: 0
+                            verticalPadding: 0
                             font.pixelSize: 11
-                            horizontalPadding: 10
-                            verticalPadding: 6
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: projectRow.isRunningThis ? "Detener proyecto en ejecución" : "Ejecutar inicio guardado"
@@ -489,6 +402,7 @@ GlassPanel {
                         ActionButton {
                             id: renameProjectButton
                             objectName: "workRenameProject"
+                            Layout.alignment: Qt.AlignVCenter
                             enabled: panel.bridge.canSelectArea
                             implicitWidth: 30
                             implicitHeight: 30
@@ -521,7 +435,9 @@ GlassPanel {
                                         width: 3
                                         height: 2
                                         radius: 1
-                                        color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
+                                        color: "transparent"
+                                        border.width: 1
+                                        border.color: renameProjectButton.hovered ? "#ffffff" : "#aaaaaa"
                                     }
                                 }
                             }
@@ -530,6 +446,7 @@ GlassPanel {
                         ActionButton {
                             id: deleteProjectButton
                             objectName: "workDeleteProject"
+                            Layout.alignment: Qt.AlignVCenter
                             enabled: !(panel.bridge.projectRunActive && panel.bridge.projectRun.project_id === projectRow.projectId)
                             implicitWidth: 30
                             implicitHeight: 30
@@ -571,9 +488,10 @@ GlassPanel {
                         visible: panel.isAppArea
                         Layout.fillWidth: true
                         implicitHeight: 1
-                        color: "#18ffffff"
+                        color: "#14ffffff"
                     }
 
+                    // Cuatro botones del mismo tamaño y alineados de borde a borde
                     RowLayout {
                         visible: panel.isAppArea
                         Layout.fillWidth: true
@@ -581,14 +499,17 @@ GlassPanel {
 
                         ActionButton {
                             objectName: "appCardRunButton"
-                            text: projectRow.isRunningThis ? "■  Detener App" : "▶  Iniciar App"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            implicitHeight: 32
+                            text: projectRow.isRunningThis ? "■  Detener" : "▶  Iniciar"
                             accent: true
                             enabled: projectRow.isRunningThis
                                      ? panel.bridge.projectRun.phase !== "stopping"
                                      : projectRow.canLaunchThis
                             font.pixelSize: 11
-                            horizontalPadding: 12
-                            verticalPadding: 6
+                            horizontalPadding: 8
+                            verticalPadding: 0
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: projectRow.isRunningThis
@@ -602,11 +523,14 @@ GlassPanel {
 
                         ActionButton {
                             objectName: "appCardOpenButton"
-                            text: "✦  Editar con IA"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            implicitHeight: 32
+                            text: "✦  Editar"
                             enabled: panel.bridge.canSelectArea && projectRow.folderExists
                             font.pixelSize: 11
-                            horizontalPadding: 11
-                            verticalPadding: 6
+                            horizontalPadding: 8
+                            verticalPadding: 0
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: "Abrir el estudio de IA, explorador de archivos y flujo Git de " + projectRow.name
@@ -615,27 +539,31 @@ GlassPanel {
 
                         ActionButton {
                             objectName: "appCardTestButton"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            implicitHeight: 32
                             text: "✓  Probar"
                             enabled: panel.bridge.canSelectArea && projectRow.folderExists && !panel.bridge.busy
                             font.pixelSize: 11
-                            horizontalPadding: 10
-                            verticalPadding: 6
+                            horizontalPadding: 8
+                            verticalPadding: 0
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: "Abrir y validar sintaxis QML (qmllint) + motor IPC de " + projectRow.name
                             onClicked: panel.bridge.testAppById(projectRow.projectId)
                         }
 
-                        Item { Layout.fillWidth: true }
-
                         ActionButton {
                             objectName: "appCardDesktopButton"
-                            text: projectRow.desktopInstalled ? "⬡  En menú ✓" : "⬡  Instalar en menú"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            implicitHeight: 32
+                            text: projectRow.desktopInstalled ? "⬡  En menú ✓" : "⬡  Menú"
                             accent: projectRow.desktopInstalled
                             enabled: panel.bridge.canSelectArea && projectRow.folderExists
                             font.pixelSize: 11
-                            horizontalPadding: 10
-                            verticalPadding: 6
+                            horizontalPadding: 8
+                            verticalPadding: 0
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: projectRow.desktopInstalled
