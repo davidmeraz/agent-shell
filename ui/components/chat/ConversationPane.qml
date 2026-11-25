@@ -193,14 +193,39 @@ GlassPanel {
         }
         footer: Item {
             id: thinkingFooter
-            readonly property bool waiting: pane.bridge.busy && !pane.bridge.shellRunning && conversation.count > 0
-                && (pane.bridge.messages.get(conversation.count - 1).author === "TÚ"
-                    || !!pane.bridge.messages.get(conversation.count - 1).toolJson)
-            readonly property bool afterTools: waiting && conversation.count > 0
-                && !!pane.bridge.messages.get(conversation.count - 1).toolJson
-            readonly property string thinkingLabel: afterTools
-                ? "Analizando resultados"
-                : (pane.bridge.reasoningEffort ? "Razonando respuesta" : "Pensando")
+            // Estado compacto de la última fila: "", "user", "tool", "delegate", "empty_assistant" o "assistant".
+            property string lastKind: ""
+            function computeLastKind() {
+                const total = pane.bridge.messages.count;
+                if (total <= 0) return "";
+                const row = pane.bridge.messages.get(total - 1);
+                if (row.author === "TÚ") return "user";
+                if (row.toolJson) return "tool";
+                if (row.author === "SISTEMA") return "system";
+                const body = row.body || "";
+                if (MarkdownRich.stripDelegateBlocks(body, true).length === 0)
+                    return MarkdownRich.hasDelegateBlock(body) ? "delegate" : "empty_assistant";
+                return "assistant";
+            }
+            function syncLastKind() {
+                const next = computeLastKind();
+                if (lastKind !== next) lastKind = next;
+            }
+            Component.onCompleted: syncLastKind()
+            Connections {
+                target: pane.bridge.messages
+                function onDataChanged() { thinkingFooter.syncLastKind(); }
+                function onCountChanged() { thinkingFooter.syncLastKind(); }
+            }
+            readonly property bool waiting: pane.bridge.busy && !pane.bridge.shellRunning
+                && (lastKind === "user" || lastKind === "tool" || lastKind === "delegate" || lastKind === "empty_assistant")
+            readonly property bool delegatingNow: waiting && lastKind === "delegate"
+            readonly property bool afterTools: waiting && lastKind === "tool"
+            readonly property string thinkingLabel: delegatingNow
+                ? "Delegando tarea"
+                : afterTools
+                  ? "Analizando resultados"
+                  : (pane.bridge.reasoningEffort ? "Razonando respuesta" : "Pensando")
             property int dotStep: 0
             width: conversation.width
             height: waiting ? 46 : 0
@@ -285,15 +310,20 @@ GlassPanel {
             readonly property bool isTool: !!toolJson
             readonly property bool fromUser: author === "TÚ"
             readonly property bool systemMessage: author === "SISTEMA"
+            readonly property bool isAssistant: !isTool && !fromUser && !systemMessage
             readonly property bool streaming: pane.bridge.busy && turnId === pane.bridge.activeTurnId
+            readonly property string displayBody: isAssistant
+                ? MarkdownRich.stripDelegateBlocks(body, streaming)
+                : body
+            readonly property bool hiddenDelegate: isAssistant && body.length > 0 && displayBody.length === 0
             property bool wasStreaming: streaming
-            readonly property bool revealingTail: wasStreaming && !streaming && revealedLength < body.length
-                && !fromUser && !systemMessage && GemaTheme.animations
-            readonly property bool activeStream: (streaming || revealingTail) && !fromUser && !systemMessage && GemaTheme.animations
-            property int revealedLength: activeStream ? pane.nextStreamLength(body, 0, false) : body.length
-            readonly property string visibleBody: (!activeStream || revealedLength >= body.length)
-                ? body
-                : MarkdownRich.closeOpenMarkdown(body.slice(0, revealedLength))
+            readonly property bool revealingTail: wasStreaming && !streaming && revealedLength < displayBody.length
+                && isAssistant && GemaTheme.animations
+            readonly property bool activeStream: (streaming || revealingTail) && isAssistant && GemaTheme.animations
+            property int revealedLength: activeStream ? pane.nextStreamLength(displayBody, 0, false) : displayBody.length
+            readonly property string visibleBody: (!activeStream || revealedLength >= displayBody.length)
+                ? displayBody
+                : MarkdownRich.closeOpenMarkdown(displayBody.slice(0, revealedLength))
             readonly property var measurement: performanceJson ? JSON.parse(performanceJson) : ({})
             readonly property int userHeaderHeight: 26
             readonly property int userBubbleTop: userHeaderHeight + 7
@@ -307,36 +337,39 @@ GlassPanel {
                 return Math.min(maxWidth, Math.max(imageUrl ? 320 : 72, Math.ceil(textWidth) + 32));
             }
             width: conversation.width
-            implicitHeight: isTool
-                ? toolCard.implicitHeight
-                : (fromUser ? userBubbleTop + messageContent.implicitHeight + 22 : messageContent.implicitHeight + 20)
+            visible: !hiddenDelegate
+            implicitHeight: hiddenDelegate
+                ? 0
+                : isTool
+                  ? toolCard.implicitHeight
+                  : (fromUser ? userBubbleTop + messageContent.implicitHeight + 22 : messageContent.implicitHeight + 20)
             Component.onCompleted: initialized = true
             onStreamingChanged: {
                 if (streaming) {
                     wasStreaming = true;
-                } else if (!GemaTheme.animations || (body.length - revealedLength) > 240
+                } else if (!GemaTheme.animations || (displayBody.length - revealedLength) > 240
                            || measurement.status === "interrupted" || measurement.status === "failed") {
                     wasStreaming = false;
-                    revealedLength = body.length;
+                    revealedLength = displayBody.length;
                 }
             }
-            onBodyChanged: {
+            onDisplayBodyChanged: {
                 if (!activeStream) {
-                    revealedLength = body.length;
-                } else if (revealedLength > body.length) {
-                    revealedLength = body.length;
-                } else if (revealedLength === 0 && body.length > 0) {
-                    revealedLength = pane.nextStreamLength(body, 0, false);
+                    revealedLength = displayBody.length;
+                } else if (revealedLength > displayBody.length) {
+                    revealedLength = displayBody.length;
+                } else if (revealedLength === 0 && displayBody.length > 0) {
+                    revealedLength = pane.nextStreamLength(displayBody, 0, false);
                 }
             }
             Timer {
                 id: streamRevealTimer
                 interval: 16
                 repeat: true
-                running: message.activeStream && message.revealedLength < message.body.length
+                running: message.activeStream && message.revealedLength < message.displayBody.length
                 onTriggered: {
-                    message.revealedLength = pane.nextStreamLength(message.body, message.revealedLength, !message.streaming);
-                    if (!message.streaming && message.revealedLength >= message.body.length)
+                    message.revealedLength = pane.nextStreamLength(message.displayBody, message.revealedLength, !message.streaming);
+                    if (!message.streaming && message.revealedLength >= message.displayBody.length)
                         message.wasStreaming = false;
                 }
             }
@@ -430,7 +463,7 @@ GlassPanel {
             }
             // Hilo vertical acento que da estructura y personalidad a cada respuesta de la IA.
             Rectangle {
-                visible: !message.isTool && !message.fromUser && !message.systemMessage && message.body.length > 0
+                visible: message.isAssistant && !message.hiddenDelegate && message.displayBody.length > 0
                 x: messageContent.x + 11
                 y: messageContent.y + 32
                 width: 2
@@ -444,7 +477,7 @@ GlassPanel {
             }
             ColumnLayout {
                 id: messageContent
-                visible: !message.isTool
+                visible: !message.isTool && !message.hiddenDelegate
                 x: message.fromUser ? message.width - message.cardWidth + 14 : 10
                 y: message.fromUser ? message.userBubbleTop + 11 : 8
                 width: message.fromUser ? message.cardWidth - 28 : message.width - 20
@@ -571,7 +604,7 @@ GlassPanel {
                     text: message.fromUser || message.systemMessage
                         ? message.body
                         : MarkdownRich.toHtml(message.visibleBody, GemaTheme.codePalette, GemaTheme.accentHex, GemaTheme.darkText)
-                    visible: !!message.body
+                    visible: !!message.displayBody
                     readOnly: true
                     selectByMouse: true
                     color: message.fromUser ? "#ffffff" : GemaTheme.textColor
@@ -669,7 +702,7 @@ GlassPanel {
                     Layout.fillWidth: true
                     Layout.leftMargin: !message.fromUser && !message.systemMessage ? 33 : 0
                     Layout.minimumHeight: 24
-                    visible: !message.fromUser && !message.systemMessage && message.body.length > 0
+                    visible: message.isAssistant && message.displayBody.length > 0
                     spacing: 6
                     Button {
                         id: metricsButton
@@ -705,7 +738,7 @@ GlassPanel {
                     }
                     MessageCopyButton {
                         objectName: "chatCopyResponse"
-                        textToCopy: message.body
+                        textToCopy: message.displayBody
                     }
                 }
             }

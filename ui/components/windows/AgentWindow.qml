@@ -271,8 +271,8 @@ NativeWindow {
             anchors.fill: parent
             anchors.margins: 1
             radius: 20
-            topColor: "#7a141c26"
-            bottomColor: "#8c0c121a"
+            topColor: "#54141c26"
+            bottomColor: "#680c121a"
             edgeColor: card.working ? Qt.alpha(card.accentColor, 0.7) : "#4cffffff"
         }
         // Destello único del borde al terminar, con el color del resultado.

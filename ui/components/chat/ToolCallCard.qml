@@ -15,7 +15,50 @@ GlassPanel {
     property double startedAtMs: Date.now()
     property double runningElapsedMs: 0
     readonly property string rawOutput: call.output || ""
-    readonly property string displayOutput: rawOutput.replace(/\n$/, "")
+    readonly property bool isDelegate: (call.command || "").trim().startsWith("delegate")
+    readonly property var delegateReport: {
+        if (!isDelegate || !rawOutput) return null;
+        const trimmed = rawOutput.trim();
+        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed === "object" && ("summary" in parsed || "error" in parsed))
+                return parsed;
+        } catch (e) {}
+        return null;
+    }
+    readonly property string displayCommand: {
+        const cmd = (call.command || "").trim();
+        if (!cmd) return "Comando no ejecutado";
+        if (!isDelegate) return cmd;
+        const match = /^delegate\s+(\S+)(?:\s+(\[lectura\]))?(?:\s+([^:]+))?:\s*(.*)$/.exec(cmd);
+        if (!match) return cmd;
+        const slot = match[1];
+        const readOnly = !!match[2];
+        const modelTag = (match[3] || "").trim();
+        const taskText = (match[4] || "").trim();
+        const slotName = slot === "chatgpt" ? "Obrero ChatGPT"
+            : slot === "claude" ? "Obrero Claude"
+            : slot === "agy" ? "Obrero Gemini"
+            : slot === "auto" ? "Obrero"
+            : slot;
+        const modelShort = modelTag.indexOf("/") >= 0 ? modelTag.split("/").slice(1).join("/") : modelTag;
+        const header = slotName + (readOnly ? " (lectura)" : "") + (modelShort ? " · " + modelShort : "");
+        return taskText ? header + " — " + taskText : header;
+    }
+    readonly property string displayOutput: {
+        if (delegateReport) {
+            const parts = [];
+            if (delegateReport.error) parts.push("Error: " + delegateReport.error);
+            if (delegateReport.warning) parts.push("Aviso: " + delegateReport.warning);
+            if (delegateReport.files_changed && delegateReport.files_changed.length)
+                parts.push("Archivos: " + delegateReport.files_changed.join(", "));
+            if (delegateReport.summary) parts.push(String(delegateReport.summary).trim());
+            const formatted = parts.join("\n\n");
+            if (formatted) return formatted;
+        }
+        return rawOutput.replace(/\n$/, "");
+    }
     readonly property var outputLines: displayOutput ? displayOutput.split("\n") : []
     readonly property bool running: call.status === "running" || call.status === "pending"
     readonly property string previewOutput: {
@@ -239,12 +282,12 @@ GlassPanel {
                 TextArea {
                     id: command
                     objectName: "chatShellCommand"
-                    text: card.call.command || "Comando no ejecutado"
+                    text: card.displayCommand
                     readOnly: true
                     selectByMouse: true
                     textFormat: TextEdit.PlainText
                     wrapMode: card.minimized ? TextEdit.NoWrap : TextEdit.WrapAnywhere
-                    font.family: "monospace"
+                    font.family: card.isDelegate ? Qt.application.font.family : "monospace"
                     font.pixelSize: 12
                     font.weight: Font.Medium
                     color: "#f4f7fb"
@@ -388,8 +431,8 @@ GlassPanel {
                 selectByMouse: true
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.WrapAnywhere
-                font.family: "monospace"
-                font.pixelSize: 11
+                font.family: card.delegateReport ? Qt.application.font.family : "monospace"
+                font.pixelSize: card.delegateReport ? 12 : 11
                 color: "#eef3f8"
                 selectionColor: "#ffffff"
                 selectedTextColor: "#000000"
@@ -464,7 +507,7 @@ GlassPanel {
                 MessageCopyButton {
                     objectName: "chatCopyShellOutput"
                     visible: !!card.rawOutput
-                    textToCopy: card.rawOutput
+                    textToCopy: card.delegateReport ? card.displayOutput : card.rawOutput
                     copyLabel: "Copiar salida completa"
                     copiedLabel: "Salida copiada"
                 }

@@ -81,6 +81,44 @@ function makeTheme(palette, accentHex, darkText) {
     };
 }
 
+// Detecta si un mensaje contiene bloques técnicos ```delegate del protocolo interno.
+function hasDelegateBlock(raw) {
+    if (!raw) return false;
+    return /(?:^|\n)\s*```+delegate[ \t]*(?:\n|$)/i.test(raw.replace(/\r\n/g, "\n"));
+}
+
+// Elimina bloques técnicos ```delegate { ... } para que el protocolo interno no se dibuje
+// como un cuadro de código negro en el chat (las delegaciones se muestran en ToolCallCard y AgentWindow).
+function stripDelegateBlocks(raw, isStreaming) {
+    if (!raw) return "";
+    const normalized = raw.replace(/\r\n/g, "\n");
+    const hasTrailingPrefix = !!isStreaming
+        && /(?:^|\n)[ \t]*`{1,3}(?:d(?:e(?:l(?:e(?:g(?:a(?:t(?:e)?)?)?)?)?)?)?)?[ \t]*$/i.test(normalized);
+    if (!hasDelegateBlock(normalized) && !hasTrailingPrefix)
+        return raw;
+
+    const lines = normalized.split("\n");
+    const kept = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        if (/^\s*```+delegate[ \t]*$/i.test(line)) {
+            i++;
+            while (i < lines.length && !/^\s*```+[ \t]*$/.test(lines[i]))
+                i++;
+            if (i < lines.length) i++;
+            continue;
+        }
+        if (isStreaming && i === lines.length - 1
+            && /^[ \t]*`{1,3}(?:d(?:e(?:l(?:e(?:g(?:a(?:t(?:e)?)?)?)?)?)?)?)?[ \t]*$/i.test(line)) {
+            break;
+        }
+        kept.push(line);
+        i++;
+    }
+    return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // Cierra virtualmente marcadores Markdown abiertos durante el streaming para evitar destellos de sintaxis cruda.
 function closeOpenMarkdown(partial) {
     if (!partial) return "";
@@ -358,7 +396,7 @@ function toHtml(raw, palette, accentHex, darkText) {
 
         const isFirst = blocks.length === 0;
 
-        // 1. Bloque de código ```lang ... ```
+        // 1. Bloque de código ```lang ... ``` (omite bloques técnicos ```delegate del protocolo interno)
         const fence = /^\s*```+([A-Za-z0-9_+#.-]*)\s*$/.exec(line);
         if (fence) {
             const lang = fence[1] || "";
@@ -369,6 +407,8 @@ function toHtml(raw, palette, accentHex, darkText) {
                 i++;
             }
             if (i < lines.length) i++;
+            if (lang.toLowerCase() === "delegate")
+                continue;
             blocks.push(renderCodeBlock(codeLines, lang, theme, isFirst));
             continue;
         }

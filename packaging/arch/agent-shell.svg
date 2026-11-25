@@ -1,28 +1,128 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1d2838"/>
-      <stop offset="55%" stop-color="#111824"/>
-      <stop offset="100%" stop-color="#0b1018"/>
+    <clipPath id="tileClip">
+      <rect x="8" y="8" width="112" height="112" rx="30"/>
+    </clipPath>
+
+    <!-- Base translúcida de cristal esmerilado -->
+    <linearGradient id="glassBase" x1="8%" y1="4%" x2="92%" y2="96%">
+      <stop offset="0%" stop-color="#2c4368" stop-opacity="0.62"/>
+      <stop offset="48%" stop-color="#111d33" stop-opacity="0.56"/>
+      <stop offset="100%" stop-color="#19335c" stop-opacity="0.66"/>
     </linearGradient>
-    <linearGradient id="rim" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#d8ebff" stop-opacity="0.85"/>
-      <stop offset="45%" stop-color="#8ec5ff" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.20"/>
-    </linearGradient>
-    <linearGradient id="sheen" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="50%" stop-color="#c4dcff" stop-opacity="0.05"/>
+
+    <!-- Brillo cáustico superior izquierdo (luz entrando al vidrio) -->
+    <radialGradient id="topGlow" cx="22%" cy="16%" r="64%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="45%" stop-color="#b8dcff" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#b8dcff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Refracción inferior derecha en tono zafiro/acento -->
+    <radialGradient id="accentCaustic" cx="84%" cy="84%" r="62%">
+      <stop offset="0%" stop-color="#5ca2ff" stop-opacity="0.42"/>
+      <stop offset="50%" stop-color="#4d8eff" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#4d8eff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Halo interno alrededor del diamante -->
+    <radialGradient id="gemAura" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a8d5ff" stop-opacity="0.46"/>
+      <stop offset="55%" stop-color="#4d8eff" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#4d8eff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Menisco líquido especular en la mitad superior -->
+    <linearGradient id="liquidSheen" x1="0%" y1="0%" x2="15%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="55%" stop-color="#d8ecff" stop-opacity="0.08"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#eaf4ff"/>
-      <stop offset="100%" stop-color="#9cc6ff"/>
+
+    <!-- Filo de luz horizontal superior -->
+    <linearGradient id="topCatchlight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#ffffff" stop-opacity="0.78"/>
+      <stop offset="70%" stop-color="#d4ebff" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Rebote inferior de luz en el borde -->
+    <linearGradient id="bottomBounce" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6eb0ff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#96c9ff" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#6eb0ff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Borde prismático diagonal de cristal (135°) -->
+    <linearGradient id="outerRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.82"/>
+      <stop offset="36%" stop-color="#bfe0ff" stop-opacity="0.40"/>
+      <stop offset="72%" stop-color="#68a8ff" stop-opacity="0.46"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.30"/>
+    </linearGradient>
+
+    <!-- Bisel interior fino -->
+    <linearGradient id="innerRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#9ccaff" stop-opacity="0.18"/>
+    </linearGradient>
+
+    <!-- Gradientes de glifos luminosos -->
+    <linearGradient id="chevronGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="100%" stop-color="#d4e8ff" stop-opacity="0.90"/>
+    </linearGradient>
+
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e8f4ff" stop-opacity="0.96"/>
+      <stop offset="100%" stop-color="#7cb8ff" stop-opacity="0.95"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)" stroke="url(#rim)" stroke-width="2.5"/>
-  <rect x="11" y="11" width="106" height="54" rx="25" fill="url(#sheen)"/>
-  <path d="M35 46 L57 64 L35 82" fill="none" stroke="#f3f7fc" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="64" y1="82" x2="93" y2="82" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
-  <polygon points="88,35 97,44 88,53 79,44" fill="url(#accent)"/>
+
+  <!-- Cuerpo principal de vidrio translúcido -->
+  <g clip-path="url(#tileClip)">
+    <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#glassBase)"/>
+    <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#topGlow)"/>
+    <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#accentCaustic)"/>
+
+    <!-- Reflejo líquido curvo superior -->
+    <path d="M8 8 H120 V56 C94 70 42 66 8 50 Z" fill="url(#liquidSheen)"/>
+
+    <!-- Filo de luz superior e inferior -->
+    <rect x="26" y="10" width="76" height="2" rx="1" fill="url(#topCatchlight)"/>
+    <rect x="30" y="116" width="68" height="1.8" rx="0.9" fill="url(#bottomBounce)"/>
+
+    <!-- Halo interno de la gema -->
+    <circle cx="88" cy="43" r="25" fill="url(#gemAura)"/>
+  </g>
+
+  <!-- Doble bisel de cristal (grosor glassmorphism) -->
+  <rect x="9" y="9" width="110" height="110" rx="29" fill="none" stroke="url(#outerRim)" stroke-width="2"/>
+  <rect x="12" y="12" width="104" height="104" rx="26.5" fill="none" stroke="url(#innerRim)" stroke-width="1"/>
+
+  <!-- Sombra interna suave para profundidad del glifo -->
+  <path d="M33 48.5 L57 66.5 L33 84.5" fill="none" stroke="#060c18" stroke-opacity="0.42" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="63" y1="84.5" x2="94" y2="84.5" stroke="#060c18" stroke-opacity="0.42" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Halo retroiluminado suave tras >_ -->
+  <path d="M33 46.5 L57 64.5 L33 82.5" fill="none" stroke="#a6d4ff" stroke-opacity="0.22" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="63" y1="82.5" x2="94" y2="82.5" stroke="#6eb0ff" stroke-opacity="0.28" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- Chevrón ">" y cursor "_" en cristal luminoso -->
+  <path d="M33 46.5 L57 64.5 L33 82.5" fill="none" stroke="url(#chevronGrad)" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="63" y1="82.5" x2="94" y2="82.5" stroke="url(#barGrad)" stroke-width="8" stroke-linecap="round"/>
+  <line x1="65" y1="80.8" x2="92" y2="80.8" stroke="#ffffff" stroke-opacity="0.58" stroke-width="1.6" stroke-linecap="round"/>
+
+  <!-- Diamante facetado en cristal (4 facetas con refracción) -->
+  <g>
+    <polygon points="88,29 86,41.5 74,43" fill="#ffffff" fill-opacity="0.96"/>
+    <polygon points="88,29 102,43 86,41.5" fill="#bfe0ff" fill-opacity="0.88"/>
+    <polygon points="74,43 86,41.5 88,57" fill="#7cb8ff" fill-opacity="0.84"/>
+    <polygon points="102,43 88,57 86,41.5" fill="#4d8eff" fill-opacity="0.90"/>
+    <polygon points="88,29 102,43 88,57 74,43" fill="none" stroke="#ffffff" stroke-opacity="0.80" stroke-width="1.3" stroke-linejoin="round"/>
+    <!-- Destello especular en la arista superior -->
+    <circle cx="88" cy="29.5" r="2.1" fill="#ffffff" fill-opacity="0.95"/>
+  </g>
 </svg>

@@ -204,6 +204,45 @@ NativeScope {
                 const thresholdInput = inspector.findChild(dlg, "unifiedThresholdInput");
                 if (!check(thresholdInput && thresholdInput.text === "35", "el umbral inicial no es 35")) return;
                 dlg.close();
+                // Verificar que los bloques ```delegate no se renderizan como cuadros negros en el chat
+                // y que la tarjeta ToolCallCard formatea el resultado del obrero en texto legible.
+                agent.messages.clear();
+                agent.messageRows = ({});
+                agent.messages.append({ author: "TÚ", body: "Crea a.py", imageUrl: "", turnId: "t-del", performanceJson: "", toolJson: "" });
+                receive("chat.busy", { turn_id: "t-del" });
+                receive("chat.delta", { item_id: "only-del", turn_id: "t-del", text: "```delegate\n{\"task\":\"crear a.py\",\"worker\":\"chatgpt\",\"read_only\":false}\n```" });
+                inspector.wait(80);
+                const list = inspector.findChild(chat, "chatMessageList");
+                const hiddenItem = list.itemAtIndex(1);
+                const thinking = inspector.findChild(chat, "chatThinkingIndicator");
+                if (!check(hiddenItem && !hiddenItem.visible && hiddenItem.implicitHeight === 0,
+                    "un mensaje que solo contiene ```delegate debe quedar oculto")) return;
+                if (!check(thinking && thinking.visible,
+                    "el indicador de espera desapareció mientras se streamea un bloque ```delegate")) return;
+                receive("chat.delta", { item_id: "plan-del", turn_id: "t-del",
+                    text: "Divido la tarea en dos.\n\n```delegate\n{\"task\":\"editar ui.qml\",\"worker\":\"claude\",\"read_only\":false}\n```" });
+                receive("tool.updated", { call: {
+                    id: "del-card-1", call_id: "c-del-1", turn_id: "t-del",
+                    command: "delegate chatgpt chatgpt/gpt-6.1-terra: crear a.py",
+                    workdir: "/tmp", status: "completed", exit_code: 0, truncated: false,
+                    output: JSON.stringify({ status: "completed", summary: "Se creó a.py correctamente.",
+                        files_changed: ["a.py"], tool_calls: 2, tokens_used: 900, provider: "chatgpt", model: "gpt-6.1-terra", error: "", warning: "" })
+                } });
+                receive("chat.finished", { status: "completed" });
+                inspector.wait(80);
+                const planItem = list.itemAtIndex(2);
+                const planMsg = inspector.findChild(planItem, "chatAssistantMessage");
+                const planText = planMsg ? planMsg.getText(0, planMsg.length) : "";
+                if (!check(planText.indexOf("Divido la tarea en dos.") >= 0
+                    && planText.indexOf("DELEGATE") < 0 && planText.indexOf("editar ui.qml") < 0,
+                    "el bloque ```delegate se filtró al chat: " + planText)) return;
+                const delCard = inspector.findChild(list.itemAtIndex(3), "chatToolCall");
+                const delCmd = inspector.findChild(delCard, "chatShellCommand");
+                if (!check(delCard && delCmd && delCmd.text === "Obrero ChatGPT · gpt-6.1-terra — crear a.py"
+                    && delCard.displayOutput.indexOf("Archivos: a.py") >= 0
+                    && delCard.displayOutput.indexOf("Se creó a.py correctamente.") >= 0
+                    && delCard.displayOutput.indexOf("\"status\"") < 0,
+                    "ToolCallCard de delegación no formatea comando/informe limpio: " + (delCmd ? delCmd.text : ""))) return;
                 receive("chat.busy", { turn_id: "t3" });
                 const [, claudeWin] = chat.agentWindows.cards;
                 if (!check(!agent.agents.length && !claudeWin.wanted && claudeWin.shown, "un turno nuevo conserva obreros anteriores")) return;
