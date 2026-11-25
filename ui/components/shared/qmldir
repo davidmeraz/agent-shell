@@ -1,6 +1,7 @@
 singleton GemaTheme 1.0 GemaTheme.qml
 ActionButton 1.0 ActionButton.qml
 FileWriteReveal 1.0 FileWriteReveal.qml
+GemaIcon 1.0 GemaIcon.qml
 GlassComboBox 1.0 GlassComboBox.qml
 GlassDialog 1.0 GlassDialog.qml
 GlassPanel 1.0 GlassPanel.qml

@@ -71,13 +71,11 @@ GlassPanel {
                     topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
                     bottomColor: "#0cffffff"
                     edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#44ffffff"
-                    Text {
+                    GemaIcon {
                         anchors.centerIn: parent
-                        text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
+                        name: panel.isAppArea ? "app" : "work"
+                        size: 17
                         color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                        font.pixelSize: 15
-                        style: Text.Raised
-                        styleColor: GemaTheme.textShadow
                     }
                 }
 
@@ -286,13 +284,11 @@ GlassPanel {
                                      ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#4cffffff")
                                      : "#26ffffff"
 
-                        Text {
+                        GemaIcon {
                             anchors.centerIn: parent
-                            text: panel.isAppArea ? GemaTheme.gemSymbol : "❖"
+                            name: panel.isAppArea ? "app" : "work"
+                            size: 18
                             color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                            font.pixelSize: 16
-                            style: Text.Raised
-                            styleColor: GemaTheme.textShadow
                         }
 
                         Rectangle {

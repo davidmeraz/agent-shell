@@ -33,10 +33,7 @@ QtObject {
         ];
         return names[gemShape] || "Gema";
     }
-    readonly property string gemSymbol: {
-        const syms = ["❖", "▭", "◆", "◊", "◈", "▲", "💧", "⬢"];
-        return syms[gemShape] || "◆";
-    }
+    readonly property string gemSymbol: "◆"
 
     Behavior on accent { ColorAnimation { duration: gemaTheme.animations ? 260 : 0 } }
 

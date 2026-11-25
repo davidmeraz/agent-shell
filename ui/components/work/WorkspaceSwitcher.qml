@@ -21,7 +21,6 @@ GlassPanel {
         required property AgentBridge bridge
         readonly property string areaId: text.toLowerCase()
         readonly property bool selected: bridge.activeArea === areaId
-        readonly property string iconSymbol: areaId === "chat" ? "◈" : areaId === "work" ? "❖" : GemaTheme.gemSymbol
         Layout.fillWidth: true
         Layout.fillHeight: true
         padding: 0
@@ -33,14 +32,12 @@ GlassPanel {
             if (!selected) bridge.selectArea(areaId);
         }
         contentItem: RowLayout {
-            spacing: 5
+            spacing: 6
             Item { Layout.fillWidth: true }
-            Text {
-                text: tab.iconSymbol
+            GemaIcon {
+                name: tab.areaId
+                size: 14
                 color: tab.selected ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : (tab.hovered ? "#e0e6f0" : "#9aa4b4")
-                font.pixelSize: 11
-                style: Text.Raised
-                styleColor: GemaTheme.textShadow
                 Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
             }
             Text {

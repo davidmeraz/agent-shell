@@ -25,14 +25,11 @@ MattePanel {
                 topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
                 bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.10) : "#0cffffff"
                 edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#50ffffff"
-                Text {
+                GemaIcon {
                     anchors.centerIn: parent
-                    text: GemaTheme.gemSymbol
+                    name: "brand"
+                    size: 20
                     color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                    font.pixelSize: 16
-                    font.bold: true
-                    style: Text.Raised
-                    styleColor: GemaTheme.textShadow
                 }
             }
             ColumnLayout {
@@ -152,15 +149,13 @@ MattePanel {
                     edgeColor: settingsButton.hovered
                         ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#5cffffff")
                         : "#32ffffff"
-                    Text {
+                    GemaIcon {
                         anchors.centerIn: parent
-                        text: "⚙"
+                        name: "settings"
+                        size: 16
                         color: settingsButton.hovered
                             ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
                             : GemaTheme.textColor
-                        font.pixelSize: 15
-                        style: Text.Raised
-                        styleColor: GemaTheme.textShadow
                         Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
                     }
                 }

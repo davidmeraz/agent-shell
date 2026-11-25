@@ -516,13 +516,11 @@ NativeWindow {
                                 topColor: GemaTheme.accentAlpha(0.24)
                                 bottomColor: GemaTheme.accentAlpha(0.10)
                                 edgeColor: GemaTheme.accentAlpha(0.50)
-                                Text {
+                                GemaIcon {
                                     anchors.centerIn: parent
-                                    text: GemaTheme.gemSymbol
+                                    name: "work"
+                                    size: 13
                                     color: GemaTheme.accent
-                                    font.pixelSize: 11
-                                    style: Text.Raised
-                                    styleColor: GemaTheme.textShadow
                                 }
                             }
                             Text {

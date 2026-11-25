@@ -534,12 +534,11 @@ GlassPanel {
                         topColor: message.systemMessage ? "#20ffffff" : (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#28c4dcff")
                         bottomColor: message.systemMessage ? "#0cffffff" : (GemaTheme.synced ? GemaTheme.accentAlpha(0.10) : "#10c4dcff")
                         edgeColor: message.systemMessage ? "#38ffffff" : (GemaTheme.synced ? GemaTheme.accentAlpha(0.58) : "#50c4dcff")
-                        Text {
+                        GemaIcon {
                             anchors.centerIn: parent
-                            text: message.systemMessage ? "◈" : GemaTheme.gemSymbol
+                            name: message.systemMessage ? "system" : "brand"
+                            size: 14
                             color: message.systemMessage ? "#e4e4e4" : (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
-                            font.pixelSize: 11
-                            font.bold: true
                         }
                     }
                     Text {
