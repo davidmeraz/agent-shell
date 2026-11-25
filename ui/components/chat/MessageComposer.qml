@@ -321,11 +321,124 @@ GlassPanel {
                 onTextChanged: {
                     composer.commandsDismissed = false;
                     completionList.currentIndex = 0;
-                    if (GemaTheme.animations && prompt.activeFocus && prompt.text.length > 0)
+                    if (GemaTheme.animations && prompt.activeFocus && prompt.text.length > 0) {
                         typingPulseAnim.restart();
+                        keystrokeRipple.triggerAt(prompt.cursorRectangle.x,
+                                                  prompt.cursorRectangle.y + prompt.cursorRectangle.height / 2);
+                    }
                 }
                 padding: 4
                 background: null
+                cursorDelegate: Item { width: 2; height: prompt.cursorRectangle.height }
+
+                // Onda luminosa sutil en la posición exacta de cada letra escrita
+                Rectangle {
+                    id: keystrokeRipple
+                    property real rippleScale: 0.4
+                    width: 18
+                    height: 18
+                    radius: 9
+                    color: "transparent"
+                    border.width: 1.5
+                    border.color: GemaTheme.synced ? GemaTheme.accent : "#a8d8ff"
+                    opacity: 0
+                    scale: rippleScale
+                    visible: opacity > 0.01
+                    z: 1
+
+                    function triggerAt(cx, cy) {
+                        x = cx - width / 2;
+                        y = cy - height / 2;
+                        rippleAnim.restart();
+                    }
+
+                    ParallelAnimation {
+                        id: rippleAnim
+                        NumberAnimation {
+                            target: keystrokeRipple
+                            property: "rippleScale"
+                            from: 0.35; to: 1.85
+                            duration: 240
+                            easing.type: Easing.OutCubic
+                        }
+                        SequentialAnimation {
+                            NumberAnimation {
+                                target: keystrokeRipple
+                                property: "opacity"
+                                from: 0.0; to: 0.65
+                                duration: 45
+                                easing.type: Easing.OutQuad
+                            }
+                            NumberAnimation {
+                                target: keystrokeRipple
+                                property: "opacity"
+                                to: 0.0
+                                duration: 195
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+                }
+
+                // Cursor luminoso Gema con deslizamiento fluido, estela y halo ambiental
+                Item {
+                    id: promptCaretWrap
+                    visible: prompt.activeFocus
+                    x: prompt.cursorRectangle.x
+                    y: prompt.cursorRectangle.y + Math.max(0, (prompt.cursorRectangle.height - height) / 2)
+                    width: 2.4
+                    height: Math.max(16, prompt.cursorRectangle.height - 2)
+                    z: 2
+
+                    Behavior on x {
+                        enabled: GemaTheme.animations && promptCaretWrap.visible
+                        NumberAnimation { duration: 45; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on y {
+                        enabled: GemaTheme.animations && promptCaretWrap.visible
+                        NumberAnimation { duration: 65; easing.type: Easing.OutCubic }
+                    }
+
+                    // Estela suave detrás del cursor mientras escribes
+                    Rectangle {
+                        anchors.right: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(28, Math.max(0, promptCaretWrap.x - prompt.leftPadding)) * Math.min(1, composer.typingEnergy * 1.4)
+                        height: parent.height
+                        radius: 4
+                        visible: width > 2
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "#00ffffff" }
+                            GradientStop { position: 1.0; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#30a8d8ff" }
+                        }
+                    }
+
+                    // Halo ambiental suave alrededor del cursor
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 12 + 4 * composer.typingEnergy
+                        height: parent.height + 6
+                        radius: 6
+                        color: GemaTheme.synced ? GemaTheme.accentAlpha(0.18 + 0.16 * composer.typingEnergy) : "#28a8d8ff"
+                    }
+
+                    // Núcleo luminoso del cursor
+                    Rectangle {
+                        id: promptCaretCore
+                        anchors.fill: parent
+                        radius: 1.2
+                        color: GemaTheme.synced ? GemaTheme.accent : "#a8d8ff"
+                        opacity: 1.0
+                        SequentialAnimation on opacity {
+                            running: promptCaretWrap.visible && GemaTheme.animations && composer.typingEnergy < 0.05
+                            loops: Animation.Infinite
+                            onRunningChanged: if (!running) promptCaretCore.opacity = 1.0
+                            NumberAnimation { from: 1.0; to: 0.28; duration: 520; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 0.28; to: 1.0; duration: 520; easing.type: Easing.InOutSine }
+                        }
+                    }
+                }
                 // Placeholder animado con desvanecimiento y desplazamiento suave al escribir
                 Text {
                     anchors.left: parent.left
