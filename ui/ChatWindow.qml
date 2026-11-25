@@ -806,10 +806,7 @@ NativeWindow {
                 edgeColor: "#00000000"
                 waterReflection: false
                 bridge: window.bridge
-                onHistoryRequested: { narrowSidebar.close(); historyPanel.open(); }
-                onPerformanceRequested: { narrowSidebar.close(); window.openPerformance(); }
                 onSettingsRequested: { narrowSidebar.close(); settingsDialog.open(); }
-                onShellRequested: { narrowSidebar.close(); shellSettings.open(); }
                 onProjectRequested: { narrowSidebar.close(); projectDialog.open(); }
                 onDeleteRequested: (chatId, title) => {
                     narrowSidebar.close();

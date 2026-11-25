@@ -8,10 +8,7 @@ import "../shared"
 MattePanel {
     id: sidebar
     required property AgentBridge bridge
-    signal historyRequested()
-    signal performanceRequested()
     signal settingsRequested()
-    signal shellRequested()
     signal projectRequested()
     signal deleteRequested(string chatId, string title)
 
@@ -95,26 +92,15 @@ MattePanel {
             }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#22ffffff" }
-        RowLayout {
+        Text {
             Layout.fillWidth: true
-            Text {
-                Layout.fillWidth: true
-                text: "CONVERSACIONES"
-                color: GemaTheme.mutedColor
-                font.pixelSize: 10
-                font.weight: Font.Bold
-                font.letterSpacing: 1.1
-                style: Text.Raised
-                styleColor: GemaTheme.textShadow
-            }
-            ActionButton {
-                text: "Ver todas"
-                font.pixelSize: 11
-                horizontalPadding: 8
-                verticalPadding: 6
-                enabled: sidebar.bridge.historyReady
-                onClicked: sidebar.historyRequested()
-            }
+            text: "CONVERSACIONES"
+            color: GemaTheme.mutedColor
+            font.pixelSize: 10
+            font.weight: Font.Bold
+            font.letterSpacing: 1.1
+            style: Text.Raised
+            styleColor: GemaTheme.textShadow
         }
         Text {
             Layout.fillWidth: true
@@ -143,18 +129,6 @@ MattePanel {
                 onClicked: sidebar.bridge.openChat(chatId)
                 onDeleteRequested: (chatId, title) => sidebar.deleteRequested(chatId, title)
             }
-        }
-        ActionButton {
-            Layout.fillWidth: true
-            text: "Rendimiento"
-            enabled: sidebar.bridge.historyReady
-            onClicked: sidebar.performanceRequested()
-        }
-        ActionButton {
-            Layout.fillWidth: true
-            text: "Terminal"
-            enabled: sidebar.bridge.canSelectArea && sidebar.bridge.workspaceSelected
-            onClicked: sidebar.shellRequested()
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
         Button {
