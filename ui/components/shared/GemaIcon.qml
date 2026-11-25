@@ -165,6 +165,20 @@ Item {
                     ctx.restore();
                     ctx.stroke();
                 }
+            } else if (root.name === "usage") {
+                // Medidor circular minimalista de cuota / crédito
+                ctx.beginPath();
+                ctx.arc(12, 13, 7.6, Math.PI * 0.78, Math.PI * 2.22, false);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(12, 13);
+                ctx.lineTo(16.2, 9.2);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(12, 13, 1.8, 0, Math.PI * 2);
+                ctx.fill();
             } else if (root.name === "system") {
                 // Nodo de sistema minimalista
                 ctx.beginPath();

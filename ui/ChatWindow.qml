@@ -40,6 +40,33 @@ NativeWindow {
     readonly property bool projectOpen: (bridge.activeArea === "work" || bridge.activeArea === "app") && !!bridge.projectId
     property bool sidebarKeyboardOpen: false
     property bool showUnifiedTeamWindow: false
+    property bool usagePreferred: true
+    readonly property bool usageVisible: bridge.unifiedMode ? unifiedUsage.shown : usageWindow.visible
+    onUsageVisibleChanged: {
+        if (!usageVisible) scheduleMainResize();
+        else { mainPlacementDelay.stop(); mainPlacement.running = false; }
+    }
+    function scheduleMainResize() {
+        if (window.visible && window.title
+            && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen")
+            mainPlacementDelay.restart();
+    }
+    Timer {
+        id: mainPlacementDelay
+        interval: 160
+        onTriggered: {
+            if (!window.visible || window.usageVisible || !window.title) return;
+            mainPlacement.running = false;
+            mainPlacement.command = [NativeApp.pythonExecutable,
+                NativeApp.placementScript,
+                String(NativeApp.processId), window.title, "3", window.title];
+            mainPlacement.running = true;
+        }
+    }
+    NativeProcess {
+        id: mainPlacement
+        errorOutput: LineParser { onRead: data => console.warn("Posición principal: " + data) }
+    }
     readonly property bool accountControlsEnabled: bridge.ready && !bridge.busy && !bridge.loginBusy && !bridge.accountBusy && !bridge.projectRunPreparing
     property string performanceModel: ""
     property double elapsedMs: 0
@@ -75,8 +102,21 @@ NativeWindow {
         onClosedByUser: window.showUnifiedTeamWindow = false
     }
     function openUsage() {
+        usagePreferred = true;
         if (bridge.unifiedMode) unifiedUsage.open();
         else usageWindow.open();
+    }
+    function toggleUsage() {
+        if (usageVisible) {
+            usagePreferred = false;
+            usageWindow.close();
+            unifiedUsage.close();
+        } else {
+            usagePreferred = true;
+            if (bridge.unifiedMode) unifiedUsage.open();
+            else usageWindow.open();
+        }
+        keepChatFocus();
     }
     function keepChatFocus() {
         Qt.callLater(function() {
@@ -87,7 +127,10 @@ NativeWindow {
     Connections {
         target: window.bridge
         function onUnifiedModeChanged() {
-            if (window.bridge.unifiedMode) {
+            if (!window.usagePreferred) {
+                window.usageWindow.close();
+                window.unifiedUsage.close();
+            } else if (window.bridge.unifiedMode) {
                 window.usageWindow.close();
                 window.unifiedUsage.open();
             } else {
@@ -262,6 +305,52 @@ NativeWindow {
                         edgeColor: (sidebarToggleButton.hovered || narrowSidebar.visible)
                             ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#58ffffff")
                             : "#32ffffff"
+                    }
+                }
+
+                // Botón superior izquierdo junto a la barra lateral para mostrar u ocultar el uso del crédito.
+                Button {
+                    id: usageToggleButton
+                    objectName: "usageToggleButton"
+                    anchors.left: sidebarToggleButton.right
+                    anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 32
+                    implicitHeight: 32
+                    padding: 0
+                    hoverEnabled: true
+                    enabled: !window.dialogVisible
+                    scale: down ? 0.90 : (hovered ? 1.08 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+                    Accessible.name: window.usageVisible ? "Ocultar ventana de uso del crédito" : "Mostrar ventana de uso del crédito"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 300
+                    ToolTip.text: window.usageVisible
+                        ? "Ocultar ventana de uso del crédito"
+                        : "Mostrar ventana de uso del crédito"
+                    onClicked: window.toggleUsage()
+                    contentItem: Item {
+                        GemaIcon {
+                            anchors.centerIn: parent
+                            name: "usage"
+                            size: 16
+                            color: window.usageVisible
+                                ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                : (usageToggleButton.hovered ? "#e0e6f0" : GemaTheme.subtleColor)
+                            Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                        }
+                    }
+                    background: GlassPanel {
+                        radius: 16
+                        reflective: true
+                        highlighted: usageToggleButton.hovered || window.usageVisible
+                        topColor: window.usageVisible
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#2cffffff")
+                            : usageToggleButton.hovered ? "#1effffff" : "#14ffffff"
+                        bottomColor: "#0affffff"
+                        edgeColor: window.usageVisible
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#58ffffff")
+                            : usageToggleButton.hovered ? "#40ffffff" : "#28ffffff"
                     }
                 }
 
