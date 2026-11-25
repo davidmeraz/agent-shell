@@ -101,6 +101,9 @@ NativeWindow {
         onConfigureRequested: unifiedConfigDialog.open()
         onClosedByUser: window.showUnifiedTeamWindow = false
     }
+    readonly property ImagePreviewWindow imagePreviewWindow: ImagePreviewWindow {
+        mainWindowTitle: window.title
+    }
     function openUsage() {
         usagePreferred = true;
         if (bridge.unifiedMode) unifiedUsage.open();
@@ -513,59 +516,87 @@ NativeWindow {
                 }
             }
 
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumWidth: 0
                 visible: window.bridge.workspaceSelected
                 spacing: 6
 
-                ColumnLayout {
+                Text {
+                    objectName: "workRunStatus"
+                    // Los resultados normales siguen en el tooltip de Ejecutar.
+                    visible: window.projectOpen && text.length > 0
+                        && (window.bridge.projectRunPending || !!window.bridge.projectRunNotice
+                            || (window.bridge.projectRunHere && (window.bridge.projectRunActive
+                                || window.bridge.projectRun.phase === "failed")))
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: window.bridge.projectRunPending ? "Detectando cómo ejecutar…"
+                          : window.bridge.projectRunHere ? window.bridge.projectRunNotice || window.bridge.projectRun.message
+                          : window.bridge.projectRunNotice
+                    textFormat: Text.PlainText
+                    color: "#888888"
+                    font.pixelSize: 10
+                    elide: Text.ElideMiddle
+                }
+                ConversationPane {
+                    objectName: "chatConversation"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumWidth: 0
-                    spacing: 6
-
-                    Text {
-                        objectName: "workRunStatus"
-                        // Los resultados normales siguen en el tooltip de Ejecutar.
-                        visible: window.projectOpen && text.length > 0
-                            && (window.bridge.projectRunPending || !!window.bridge.projectRunNotice
-                                || (window.bridge.projectRunHere && (window.bridge.projectRunActive
-                                    || window.bridge.projectRun.phase === "failed")))
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: window.bridge.projectRunPending ? "Detectando cómo ejecutar…"
-                              : window.bridge.projectRunHere ? window.bridge.projectRunNotice || window.bridge.projectRun.message
-                              : window.bridge.projectRunNotice
-                        textFormat: Text.PlainText
-                        color: "#888888"
-                        font.pixelSize: 10
-                        elide: Text.ElideMiddle
-                    }
-                    ConversationPane {
-                        objectName: "chatConversation"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumHeight: 140
-                        bridge: window.bridge
-                        onPerformanceRequested: measurement => window.showPerformance(measurement)
-                        onSuggestionRequested: text => composer.prepare(text)
-                        onLoginRequested: window.bridge.login()
-                        onAccountRequested: accountPanel.open()
-                    }
+                    Layout.minimumHeight: 140
+                    bridge: window.bridge
+                    onPerformanceRequested: measurement => window.showPerformance(measurement)
+                    onSuggestionRequested: text => composer.prepare(text)
+                    onLoginRequested: window.bridge.login()
+                    onAccountRequested: accountPanel.open()
+                    onImagePreviewRequested: url => window.imagePreviewWindow.openImage(url)
                 }
+            }
+            WorkProjects {
+                objectName: "workProjects"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: !window.bridge.workspaceSelected
+                bridge: window.bridge
+                onNewProjectRequested: projectDialog.open()
+                onRenameProjectRequested: (projectId, name) => {
+                    window.projectToRename = ({ project_id: projectId, name: name });
+                    renameProjectInput.text = name;
+                    renameProjectDialog.open();
+                    Qt.callLater(() => {
+                        renameProjectInput.forceActiveFocus();
+                        renameProjectInput.selectAll();
+                    });
+                }
+                onDeleteProjectRequested: (projectId, name, workdir) => {
+                    window.projectToDelete = ({ project_id: projectId, name: name, workdir: workdir });
+                    deleteProjectDialog.open();
+                }
+            }
+
+            // Barra inferior alineada: Explorador + Apps/Proyectos a la izquierda, Proveedor al centro, Git + Ejecutar a la derecha.
+            Item {
+                id: bottomControlStrip
+                Layout.fillWidth: true
+                Layout.topMargin: -4
+                Layout.bottomMargin: -2
+                readonly property bool showProviders: window.bridge.workspaceSelected
+                    && (window.bridge.agyAvailable || window.bridge.claudeAvailable)
+                    && !window.bridge.unifiedMode
+                visible: window.bridge.workspaceSelected && (window.projectOpen || showProviders)
+                implicitHeight: Math.max(window.projectOpen ? 32 : 0, showProviders ? providerSwitcher.implicitHeight : 0)
+
                 Item {
                     id: projectActionsPanel
                     objectName: "workProjectActions"
-                    Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                    anchors.fill: parent
                     visible: window.projectOpen
-                    implicitWidth: projectActions.implicitWidth
-                    implicitHeight: projectActions.implicitHeight
 
-                    ColumnLayout {
-                        id: projectActions
-                        anchors.fill: parent
-                        spacing: 6
+                    Row {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
 
                         ProjectActionButton {
                             objectName: "workExplorerButton"
@@ -578,6 +609,22 @@ NativeWindow {
                             ToolTip.text: Accessible.name
                             onClicked: window.explorerWindow.visible = !window.explorerWindow.visible
                         }
+                        ProjectActionButton {
+                            objectName: "workProjectsButton"
+                            text: window.bridge.activeArea === "app" ? "Apps" : "Proyectos"
+                            glyph: ProjectActionButton.Projects
+                            Accessible.name: "Volver a " + text
+                            ToolTip.text: Accessible.name
+                            enabled: window.bridge.canSelectArea
+                            onClicked: window.bridge.selectArea(window.bridge.activeArea, "")
+                        }
+                    }
+
+                    Row {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+
                         ProjectActionButton {
                             objectName: "workGitButton"
                             text: "Git"
@@ -619,46 +666,15 @@ NativeWindow {
                                 else window.bridge.runProject();
                             }
                         }
-                        ProjectActionButton {
-                            objectName: "workProjectsButton"
-                            text: window.bridge.activeArea === "app" ? "Apps" : "Proyectos"
-                            glyph: ProjectActionButton.Projects
-                            Accessible.name: "Volver a " + text
-                            ToolTip.text: Accessible.name
-                            enabled: window.bridge.canSelectArea
-                            onClicked: window.bridge.selectArea(window.bridge.activeArea, "")
-                        }
                     }
                 }
-            }
-            WorkProjects {
-                objectName: "workProjects"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: !window.bridge.workspaceSelected
-                bridge: window.bridge
-                onNewProjectRequested: projectDialog.open()
-                onRenameProjectRequested: (projectId, name) => {
-                    window.projectToRename = ({ project_id: projectId, name: name });
-                    renameProjectInput.text = name;
-                    renameProjectDialog.open();
-                    Qt.callLater(() => {
-                        renameProjectInput.forceActiveFocus();
-                        renameProjectInput.selectAll();
-                    });
-                }
-                onDeleteProjectRequested: (projectId, name, workdir) => {
-                    window.projectToDelete = ({ project_id: projectId, name: name, workdir: workdir });
-                    deleteProjectDialog.open();
-                }
-            }
 
-            ProviderSwitcher {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: -6
-                Layout.bottomMargin: -4
-                visible: window.bridge.workspaceSelected && (window.bridge.agyAvailable || window.bridge.claudeAvailable) && !window.bridge.unifiedMode
-                bridge: window.bridge
+                ProviderSwitcher {
+                    id: providerSwitcher
+                    anchors.centerIn: parent
+                    visible: bottomControlStrip.showProviders
+                    bridge: window.bridge
+                }
             }
 
             MessageComposer {
@@ -669,6 +685,7 @@ NativeWindow {
                 compact: window.height < 680
                 statusText: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
                 onPerformanceRequested: measurement => window.showPerformance(measurement)
+                onImagePreviewRequested: url => window.imagePreviewWindow.openImage(url)
             }
         }
     }

@@ -18,6 +18,7 @@ PROVIDER_USAGE_ROLE = 21
 AGENT_ROLES = tuple(range(22, 26))
 AGENT_PREPARE = "--prepare-agents"
 AGENT_PLACE = "--place-agents"
+CENTER_WINDOW = "--center-window"
 AGENT_TITLE_PREFIX = "Agent Shell · Agente · "
 AGENT_WIDTH_MAX = 480
 AGENT_WIDTH_MIN = 360
@@ -340,12 +341,52 @@ def place(pid: int, title: str, viewer_id: int, main_title: str = "") -> bool:
     return False
 
 
+def center_window(pid: int, title: str, width: int, height: int, main_title: str = "") -> bool:
+    """Flota y centra una ventana limpia (ej. vista previa de imagen) en el monitor del chat."""
+    width = max(120, width)
+    height = max(120, height)
+    for _ in range(20):
+        clients = json.loads(hyprctl("-j", "clients"))
+        client = next((c for c in clients if c.get("pid") == pid and c.get("title") == title
+                       and c.get("mapped", True)), None)
+        mains = [c for c in clients if c.get("pid") == pid and c.get("title") == main_title
+                 and c.get("mapped", True)] if main_title else []
+        main = mains[0] if len(mains) == 1 else None
+        if client and (not main_title or main):
+            monitors = json.loads(hyprctl("-j", "monitors"))
+            anchor = main or client
+            monitor = next((m for m in monitors if m["id"] == anchor["monitor"]), None)
+            if monitor:
+                scale = monitor.get("scale", 1) or 1
+                mw, mh = monitor["width"], monitor["height"]
+                if monitor.get("transform", 0) % 2:
+                    mw, mh = mh, mw
+                res_l, res_t, res_r, res_b = monitor.get("reserved", [0, 0, 0, 0])
+                usable_w = max(1, round(mw / scale) - res_l - res_r)
+                usable_h = max(1, round(mh / scale) - res_t - res_b)
+                fit_w = min(usable_w - 32, width) if usable_w > 160 else usable_w
+                fit_h = min(usable_h - 32, height) if usable_h > 160 else usable_h
+                x = monitor["x"] + res_l + max(0, (usable_w - fit_w) // 2)
+                y = monitor["y"] + res_t + max(0, (usable_h - fit_h) // 2)
+                _apply_placements([(client, (x, y, fit_w, fit_h))], main)
+                return True
+        time.sleep(.05)
+    return False
+
+
 def main() -> int:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not shutil.which("hyprctl"):
         return 0
     try:
         if sys.argv[1:] == [AGENT_PREPARE]:
             prepare_agent_windows()
+            return 0
+        if len(sys.argv) in (6, 7) and sys.argv[1] == CENTER_WINDOW:
+            pid, title = int(sys.argv[2]), sys.argv[3]
+            width, height = int(sys.argv[4]), int(sys.argv[5])
+            main_title = sys.argv[6] if len(sys.argv) > 6 else ""
+            if not center_window(pid, title, width, height, main_title):
+                raise RuntimeError("No se encontró la ventana a centrar en el compositor")
             return 0
         if len(sys.argv) == 5 and sys.argv[1] == AGENT_PLACE:
             pid, main_title = int(sys.argv[2]), sys.argv[3]

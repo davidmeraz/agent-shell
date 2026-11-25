@@ -13,6 +13,7 @@ GlassPanel {
     signal suggestionRequested(string text)
     signal loginRequested()
     signal accountRequested()
+    signal imagePreviewRequested(string imageUrl)
     radius: 16
     topColor: "#00000000"
     bottomColor: "#00000000"
@@ -511,6 +512,7 @@ GlassPanel {
                     }
                 }
                 Image {
+                    id: messageImage
                     objectName: "chatMessageImage"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(220, implicitHeight * width / Math.max(1, implicitWidth))
@@ -521,6 +523,16 @@ GlassPanel {
                     cache: false
                     asynchronous: true
                     Accessible.name: "Imagen enviada"
+                    MouseArea {
+                        id: msgImageMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: pane.imagePreviewRequested(message.imageUrl)
+                    }
+                    ToolTip.visible: msgImageMouse.containsMouse
+                    ToolTip.delay: 350
+                    ToolTip.text: "Clic para ver en grande"
                 }
                 RowLayout {
                     Layout.fillWidth: true

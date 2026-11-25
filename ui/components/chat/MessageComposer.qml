@@ -21,6 +21,7 @@ GlassPanel {
     property string pendingPasteId: ""
     property bool areaTransition: false
     signal performanceRequested(var measurement)
+    signal imagePreviewRequested(string imageUrl)
     readonly property var contextMeasurement: bridge.latestPerformance
     readonly property string contextModel: unified ? (architect.model || "") : bridge.modelName
     readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
@@ -192,9 +193,13 @@ GlassPanel {
             visible: !!composer.attachedImage || !!composer.pendingPasteId
             spacing: 10
             GlassPanel {
+                id: attachmentThumbBox
                 implicitWidth: 48
                 implicitHeight: 48
                 radius: 8
+                highlighted: thumbMouse.containsMouse && !!composer.attachedImage
+                scale: thumbMouse.pressed ? 0.95 : (thumbMouse.containsMouse && !!composer.attachedImage ? 1.05 : 1.0)
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
                 Image {
                     objectName: "chatAttachmentThumbnail"
                     anchors.fill: parent
@@ -205,6 +210,17 @@ GlassPanel {
                     cache: false
                     asynchronous: true
                 }
+                MouseArea {
+                    id: thumbMouse
+                    anchors.fill: parent
+                    enabled: !!composer.attachedImage && !composer.pendingPasteId
+                    hoverEnabled: true
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: composer.imagePreviewRequested(composer.attachedImage)
+                }
+                ToolTip.visible: thumbMouse.containsMouse && !!composer.attachedImage
+                ToolTip.delay: 350
+                ToolTip.text: "Ver imagen en grande"
                 BusyIndicator { anchors.centerIn: parent; width: 24; height: 24; running: !!composer.pendingPasteId; visible: running }
             }
             Text {

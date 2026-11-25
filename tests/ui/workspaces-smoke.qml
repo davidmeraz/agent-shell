@@ -48,19 +48,19 @@ NativeScope {
         const railPosition = actions.mapToItem(chat.contentItem, 0, 0);
         const conversationPosition = conversation.mapToItem(chat.contentItem, 0, 0);
         if (!check(actions.visible && conversation.visible
-            && railPosition.x >= conversationPosition.x + conversation.width,
-            "la barra de acciones no está a la derecha de la conversación")) return false;
+            && railPosition.y >= conversationPosition.y + conversation.height,
+            "la barra de acciones no está debajo de la conversación")) return false;
+        let firstY = -1;
         let previousX = -1;
-        let previousY = -1;
-        for (const name of ["workExplorerButton", "workGitButton", "workRunButton", "workProjectsButton"]) {
+        for (const name of ["workExplorerButton", "workProjectsButton", "workGitButton", "workRunButton"]) {
             const button = inspector.findChild(actions, name);
             if (!check(button && button.visible && button.width === 32 && button.height === 32,
                 "el grupo no contiene el botón compacto " + name)) return false;
             const buttonPosition = button.mapToItem(chat.contentItem, 0, 0);
-            if (!check(previousX < 0 || (Math.abs(buttonPosition.x - previousX) < 1 && buttonPosition.y > previousY),
-                "las acciones no forman una columna: " + name)) return false;
+            if (firstY < 0) firstY = buttonPosition.y;
+            if (!check(Math.abs(buttonPosition.y - firstY) < 1 && buttonPosition.x > previousX,
+                "las acciones no están alineadas horizontalmente en los bordes: " + name)) return false;
             previousX = buttonPosition.x;
-            previousY = buttonPosition.y;
         }
         return true;
     }
