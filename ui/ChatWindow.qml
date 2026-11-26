@@ -27,6 +27,7 @@ NativeWindow {
     visible: true
     property var selectedPerformance: ({})
     property var chatToDelete: ({})
+    property var chatToRename: ({})
     property var projectToDelete: ({})
     property var projectToRename: ({})
     property var accountToRemove: ({})
@@ -34,7 +35,7 @@ NativeWindow {
                                            || accountPanel.visible || removeAccountDialog.visible || planWelcome.visible || performanceDetails.visible || deleteDialog.visible
                                            || settingsDialog.visible || shellSettings.visible || limitsDialog.visible || unifiedConfigDialog.visible
                                            || commandHelp.visible
-                                           || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible
+                                           || projectDialog.visible || deleteProjectDialog.visible || renameProjectDialog.visible || renameChatDialog.visible
     readonly property bool overlayVisible: narrowSidebar.visible || dialogVisible
     readonly property bool wideLayout: width >= 880
     readonly property bool projectOpen: (bridge.activeArea === "work" || bridge.activeArea === "app") && !!bridge.projectId
@@ -182,6 +183,17 @@ NativeWindow {
         if (!bridge.canBrowseHistory) return;
         chatToDelete = ({ chat_id: chatId, title: title });
         deleteDialog.open();
+    }
+
+    function requestRenameChat(chatId, title) {
+        if (!bridge.canBrowseHistory || !chatId) return;
+        chatToRename = ({ chat_id: chatId, title: title });
+        renameChatInput.text = title;
+        renameChatDialog.open();
+        Qt.callLater(() => {
+            renameChatInput.forceActiveFocus();
+            renameChatInput.selectAll();
+        });
     }
 
     function requestRemoveAccount() {
@@ -874,6 +886,65 @@ NativeWindow {
             }
         }
     }
+    GlassDialog {
+        id: renameChatDialog
+        objectName: "renameChatDialog"
+        title: "Renombrar conversación"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(420, window.width - 40)
+        function submitRename() {
+            const cleaned = renameChatInput.text.trim();
+            if (!cleaned || cleaned.length > 48) return;
+            window.bridge.renameChat(window.chatToRename.chat_id, cleaned);
+            renameChatDialog.close();
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                Layout.fillWidth: true
+                text: "Nuevo título (máx. 48 caracteres)"
+                color: GemaTheme.mutedColor
+                font.pixelSize: 12
+            }
+            GlassPanel {
+                Layout.fillWidth: true
+                implicitHeight: 38
+                radius: 10
+                highlighted: renameChatInput.activeFocus
+                TextInput {
+                    id: renameChatInput
+                    objectName: "renameChatInput"
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    verticalAlignment: TextInput.AlignVCenter
+                    maximumLength: 48
+                    color: "#f5f5f5"
+                    selectionColor: "#ffffff"
+                    selectedTextColor: "#000000"
+                    font.pixelSize: 13
+                    selectByMouse: true
+                    onAccepted: renameChatDialog.submitRename()
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: null
+            ActionButton {
+                text: "Cancelar"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ActionButton {
+                objectName: "confirmRenameChat"
+                text: "Guardar"
+                accent: true
+                enabled: window.bridge.canBrowseHistory && renameChatInput.text.trim().length > 0
+                onClicked: renameChatDialog.submitRename()
+            }
+        }
+    }
     Drawer {
         id: narrowSidebar
         objectName: "chatSidebarDrawer"
@@ -910,6 +981,10 @@ NativeWindow {
                 waterReflection: false
                 bridge: window.bridge
                 onSettingsRequested: { narrowSidebar.close(); settingsDialog.open(); }
+                onRenameRequested: (chatId, title) => {
+                    narrowSidebar.close();
+                    window.requestRenameChat(chatId, title);
+                }
                 onDeleteRequested: (chatId, title) => {
                     narrowSidebar.close();
                     window.requestDeleteChat(chatId, title);

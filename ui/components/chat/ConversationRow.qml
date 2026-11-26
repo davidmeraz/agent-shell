@@ -9,19 +9,21 @@ ItemDelegate {
     required property string title
     required property string updatedAt
     property bool selected: false
+    signal renameRequested(string chatId, string title)
     signal deleteRequested(string chatId, string title)
-    padding: 10
+    padding: 9
     font.pixelSize: 12
     contentItem: RowLayout {
-        spacing: 8
+        spacing: 6
         ColumnLayout {
             Layout.fillWidth: true
             Layout.minimumWidth: 0
-            spacing: 5
+            spacing: 4
             Text {
                 Layout.fillWidth: true
                 text: row.title
                 textFormat: Text.PlainText
+                maximumLineCount: 1
                 elide: Text.ElideRight
                 color: row.selected ? "#ffffff" : GemaTheme.textColor
                 font.pixelSize: row.font.pixelSize
@@ -32,6 +34,7 @@ ItemDelegate {
             Text {
                 Layout.fillWidth: true
                 text: new Date(row.updatedAt).toLocaleDateString()
+                maximumLineCount: 1
                 elide: Text.ElideRight
                 color: GemaTheme.subtleColor
                 font.pixelSize: 10
@@ -40,11 +43,52 @@ ItemDelegate {
             }
         }
         ActionButton {
+            id: renameButton
+            objectName: "chatRenameButton"
+            implicitWidth: 26
+            implicitHeight: 26
+            horizontalPadding: 5
+            verticalPadding: 5
+            Accessible.name: "Renombrar conversación: " + row.title
+            ToolTip.visible: hovered
+            ToolTip.delay: 400
+            ToolTip.text: "Editar título"
+            onClicked: row.renameRequested(row.chatId, row.title)
+            contentItem: Item {
+                Item {
+                    anchors.centerIn: parent
+                    width: 12
+                    height: 12
+                    rotation: -45
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 2.5
+                        width: 7
+                        height: 3.5
+                        radius: 1
+                        color: "transparent"
+                        border.width: 1
+                        border.color: renameButton.hovered ? "#ffffff" : "#aaaaaa"
+                    }
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 0
+                        width: 2.5
+                        height: 2
+                        radius: 0.8
+                        color: "transparent"
+                        border.width: 1
+                        border.color: renameButton.hovered ? "#ffffff" : "#aaaaaa"
+                    }
+                }
+            }
+        }
+        ActionButton {
             id: deleteButton
-            implicitWidth: 30
-            implicitHeight: 30
-            horizontalPadding: 7
-            verticalPadding: 7
+            implicitWidth: 26
+            implicitHeight: 26
+            horizontalPadding: 5
+            verticalPadding: 5
             Accessible.name: "Borrar conversación: " + row.title
             ToolTip.visible: hovered
             ToolTip.delay: 400
@@ -55,21 +99,21 @@ ItemDelegate {
                 Rectangle {
                     anchors.centerIn: parent
                     anchors.verticalCenterOffset: 2
-                    width: 10; height: 11; radius: 2
+                    width: 9; height: 10; radius: 2
                     color: "transparent"
                     border.width: 1
                     border.color: deleteButton.hovered ? "#ffffff" : "#aaaaaa"
                 }
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: parent.height / 2 - 5
-                    width: 14; height: 1
+                    y: parent.height / 2 - 4.5
+                    width: 12; height: 1
                     color: deleteButton.hovered ? "#ffffff" : "#aaaaaa"
                 }
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: parent.height / 2 - 8
-                    width: 6; height: 3; radius: 1
+                    y: parent.height / 2 - 7
+                    width: 5; height: 2.5; radius: 1
                     color: "transparent"
                     border.width: 1
                     border.color: deleteButton.hovered ? "#ffffff" : "#aaaaaa"

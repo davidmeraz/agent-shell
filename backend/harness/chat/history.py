@@ -20,8 +20,22 @@ from .images import validate_image
 from .performance import safe_measurement
 
 
+MAX_AUTO_TITLE_LEN = 38
+MAX_MANUAL_TITLE_LEN = 48
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def compact_title(text: str, limit: int = MAX_AUTO_TITLE_LEN) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    cut = cleaned[:limit].rstrip()
+    if " " in cut and cut.rfind(" ") >= limit // 2:
+        cut = cut[:cut.rfind(" ")].rstrip()
+    return cut + "…"
 
 
 def _validate_record(chat_id: str, record: dict) -> dict:
@@ -268,12 +282,23 @@ class HistoryStore:
         timestamp = now()
         record = {
             "schema_version": 1, "chat_id": uuid.uuid4().hex,
-            "title": " ".join(prompt.split())[:72],
+            "title": compact_title(prompt),
             "created_at": timestamp, "updated_at": timestamp,
             "thread_id": None, "model": "", "messages": [],
             "area": area, "project_id": project_id, "compaction_count": 0,
         }
         self.save(record)
+        return record
+
+    def rename(self, chat_id: str, title: str) -> dict:
+        if not isinstance(title, str) or "\0" in title:
+            raise ValueError("Escribe un título válido para la conversación")
+        cleaned = " ".join(title.split())
+        if not cleaned or len(cleaned) > MAX_MANUAL_TITLE_LEN:
+            raise ValueError(f"El título debe tener entre 1 y {MAX_MANUAL_TITLE_LEN} caracteres")
+        record = self.load(chat_id)
+        record["title"] = cleaned
+        self._upsert_record(record, preserve_updated_at=True)
         return record
 
     def save(self, record: dict) -> None:

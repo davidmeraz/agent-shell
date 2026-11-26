@@ -9,6 +9,7 @@ MattePanel {
     id: sidebar
     required property AgentBridge bridge
     signal settingsRequested()
+    signal renameRequested(string chatId, string title)
     signal deleteRequested(string chatId, string title)
 
     ColumnLayout {
@@ -86,7 +87,56 @@ MattePanel {
                 selected: chatId === sidebar.bridge.currentChatId
                 enabled: sidebar.bridge.canBrowseHistory
                 onClicked: sidebar.bridge.openChat(chatId)
+                onRenameRequested: (chatId, title) => sidebar.renameRequested(chatId, title)
                 onDeleteRequested: (chatId, title) => sidebar.deleteRequested(chatId, title)
+            }
+            footer: Item {
+                width: recentChats.width
+                height: sidebar.bridge.workspaceSelected ? (newChatCard.implicitHeight + (recentChats.count > 0 ? 8 : 0)) : 0
+                visible: sidebar.bridge.workspaceSelected
+
+                ItemDelegate {
+                    id: newChatCard
+                    objectName: "chatSidebarNewChat"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    implicitHeight: 40
+                    hoverEnabled: true
+                    enabled: sidebar.bridge.canBrowseHistory
+                    scale: down ? 0.985 : (hovered ? 1.01 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 130 : 0; easing.type: Easing.OutCubic } }
+                    Accessible.name: "Nuevo chat"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 350
+                    ToolTip.text: "Nueva conversación"
+                    onClicked: sidebar.bridge.newChat()
+
+                    contentItem: Item {
+                        GemaIcon {
+                            anchors.centerIn: parent
+                            name: "plus"
+                            size: 16
+                            color: newChatCard.hovered
+                                   ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff")
+                                   : GemaTheme.mutedColor
+                            Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                        }
+                    }
+
+                    background: GlassPanel {
+                        radius: 10
+                        reflective: newChatCard.hovered
+                        highlighted: newChatCard.activeFocus || newChatCard.hovered
+                        topColor: newChatCard.hovered
+                                  ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#22ffffff")
+                                  : "#0effffff"
+                        bottomColor: "#0a060a10"
+                        edgeColor: newChatCard.hovered
+                                   ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#50ffffff")
+                                   : "#26ffffff"
+                    }
+                }
             }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }

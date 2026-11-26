@@ -377,6 +377,11 @@ QtObject {
         sendCommand({ type: "chat.delete", chat_id: chatId });
     }
 
+    function renameChat(chatId, title) {
+        if (!canBrowseHistory || !chatId) return;
+        sendCommand({ type: "chat.rename", chat_id: chatId, title: title });
+    }
+
     function configureShell(workdir) {
         if (!ready || busy || loginBusy) return;
         sendCommand({ type: "shell.configure", workdir: workdir });
@@ -776,6 +781,12 @@ QtObject {
                 if (conversations.get(i).chatId === data.chat_id) conversations.remove(i);
             performanceHistory = performanceHistory.filter(row => row.chat_id !== data.chat_id);
             status = "Conversación borrada del historial local.";
+        } else if (event.type === "chat.renamed") {
+            if (currentChatId === data.chat_id) currentTitle = data.title;
+            for (let i = 0; i < conversations.count; ++i)
+                if (conversations.get(i).chatId === data.chat_id)
+                    conversations.setProperty(i, "title", data.title);
+            status = "Título de conversación actualizado.";
         } else if (event.type === "chat.loaded") {
             messages.clear();
             messageRows = ({});

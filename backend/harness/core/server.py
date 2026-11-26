@@ -1301,6 +1301,19 @@ class HarnessServer:
         self._publish_history()
         self._publish_performance()
 
+    def _rename_chat(self, chat_id: str, title: str) -> None:
+        if not self._matches_area(self.history.load(chat_id)):
+            raise ValueError("La conversación pertenece a otro espacio de trabajo")
+        updated = self.history.rename(chat_id, title)
+        for key, record in list(self._area_chats.items()):
+            if record and record["chat_id"] == chat_id:
+                record["title"] = updated["title"]
+        if self.conversation is not None and self.conversation["chat_id"] == chat_id:
+            self.conversation["title"] = updated["title"]
+            self._emit("chat.saved", chat_id=chat_id, title=updated["title"])
+        self._emit("chat.renamed", chat_id=chat_id, title=updated["title"])
+        self._publish_history()
+
     def _save(self) -> None:
         if self.conversation is not None:
             try:
@@ -3082,7 +3095,7 @@ class HarnessServer:
             if action == "auth.cancel":
                 self._login_cancel.set()
                 return
-            if action in ("chat.new", "chat.open", "chat.delete", "history.list", "model.select"):
+            if action in ("chat.new", "chat.open", "chat.delete", "chat.rename", "history.list", "model.select"):
                 if self.busy or self.login_pending or (action == "model.select" and (self.account_pending or self.provider_pending)):
                     self._emit("error", message="Espera a que termine la operación actual")
                     return
@@ -3097,13 +3110,16 @@ class HarnessServer:
                         self._open_chat(request.get("chat_id"))
                     elif action == "chat.delete":
                         self._delete_chat(request.get("chat_id"))
+                    elif action == "chat.rename":
+                        self._rename_chat(request.get("chat_id"), request.get("title"))
                     elif action == "history.list":
                         self._publish_history()
                     else:
                         self._select_model(request)
                 except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
                     self._emit("error", message="No se pudo borrar la conversación. Vuelve a actualizar el historial e inténtalo de nuevo."
-                               if action == "chat.delete" else str(error) if action == "model.select" and isinstance(error, ValueError)
+                               if action == "chat.delete" else str(error) if action in ("model.select", "chat.rename") and isinstance(error, ValueError)
+                               else "No se pudo renombrar la conversación." if action == "chat.rename"
                                else "No se pudo guardar la selección de modelo." if action == "model.select"
                                else "No se pudo abrir la conversación guardada")
                 return
