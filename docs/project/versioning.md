@@ -5,7 +5,13 @@
 Agent Shell sigue [SemVer 2.0.0](https://semver.org/lang/es/) y comienza en **0.1.0**
 con el chat de Codex construido en Quickshell y Qt. La etiqueta local `v0.1.0`
 identifica el único commit inicial de esta base.
-La versión `0.27.0` añade el modo unificado con arquitecto y obreros, su configuración
+La versión `0.28.0` incorpora la terminal rápida estilo Linux con autocompletado `Tab` y comandos
+cortos `work`/`app`, el explorador nativo `GlassFolderDialog`, el rediseño minimalista del
+compositor con cursor luminoso Gema, barra lateral con renombrado de chats, ventana de perfil,
+visor de imágenes sin bordes, iconos vectoriales fijos `GemaIcon` y el visor de flujo Git
+refinado. Conserva NDJSON v2 y el esquema lógico 1; incrementa MENOR por las nuevas herramientas
+interactivas y mejoras visuales.
+La versión anterior `0.27.0` añade el modo unificado con arquitecto y obreros, su configuración
 persistente (`backend/harness/work/unified_config.py`), los motores Claude Code y
 Antigravity, y el runtime nativo Qt/Hyprland. Incrementa MENOR por las nuevas
 capacidades de delegación, motores e interfaz.

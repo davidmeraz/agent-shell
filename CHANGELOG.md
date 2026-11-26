@@ -5,6 +5,17 @@ Cada versión identificada corresponde a una etiqueta Git anotada `vX.Y.Z`.
 
 ## Sin publicar
 
+## [0.28.0] — 2026-11-25
+
+Esta versión renueva la experiencia visual y operativa de **Agent Shell** con terminal rápida integrada estilo Linux, explorador nativo de carpetas, rediseño minimalista del compositor, barra lateral, perfil y visor Git, e iconos vectoriales fijos Gema.
+
+- **Terminal rápida estilo Linux** (`QuickTerminalWindow.qml`, `server.py`): ventana flotante simétrica con prompt inline y foco automático, ejecución aislada con `ShellControl` sin contaminar el chat, autocompletado de rutas y comandos con `Tab` (`terminal.complete`) y comandos cortos `work [nombre]` y `app [nombre] [rust|python]`.
+- **Visor de flujo Git refinado** (`GitFlowWindow.qml`): cabecera simétrica sin barra de filtro, botones alineados, commits minimalistas con tipo/ámbito sin duplicar y metadatos a la derecha, paleta cian hielo (`#7dd3fc`) en lugar del amarillo, animaciones suaves al desplegar detalle y panel interactivo de cambios locales con badges de estado y apertura directa de archivos.
+- **Compositor de mensajes y paleta de comandos Gema** (`MessageComposer.qml`): botones circulares simétricos, auto-expansión del prompt, cursor luminoso Gema con estela y micro-onda al escribir, paleta de comandos con píldoras e indicadores `Tab`/`↵`, y botón dedicado para abrir la terminal rápida.
+- **Gestión de chats y barra lateral minimalista** (`ChatSidebar.qml`, `history.py`): botón `+` al pie de la lista de conversaciones, renombrado en vivo de chats (`chat.rename`), títulos compactos y limpieza de acciones redundantes.
+- **Espacios Work y App unificados y explorador nativo** (`WorkProjects.qml`, `GlassFolderDialog.qml`, `ProjectDialog.qml`): tarjetas minimalistas unificadas entre Work y App con tarjeta `+`, botón directo para iniciar/probar apps e instalar lanzador `.desktop`, conservación de la vista al cambiar de pestaña y nuevo diálogo nativo `GlassFolderDialog` (`fs.list` / `fs.mkdir`).
+- **Perfil, uso, visor de imágenes e iconos vectoriales** (`ChatWindow.qml`, `ImagePreviewWindow.qml`, `UnifiedTeamWindow.qml`, `GemaIcon.qml`): ventana de perfil y cuenta rediseñada, botón para mostrar/ocultar uso de crédito expandiendo la ventana principal, panel de equipo unificado como ventana flotante opcional en Ajustes, visor de imágenes centrado sin bordes e iconos vectoriales fijos `GemaIcon` inmunes a mutaciones de símbolo al cambiar tema en Hyprland.
+
 ## [0.27.0] — 2026-11-23
 
 Esta versión incorpora el modo unificado con arquitecto y obreros, los motores Claude Code y Antigravity, y su configuración persistente.

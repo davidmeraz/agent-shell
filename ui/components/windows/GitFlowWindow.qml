@@ -44,7 +44,6 @@ NativeWindow {
     property var commits: []
     property int graphLanes: 1
     property bool showPendingFiles: false
-    property string filterText: ""
     property string selectedHash: ""
     property var commitDetail: ({})
     property bool detailLoading: false
@@ -53,27 +52,16 @@ NativeWindow {
     property int serial: 0
     property bool hashCopied: false
 
+    readonly property color pendingAccent: "#7dd3fc"
+
     readonly property var laneColors: [
         GemaTheme.synced ? GemaTheme.accent : "#8be9fd",
         GemaTheme.codePalette.type || "#c8b6ff",
         GemaTheme.codePalette.func || "#86e8c8",
-        GemaTheme.codePalette.number || "#f6c177",
+        "#7dd3fc",
         GemaTheme.codePalette.decorator || "#f29cb8",
         GemaTheme.codePalette.string || "#a6e3a1"
     ]
-
-    readonly property var filteredCommits: {
-        const q = (filterText || "").trim().toLowerCase();
-        if (!q) return commits;
-        return commits.filter(c => {
-            if ((c.subject || "").toLowerCase().indexOf(q) >= 0) return true;
-            if ((c.short_hash || "").toLowerCase().indexOf(q) >= 0) return true;
-            if ((c.author || "").toLowerCase().indexOf(q) >= 0) return true;
-            for (const ref of (c.refs || []))
-                if ((ref.name || "").toLowerCase().indexOf(q) >= 0) return true;
-            return false;
-        });
-    }
 
     function laneColor(index) {
         return laneColors[Math.abs(index) % laneColors.length];
@@ -85,10 +73,28 @@ NativeWindow {
         case "fix": return "#ff9b9b";
         case "refactor": return GemaTheme.codePalette.type || "#c8b6ff";
         case "docs": return GemaTheme.codePalette.func || "#86e8c8";
-        case "test": return GemaTheme.codePalette.number || "#f6c177";
+        case "test": return "#7dd3fc";
         case "perf": return GemaTheme.codePalette.decorator || "#f29cb8";
         default: return GemaTheme.subtleColor;
         }
+    }
+
+    function splitPath(fullPath) {
+        const p = (fullPath || "").trim();
+        const idx = p.lastIndexOf("/");
+        if (idx < 0) return { name: p, dir: "" };
+        return { name: p.slice(idx + 1), dir: p.slice(0, idx) };
+    }
+
+    function parseConventional(rawSubject) {
+        const text = (rawSubject || "").trim();
+        const match = /^([a-z]+)(?:\(([^)]+)\))?!?:\s*(.+)$/i.exec(text);
+        if (!match) return { scope: "", title: text || "(sin mensaje)" };
+        const title = match[3].trim();
+        return {
+            scope: (match[2] || "").trim(),
+            title: title ? title.charAt(0).toUpperCase() + title.slice(1) : text
+        };
     }
 
     function setProject(next) {
@@ -414,10 +420,12 @@ NativeWindow {
 
                             ActionButton {
                                 objectName: "gitFlowRefreshButton"
+                                implicitWidth: 30
+                                implicitHeight: 30
+                                horizontalPadding: 0
+                                verticalPadding: 0
                                 text: gitWin.loading ? "…" : "↻"
                                 font.pixelSize: 13
-                                horizontalPadding: 10
-                                verticalPadding: 6
                                 enabled: !gitWin.loading && !!gitWin.projectId
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 400
@@ -427,10 +435,12 @@ NativeWindow {
 
                             ActionButton {
                                 objectName: "gitFlowCloseButton"
-                                text: "✕"
-                                font.pixelSize: 11
-                                horizontalPadding: 10
-                                verticalPadding: 6
+                                implicitWidth: 30
+                                implicitHeight: 30
+                                horizontalPadding: 0
+                                verticalPadding: 0
+                                text: "×"
+                                font.pixelSize: 15
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 400
                                 ToolTip.text: "Cerrar visor Git (Esc)"
@@ -438,7 +448,7 @@ NativeWindow {
                             }
                         }
 
-                        // Fila de estado: rama actual, sincronía y filtro de commits.
+                        // Fila de estado minimalista: rama actual a la izquierda y estado de cambios a la derecha.
                         RowLayout {
                             Layout.fillWidth: true
                             visible: gitWin.isRepo
@@ -446,23 +456,23 @@ NativeWindow {
 
                             GlassPanel {
                                 visible: !!gitWin.branchName
-                                implicitWidth: branchRow.implicitWidth + 16
-                                implicitHeight: 26
-                                radius: 8
+                                implicitWidth: branchRow.implicitWidth + 18
+                                implicitHeight: 30
+                                radius: 9
                                 reflective: false
-                                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#22c4dcff"
-                                bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.08) : "#0ec4dcff"
-                                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.50) : "#44c4dcff"
+                                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.20) : "#20c4dcff"
+                                bottomColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.08) : "#0cc4dcff"
+                                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.48) : "#40c4dcff"
                                 RowLayout {
                                     id: branchRow
                                     anchors.centerIn: parent
                                     spacing: 5
                                     Text {
-                                        text: "⎇ " + gitWin.branchName
+                                        text: gitWin.branchName
                                         textFormat: Text.PlainText
                                         color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
                                         font.pixelSize: 11
-                                        font.weight: Font.Bold
+                                        font.weight: Font.DemiBold
                                     }
                                     Text {
                                         visible: gitWin.aheadCount > 0 || gitWin.behindCount > 0
@@ -477,131 +487,260 @@ NativeWindow {
                                 }
                             }
 
+                            Item { Layout.fillWidth: true }
+
                             Button {
                                 id: statusPill
-                                implicitWidth: statusPillText.implicitWidth + 18
-                                implicitHeight: 26
+                                readonly property int totalChanges: gitWin.stagedCount + gitWin.modifiedCount + gitWin.untrackedCount
+                                implicitWidth: statusPillText.implicitWidth + 22
+                                implicitHeight: 30
                                 padding: 0
                                 hoverEnabled: !gitWin.workingClean
                                 enabled: !gitWin.workingClean
                                 onClicked: gitWin.showPendingFiles = !gitWin.showPendingFiles
                                 contentItem: Text {
                                     id: statusPillText
-                                    anchors.centerIn: parent
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                     text: gitWin.workingClean
-                                        ? "✓ Limpio"
-                                        : ("● " + (gitWin.stagedCount + gitWin.modifiedCount + gitWin.untrackedCount)
-                                           + " cambios " + (gitWin.showPendingFiles ? "▴" : "▾"))
+                                        ? "✓ Árbol limpio"
+                                        : ("● " + statusPill.totalChanges
+                                           + (statusPill.totalChanges === 1 ? " cambio " : " cambios ")
+                                           + (gitWin.showPendingFiles ? "▴" : "▾"))
                                     textFormat: Text.PlainText
-                                    color: gitWin.workingClean ? "#86e8c8" : "#f6c177"
+                                    color: gitWin.workingClean ? "#86e8c8" : gitWin.pendingAccent
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold
                                 }
                                 background: GlassPanel {
-                                    radius: 8
+                                    radius: 9
                                     reflective: false
-                                    topColor: gitWin.workingClean ? "#1886e8c8" : (statusPill.hovered ? "#2cf6c177" : "#1cf6c177")
-                                    bottomColor: "#0a000000"
-                                    edgeColor: gitWin.workingClean ? "#4286e8c8" : "#55f6c177"
-                                }
-                            }
-
-                            GlassPanel {
-                                Layout.fillWidth: true
-                                implicitHeight: 26
-                                radius: 8
-                                reflective: false
-                                highlighted: filterInput.activeFocus
-                                topColor: "#14ffffff"
-                                bottomColor: "#08ffffff"
-                                edgeColor: filterInput.activeFocus
-                                    ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#60ffffff")
-                                    : "#26ffffff"
-                                TextInput {
-                                    id: filterInput
-                                    objectName: "gitFlowFilterInput"
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 9
-                                    anchors.rightMargin: 9
-                                    verticalAlignment: TextInput.AlignVCenter
-                                    color: "#f5f5f5"
-                                    selectionColor: "#ffffff"
-                                    selectedTextColor: "#000000"
-                                    font.pixelSize: 11
-                                    selectByMouse: true
-                                    onTextChanged: gitWin.filterText = text
-                                    Text {
-                                        anchors.fill: parent
-                                        verticalAlignment: Text.AlignVCenter
-                                        visible: !filterInput.text && !filterInput.activeFocus
-                                        text: "Filtrar commits, rama o hash…"
-                                        color: "#78ffffff"
-                                        font.pixelSize: 11
-                                    }
+                                    topColor: gitWin.workingClean
+                                        ? "#1686e8c8"
+                                        : (gitWin.showPendingFiles || statusPill.hovered
+                                            ? Qt.alpha(gitWin.pendingAccent, 0.22)
+                                            : Qt.alpha(gitWin.pendingAccent, 0.13))
+                                    bottomColor: "#08000000"
+                                    edgeColor: gitWin.workingClean
+                                        ? "#3c86e8c8"
+                                        : Qt.alpha(gitWin.pendingAccent, gitWin.showPendingFiles ? 0.62 : 0.44)
                                 }
                             }
                         }
                     }
                 }
 
-                // Panel desplegable de cambios locales pendientes antes del siguiente commit.
+                // Panel desplegable animado de cambios locales pendientes antes del siguiente commit.
                 GlassPanel {
+                    id: pendingPanel
                     Layout.fillWidth: true
-                    visible: gitWin.isRepo && !gitWin.workingClean && gitWin.showPendingFiles
-                    implicitHeight: Math.min(168, pendingColumn.implicitHeight + 18)
-                    radius: 12
+                    readonly property bool expanded: gitWin.isRepo && !gitWin.workingClean && gitWin.showPendingFiles
+                    readonly property int targetHeight: expanded ? Math.min(220, Math.max(66, pendingColumn.implicitHeight + 24)) : 0
+                    Layout.preferredHeight: targetHeight
+                    visible: Layout.preferredHeight > 1 || expanded
+                    opacity: expanded ? 1.0 : 0.0
+                    clip: true
+                    radius: 13
                     reflective: false
-                    topColor: "#14f6c177"
-                    bottomColor: "#08000000"
-                    edgeColor: "#40f6c177"
+                    topColor: Qt.alpha(gitWin.pendingAccent, 0.12)
+                    bottomColor: "#14080e18"
+                    edgeColor: Qt.alpha(gitWin.pendingAccent, 0.36)
+
+                    Behavior on Layout.preferredHeight {
+                        NumberAnimation { duration: GemaTheme.animations ? 220 : 0; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: GemaTheme.animations ? 160 : 0; easing.type: Easing.OutCubic }
+                    }
 
                     ScrollView {
+                        id: pendingScroll
                         anchors.fill: parent
-                        anchors.margins: 9
+                        anchors.margins: 12
                         clip: true
                         ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                         ColumnLayout {
                             id: pendingColumn
-                            width: parent.width
-                            spacing: 4
+                            width: pendingScroll.availableWidth
+                            spacing: 6
 
-                            Text {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                text: "Árbol de trabajo · "
-                                      + (gitWin.stagedCount ? gitWin.stagedCount + " en stage  " : "")
-                                      + (gitWin.modifiedCount ? gitWin.modifiedCount + " modificados  " : "")
-                                      + (gitWin.untrackedCount ? gitWin.untrackedCount + " nuevos" : "")
-                                color: "#f6c177"
-                                font.pixelSize: 10
-                                font.weight: Font.Bold
+                                spacing: 6
+
+                                Rectangle {
+                                    implicitWidth: 6
+                                    implicitHeight: 6
+                                    radius: 3
+                                    color: gitWin.pendingAccent
+                                }
+
+                                Text {
+                                    text: "Cambios locales"
+                                    color: "#f2f7ff"
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Rectangle {
+                                    visible: gitWin.stagedCount > 0
+                                    implicitWidth: stagedBadgeText.implicitWidth + 12
+                                    implicitHeight: 18
+                                    radius: 6
+                                    color: "#1a86e8c8"
+                                    border.width: 1
+                                    border.color: "#4486e8c8"
+                                    Text {
+                                        id: stagedBadgeText
+                                        anchors.centerIn: parent
+                                        text: gitWin.stagedCount + " en stage"
+                                        color: "#86e8c8"
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: gitWin.modifiedCount > 0
+                                    implicitWidth: modBadgeText.implicitWidth + 12
+                                    implicitHeight: 18
+                                    radius: 6
+                                    color: Qt.alpha(gitWin.pendingAccent, 0.16)
+                                    border.width: 1
+                                    border.color: Qt.alpha(gitWin.pendingAccent, 0.44)
+                                    Text {
+                                        id: modBadgeText
+                                        anchors.centerIn: parent
+                                        text: gitWin.modifiedCount + (gitWin.modifiedCount === 1 ? " modificado" : " modificados")
+                                        color: gitWin.pendingAccent
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: gitWin.untrackedCount > 0
+                                    implicitWidth: untrackBadgeText.implicitWidth + 12
+                                    implicitHeight: 18
+                                    radius: 6
+                                    color: "#16ffffff"
+                                    border.width: 1
+                                    border.color: "#32ffffff"
+                                    Text {
+                                        id: untrackBadgeText
+                                        anchors.centerIn: parent
+                                        text: gitWin.untrackedCount + (gitWin.untrackedCount === 1 ? " nuevo" : " nuevos")
+                                        color: GemaTheme.mutedColor
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: "#18ffffff"
                             }
 
                             Repeater {
-                                model: gitWin.stagedFiles.map(f => ({ tag: "S·" + f.status, color: "#86e8c8", path: f.path }))
-                                    .concat(gitWin.modifiedFiles.map(f => ({ tag: "M·" + f.status, color: "#f6c177", path: f.path })))
-                                    .concat(gitWin.untrackedFiles.map(f => ({ tag: "?", color: GemaTheme.subtleColor, path: f.path })))
-                                delegate: RowLayout {
+                                model: gitWin.stagedFiles.map(f => ({
+                                            code: f.status || "A",
+                                            label: "stage",
+                                            color: "#86e8c8",
+                                            path: f.path
+                                        }))
+                                    .concat(gitWin.modifiedFiles.map(f => ({
+                                            code: f.status || "M",
+                                            label: f.status === "D" ? "eliminado" : "modificado",
+                                            color: f.status === "D" ? "#ff9b9b" : gitWin.pendingAccent,
+                                            path: f.path
+                                        })))
+                                    .concat(gitWin.untrackedFiles.map(f => ({
+                                            code: "?",
+                                            label: "nuevo",
+                                            color: "#a7b4c8",
+                                            path: f.path
+                                        })))
+                                delegate: Rectangle {
+                                    id: pendingRow
                                     required property var modelData
+                                    readonly property var parts: gitWin.splitPath(modelData.path)
                                     Layout.fillWidth: true
-                                    spacing: 8
-                                    Text {
-                                        text: modelData.tag
-                                        color: modelData.color
-                                        font.family: "monospace"
-                                        font.pixelSize: 10
-                                        font.bold: true
-                                        Layout.preferredWidth: 26
+                                    implicitHeight: 28
+                                    radius: 7
+                                    color: pendingRowMouse.containsMouse ? "#16ffffff" : "#08ffffff"
+                                    border.width: 1
+                                    border.color: pendingRowMouse.containsMouse ? Qt.alpha(modelData.color, 0.35) : "transparent"
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 7
+                                        anchors.rightMargin: 8
+                                        spacing: 8
+
+                                        Rectangle {
+                                            implicitWidth: 20
+                                            implicitHeight: 18
+                                            radius: 5
+                                            color: Qt.alpha(pendingRow.modelData.color, 0.16)
+                                            border.width: 1
+                                            border.color: Qt.alpha(pendingRow.modelData.color, 0.42)
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: pendingRow.modelData.code
+                                                color: pendingRow.modelData.color
+                                                font.family: "monospace"
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Text {
+                                            text: pendingRow.parts.name
+                                            textFormat: Text.PlainText
+                                            elide: Text.ElideRight
+                                            color: "#f4f8ff"
+                                            font.pixelSize: 11
+                                            font.weight: Font.Medium
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            visible: !!pendingRow.parts.dir
+                                            text: pendingRow.parts.dir
+                                            textFormat: Text.PlainText
+                                            elide: Text.ElideMiddle
+                                            color: GemaTheme.subtleColor
+                                            font.family: "monospace"
+                                            font.pixelSize: 10
+                                        }
+
+                                        Item {
+                                            visible: !pendingRow.parts.dir
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Text {
+                                            text: pendingRow.modelData.label
+                                            textFormat: Text.PlainText
+                                            color: Qt.alpha(pendingRow.modelData.color, 0.85)
+                                            font.pixelSize: 9
+                                            font.weight: Font.Medium
+                                        }
                                     }
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: modelData.path
-                                        textFormat: Text.PlainText
-                                        elide: Text.ElideMiddle
-                                        color: GemaTheme.textColor
-                                        font.family: "monospace"
-                                        font.pixelSize: 11
+
+                                    MouseArea {
+                                        id: pendingRowMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: gitWin.fileRequested(pendingRow.modelData.path)
                                     }
                                 }
                             }
@@ -664,7 +803,7 @@ NativeWindow {
                     visible: gitWin.isRepo && !gitWin.errorMessage && gitWin.commits.length > 0
                     clip: true
                     spacing: 0
-                    model: gitWin.filteredCommits
+                    model: gitWin.commits
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     delegate: Item {
@@ -675,8 +814,9 @@ NativeWindow {
                         readonly property int laneSpacing: 16
                         readonly property int graphPad: 14
                         readonly property int graphWidth: Math.max(36, Math.min(132, gitWin.graphLanes * laneSpacing + graphPad))
+                        readonly property var parsed: gitWin.parseConventional(modelData.subject)
                         width: commitList.width
-                        height: 60
+                        height: 54
 
                         GlassPanel {
                             anchors.fill: parent
@@ -766,7 +906,7 @@ NativeWindow {
 
                                 // Conexión punteada superior hacia cambios pendientes en el nodo HEAD.
                                 if (d.is_head && !gitWin.workingClean) {
-                                    ctx.strokeStyle = "#f6c177";
+                                    ctx.strokeStyle = gitWin.pendingAccent;
                                     ctx.globalAlpha = 0.85;
                                     ctx.setLineDash([3, 3]);
                                     ctx.beginPath();
@@ -806,56 +946,27 @@ NativeWindow {
                             }
                         }
 
-                        // Metadatos, etiquetas de rama/tag y título del commit.
+                        // Metadatos minimalistas: tipo/ámbito sin duplicar, título limpio y hash/tiempo alineados a la derecha.
                         ColumnLayout {
                             anchors.left: graphCanvas.right
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: 4
-                            anchors.rightMargin: 10
-                            spacing: 4
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 12
+                            spacing: 3
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 5
-
-                                Repeater {
-                                    model: (commitRow.modelData.refs || []).slice(0, 3)
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        implicitWidth: refLabel.implicitWidth + 10
-                                        implicitHeight: 17
-                                        radius: 5
-                                        color: modelData.kind === "head"
-                                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.28) : "#308be9fd")
-                                            : modelData.kind === "tag" ? "#28f6c177"
-                                            : modelData.kind === "branch" ? "#22c8b6ff" : "#16ffffff"
-                                        border.width: 1
-                                        border.color: modelData.kind === "head"
-                                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.68) : "#708be9fd")
-                                            : modelData.kind === "tag" ? "#66f6c177"
-                                            : modelData.kind === "branch" ? "#48c8b6ff" : "#2cffffff"
-                                        Text {
-                                            id: refLabel
-                                            anchors.centerIn: parent
-                                            text: (modelData.kind === "tag" ? "🏷 " : "") + modelData.name
-                                            textFormat: Text.PlainText
-                                            color: modelData.kind === "tag" ? "#f6c177"
-                                                   : modelData.kind === "head" ? "#ffffff" : GemaTheme.textColor
-                                            font.pixelSize: 9
-                                            font.weight: Font.Bold
-                                        }
-                                    }
-                                }
+                                spacing: 6
 
                                 Rectangle {
                                     visible: !!commitRow.modelData.kind
-                                    implicitWidth: kindLabel.implicitWidth + 8
-                                    implicitHeight: 16
-                                    radius: 4
-                                    color: "#14ffffff"
+                                    implicitWidth: kindLabel.implicitWidth + 10
+                                    implicitHeight: 17
+                                    radius: 5
+                                    color: Qt.alpha(gitWin.kindColor(commitRow.modelData.kind), 0.14)
                                     border.width: 1
-                                    border.color: Qt.alpha(gitWin.kindColor(commitRow.modelData.kind), 0.45)
+                                    border.color: Qt.alpha(gitWin.kindColor(commitRow.modelData.kind), 0.42)
                                     Text {
                                         id: kindLabel
                                         anchors.centerIn: parent
@@ -869,33 +980,77 @@ NativeWindow {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: commitRow.modelData.subject || "(sin mensaje)"
+                                    Layout.minimumWidth: 0
+                                    text: commitRow.parsed.title
                                     textFormat: Text.PlainText
                                     elide: Text.ElideRight
                                     color: commitRow.modelData.is_head ? "#ffffff" : GemaTheme.textColor
                                     font.pixelSize: 12
                                     font.weight: commitRow.modelData.is_head || commitRow.selected ? Font.DemiBold : Font.Normal
                                 }
+
+                                Repeater {
+                                    model: (commitRow.modelData.refs || []).slice(0, 2)
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        implicitWidth: refLabel.implicitWidth + 10
+                                        implicitHeight: 17
+                                        radius: 5
+                                        color: modelData.kind === "head"
+                                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#288be9fd")
+                                            : modelData.kind === "tag" ? "#2086e8c8"
+                                            : modelData.kind === "branch" ? "#1ec8b6ff" : "#14ffffff"
+                                        border.width: 1
+                                        border.color: modelData.kind === "head"
+                                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#668be9fd")
+                                            : modelData.kind === "tag" ? "#5486e8c8"
+                                            : modelData.kind === "branch" ? "#42c8b6ff" : "#26ffffff"
+                                        Text {
+                                            id: refLabel
+                                            anchors.centerIn: parent
+                                            text: modelData.name
+                                            textFormat: Text.PlainText
+                                            color: modelData.kind === "tag" ? "#86e8c8"
+                                                   : modelData.kind === "head" ? "#ffffff" : GemaTheme.textColor
+                                            font.pixelSize: 9
+                                            font.weight: Font.DemiBold
+                                        }
+                                    }
+                                }
                             }
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 7
+                                spacing: 8
                                 Text {
-                                    text: commitRow.modelData.short_hash || ""
+                                    visible: !!commitRow.parsed.scope
+                                    text: commitRow.parsed.scope
                                     textFormat: Text.PlainText
-                                    color: GemaTheme.synced ? GemaTheme.accentInk : "#a8d8ff"
-                                    font.family: "monospace"
+                                    color: GemaTheme.mutedColor
                                     font.pixelSize: 10
                                     font.weight: Font.Medium
                                 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: (commitRow.modelData.author || "") + " · " + (commitRow.modelData.relative_date || "")
+                                    text: (commitRow.parsed.scope ? "·  " : "") + (commitRow.modelData.author || "")
                                     textFormat: Text.PlainText
                                     elide: Text.ElideRight
                                     color: GemaTheme.subtleColor
                                     font.pixelSize: 10
+                                }
+                                Text {
+                                    text: commitRow.modelData.relative_date || ""
+                                    textFormat: Text.PlainText
+                                    color: GemaTheme.subtleColor
+                                    font.pixelSize: 10
+                                }
+                                Text {
+                                    text: commitRow.modelData.short_hash || ""
+                                    textFormat: Text.PlainText
+                                    color: GemaTheme.synced ? GemaTheme.accentAlpha(0.85) : "#a8d8ff"
+                                    font.family: "monospace"
+                                    font.pixelSize: 10
+                                    font.weight: Font.Medium
                                 }
                             }
                         }
@@ -910,20 +1065,32 @@ NativeWindow {
                     }
                 }
 
-                // Inspector inferior de detalle del commit seleccionado.
+                // Inspector inferior animado de detalle del commit seleccionado (aprovecha todo el ancho).
                 GlassPanel {
                     id: detailPanel
                     objectName: "gitCommitDetailPanel"
                     Layout.fillWidth: true
-                    visible: !!gitWin.selectedHash
-                    implicitHeight: visible ? Math.min(260, Math.max(132, detailInner.implicitHeight + 24)) : 0
+                    readonly property bool expanded: !!gitWin.selectedHash
+                    readonly property int targetHeight: expanded ? Math.min(280, Math.max(132, detailInner.implicitHeight + 24)) : 0
+                    Layout.preferredHeight: targetHeight
+                    visible: Layout.preferredHeight > 1 || expanded
+                    opacity: expanded ? 1.0 : 0.0
+                    clip: true
                     radius: 14
                     reflective: false
                     topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.14) : "#18c4dcff"
                     bottomColor: "#24080d16"
                     edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.45) : "#42c4dcff"
 
+                    Behavior on Layout.preferredHeight {
+                        NumberAnimation { duration: GemaTheme.animations ? 220 : 0; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: GemaTheme.animations ? 160 : 0; easing.type: Easing.OutCubic }
+                    }
+
                     ScrollView {
+                        id: detailScroll
                         anchors.fill: parent
                         anchors.margins: 12
                         clip: true
@@ -932,7 +1099,7 @@ NativeWindow {
 
                         ColumnLayout {
                             id: detailInner
-                            width: parent.width
+                            width: detailScroll.availableWidth
                             spacing: 8
 
                             RowLayout {
@@ -949,10 +1116,11 @@ NativeWindow {
                                 }
 
                                 ActionButton {
-                                    text: gitWin.hashCopied ? "Copiado" : "Copiar"
+                                    text: gitWin.hashCopied ? "Copiado ✓" : "Copiar"
                                     font.pixelSize: 10
-                                    horizontalPadding: 8
-                                    verticalPadding: 3
+                                    implicitHeight: 24
+                                    horizontalPadding: 9
+                                    verticalPadding: 0
                                     onClicked: {
                                         NativeApp.clipboardText = gitWin.commitDetail.hash || gitWin.selectedHash;
                                         gitWin.hashCopied = true;
@@ -981,10 +1149,12 @@ NativeWindow {
                                 Item { Layout.fillWidth: true }
 
                                 ActionButton {
-                                    text: "✕"
-                                    font.pixelSize: 10
-                                    horizontalPadding: 7
-                                    verticalPadding: 3
+                                    implicitWidth: 24
+                                    implicitHeight: 24
+                                    horizontalPadding: 0
+                                    verticalPadding: 0
+                                    text: "×"
+                                    font.pixelSize: 13
                                     onClicked: {
                                         gitWin.selectedHash = "";
                                         gitWin.commitDetail = ({});
