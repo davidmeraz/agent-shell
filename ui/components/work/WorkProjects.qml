@@ -54,52 +54,20 @@ GlassPanel {
         anchors.margins: 22
         spacing: 16
 
-        // Cabecera centrada y refinada
-        ColumnLayout {
+        // Separador luminoso superior limpio y ancho
+        Rectangle {
             Layout.fillWidth: true
-            Layout.topMargin: 4
-            spacing: 8
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 10
-
-                GlassPanel {
-                    implicitWidth: 32
-                    implicitHeight: 32
-                    radius: 10
-                    topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
-                    bottomColor: "#0cffffff"
-                    edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#44ffffff"
-                    GemaIcon {
-                        anchors.centerIn: parent
-                        name: panel.isAppArea ? "app" : "work"
-                        size: 17
-                        color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                    }
-                }
-
-                Text {
-                    text: panel.isAppArea ? "Aplicaciones" : "Proyectos"
-                    color: GemaTheme.textColor
-                    font.pixelSize: 26
-                    font.bold: true
-                    font.letterSpacing: -0.4
-                    style: Text.Raised
-                    styleColor: GemaTheme.textShadow
-                }
-            }
-
-            Rectangle {
-                Layout.alignment: Qt.AlignHCenter
-                implicitWidth: 160
-                implicitHeight: 1
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "#00ffffff" }
-                    GradientStop { position: 0.5; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#48ffffff" }
-                    GradientStop { position: 1.0; color: "#00ffffff" }
-                }
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.topMargin: 2
+            implicitHeight: 1.5
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "#00ffffff" }
+                GradientStop { position: 0.25; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#30ffffff" }
+                GradientStop { position: 0.5; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#58ffffff" }
+                GradientStop { position: 0.75; color: GemaTheme.synced ? GemaTheme.accentAlpha(0.32) : "#30ffffff" }
+                GradientStop { position: 1.0; color: "#00ffffff" }
             }
         }
 

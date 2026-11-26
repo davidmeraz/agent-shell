@@ -1093,145 +1093,380 @@ NativeWindow {
         standardButtons: Dialog.Close
         onOpened: profileNameInput.text = window.bridge.displayName
         contentItem: ColumnLayout {
-            spacing: 11
+            spacing: 10
+
+            // Tarjeta principal de identidad y nombre visible
+            GlassPanel {
+                Layout.fillWidth: true
+                implicitHeight: profileCardCol.implicitHeight + 22
+                radius: 14
+                reflective: false
+                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#1affffff"
+                bottomColor: "#0c080c12"
+                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.42) : "#32ffffff"
+
+                ColumnLayout {
+                    id: profileCardCol
+                    anchors.fill: parent
+                    anchors.margins: 11
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        UserAvatar {
+                            id: accountAvatarPreview
+                            size: 44
+                            customName: profileNameInput.text.trim() || window.bridge.displayName
+                            plan: window.bridge.plan
+                            connected: window.bridge.authenticated
+                            showStatusDot: true
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: 3
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 7
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    text: accountAvatarPreview.displayName
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideRight
+                                    color: GemaTheme.textColor
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    style: Text.Raised
+                                    styleColor: GemaTheme.textShadow
+                                }
+                                GlassPanel {
+                                    implicitWidth: planStatusLabel.implicitWidth + 14
+                                    implicitHeight: 20
+                                    radius: 7
+                                    reflective: false
+                                    topColor: window.bridge.authenticated
+                                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.26) : "#2668f098")
+                                        : "#18ffffff"
+                                    bottomColor: "#0affffff"
+                                    edgeColor: window.bridge.authenticated
+                                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.62) : "#5868f098")
+                                        : "#2cffffff"
+                                    Text {
+                                        id: planStatusLabel
+                                        anchors.centerIn: parent
+                                        text: window.bridge.authenticated
+                                            ? (window.bridge.plan ? "● " + window.bridge.plan : "● Conectada")
+                                            : "○ Sin sesión"
+                                        textFormat: Text.PlainText
+                                        color: window.bridge.authenticated ? "#ffffff" : GemaTheme.subtleColor
+                                        font.pixelSize: 10
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: window.bridge.email
+                                    ? window.bridge.email
+                                    : (window.bridge.authenticated ? "Cuenta de ChatGPT conectada" : "Conecta tu cuenta para usar tu plan")
+                                textFormat: Text.PlainText
+                                elide: Text.ElideRight
+                                color: GemaTheme.subtleColor
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
+                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#18ffffff" }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        GlassPanel {
+                            Layout.fillWidth: true
+                            implicitHeight: 34
+                            radius: 10
+                            reflective: false
+                            highlighted: profileNameInput.activeFocus
+                            topColor: profileNameInput.activeFocus ? "#22ffffff" : "#12ffffff"
+                            bottomColor: "#08ffffff"
+                            edgeColor: profileNameInput.activeFocus
+                                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.65) : "#60ffffff")
+                                : "#28ffffff"
+                            TextInput {
+                                id: profileNameInput
+                                objectName: "chatProfileNameInput"
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                verticalAlignment: TextInput.AlignVCenter
+                                maximumLength: 40
+                                color: "#f5f5f5"
+                                selectionColor: "#ffffff"
+                                selectedTextColor: "#000000"
+                                font.pixelSize: 12
+                                selectByMouse: true
+                                onAccepted: window.bridge.updateProfile(profileNameInput.text)
+                                Text {
+                                    anchors.fill: parent
+                                    verticalAlignment: Text.AlignVCenter
+                                    visible: !profileNameInput.text && !profileNameInput.activeFocus
+                                    text: "Nombre visible…"
+                                    color: "#78ffffff"
+                                    font.pixelSize: 12
+                                }
+                            }
+                        }
+                        ActionButton {
+                            objectName: "chatProfileSaveButton"
+                            text: "Guardar"
+                            implicitHeight: 34
+                            horizontalPadding: 12
+                            verticalPadding: 0
+                            font.pixelSize: 12
+                            accent: profileNameInput.text.trim() !== window.bridge.displayName
+                            enabled: window.bridge.ready && profileNameInput.text.trim() !== window.bridge.displayName
+                            onClicked: window.bridge.updateProfile(profileNameInput.text)
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: !!window.bridge.profileError
+                        text: window.bridge.profileError
+                        textFormat: Text.PlainText
+                        color: "#ff9b9b"
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+
+            // Resumen visual de motores conectados
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 10
-                UserAvatar {
-                    id: accountAvatarPreview
-                    size: 34
-                    customName: profileNameInput.text.trim() || window.bridge.displayName
-                    plan: window.bridge.plan
-                    connected: window.bridge.authenticated
-                    showStatusDot: true
-                }
-                GlassPanel {
-                    Layout.fillWidth: true
-                    implicitHeight: 34
-                    radius: 10
-                    highlighted: profileNameInput.activeFocus
-                    TextInput {
-                        id: profileNameInput
-                        objectName: "chatProfileNameInput"
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        verticalAlignment: TextInput.AlignVCenter
-                        maximumLength: 40
-                        color: "#f5f5f5"
-                        selectionColor: "#ffffff"
-                        selectedTextColor: "#000000"
-                        font.pixelSize: 13
-                        selectByMouse: true
-                        onAccepted: window.bridge.updateProfile(profileNameInput.text)
-                        Text {
-                            anchors.fill: parent
-                            verticalAlignment: Text.AlignVCenter
-                            visible: !profileNameInput.text && !profileNameInput.activeFocus
-                            text: "Nombre de usuario…"
-                            color: "#80ffffff"
-                            font.pixelSize: 13
+                spacing: 6
+                Repeater {
+                    model: [
+                        { label: "ChatGPT", active: window.bridge.authenticated },
+                        { label: "Gemini", active: window.bridge.agyAvailable },
+                        { label: "Claude", active: window.bridge.claudeAvailable && window.bridge.claudeAuthenticated }
+                    ]
+                    delegate: GlassPanel {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        implicitHeight: 28
+                        radius: 9
+                        reflective: false
+                        topColor: modelData.active
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.16) : "#1affffff")
+                            : "#0effffff"
+                        bottomColor: "#06ffffff"
+                        edgeColor: modelData.active
+                            ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.42) : "#38ffffff")
+                            : "#1effffff"
+                        RowLayout {
+                            anchors.centerIn: parent
+                            spacing: 5
+                            Rectangle {
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: modelData.active ? "#68f098" : "#66707c"
+                            }
+                            Text {
+                                text: modelData.label
+                                textFormat: Text.PlainText
+                                color: modelData.active ? GemaTheme.textColor : GemaTheme.subtleColor
+                                font.pixelSize: 11
+                                font.weight: modelData.active ? Font.DemiBold : Font.Normal
+                            }
                         }
                     }
                 }
-                ActionButton {
-                    objectName: "chatProfileSaveButton"
-                    text: "Guardar"
-                    verticalPadding: 7
-                    accent: profileNameInput.text.trim() !== window.bridge.displayName
-                    enabled: window.bridge.ready && profileNameInput.text.trim() !== window.bridge.displayName
-                    onClicked: window.bridge.updateProfile(profileNameInput.text)
+            }
+
+            // Gestión de sesiones y cuentas registradas
+            GlassPanel {
+                Layout.fillWidth: true
+                implicitHeight: accountsCol.implicitHeight + 20
+                radius: 13
+                reflective: false
+                topColor: "#12ffffff"
+                bottomColor: "#08ffffff"
+                edgeColor: "#26ffffff"
+
+                ColumnLayout {
+                    id: accountsCol
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "SESIÓN Y CUENTAS"
+                        color: GemaTheme.subtleColor
+                        font.pixelSize: 10
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1.0
+                    }
+
+                    GlassComboBox {
+                        objectName: "chatAccountSelector"
+                        Layout.fillWidth: true
+                        visible: window.bridge.registeredAccounts.count > 1
+                        enabled: window.accountControlsEnabled
+                        model: window.bridge.registeredAccounts
+                        textRole: "displayName"
+                        currentIndex: window.bridge.activeAccountIndex
+                        onActivated: index => window.bridge.selectAccount(window.bridge.registeredAccounts.get(index).accountId)
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        ActionButton {
+                            Layout.fillWidth: true
+                            implicitHeight: 34
+                            verticalPadding: 0
+                            font.pixelSize: 12
+                            text: window.bridge.authenticated ? "Actualizar cuenta" : "Continuar con ChatGPT"
+                            accent: !window.bridge.authenticated
+                            enabled: window.accountControlsEnabled
+                            onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
+                        }
+                        ActionButton {
+                            implicitHeight: 34
+                            verticalPadding: 0
+                            font.pixelSize: 12
+                            text: "Salir"
+                            visible: window.bridge.email !== ""
+                            enabled: window.accountControlsEnabled
+                            onClicked: window.bridge.logout()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: window.bridge.registeredAccounts.count > 0
+                        spacing: 8
+                        ActionButton {
+                            objectName: "chatAddAccount"
+                            Layout.fillWidth: true
+                            implicitHeight: 34
+                            verticalPadding: 0
+                            font.pixelSize: 12
+                            text: "Usar otra cuenta"
+                            enabled: window.accountControlsEnabled
+                            onClicked: window.bridge.login(true)
+                        }
+                        ActionButton {
+                            objectName: "chatRemoveAccount"
+                            implicitHeight: 34
+                            verticalPadding: 0
+                            font.pixelSize: 12
+                            text: "Quitar"
+                            visible: window.bridge.activeAccountIndex >= 0
+                            enabled: window.accountControlsEnabled
+                            onClicked: window.requestRemoveAccount()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: window.bridge.loginBusy
+                        spacing: 8
+                        ActionButton {
+                            Layout.fillWidth: true
+                            implicitHeight: 32
+                            verticalPadding: 0
+                            text: "Abrir navegador"
+                            accent: true
+                            enabled: window.bridge.authUrl !== ""
+                            onClicked: Qt.openUrlExternally(window.bridge.authUrl)
+                        }
+                        ActionButton {
+                            implicitHeight: 32
+                            verticalPadding: 0
+                            text: "Cancelar"
+                            onClicked: window.bridge.cancelLogin()
+                        }
+                    }
                 }
             }
-            Text {
-                Layout.fillWidth: true
-                visible: !!window.bridge.profileError
-                text: window.bridge.profileError
-                textFormat: Text.PlainText
-                color: "#ff9b9b"
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-            Text {
-                Layout.fillWidth: true
-                text: window.bridge.authenticated
-                    ? accountAvatarPreview.displayName + " · Cuenta de ChatGPT conectada (usa los límites de tu plan)."
-                    : "Inicia sesión en el navegador y autoriza el uso de tu plan de ChatGPT."
-                color: "#bbbbbb"
-                font.pixelSize: 12
-                wrapMode: Text.Wrap
-            }
-            GlassComboBox {
-                objectName: "chatAccountSelector"
-                Layout.fillWidth: true
-                visible: window.bridge.registeredAccounts.count > 1
-                enabled: window.accountControlsEnabled
-                model: window.bridge.registeredAccounts
-                textRole: "displayName"
-                currentIndex: window.bridge.activeAccountIndex
-                onActivated: index => window.bridge.selectAccount(window.bridge.registeredAccounts.get(index).accountId)
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ActionButton {
-                    Layout.fillWidth: true
-                    text: window.bridge.authenticated ? "Actualizar cuenta" : "Continuar con ChatGPT"
-                    accent: !window.bridge.authenticated
-                    enabled: window.accountControlsEnabled
-                    onClicked: window.bridge.authenticated ? window.bridge.refreshAccount() : window.bridge.login()
-                }
-                ActionButton {
-                    text: "Salir"
-                    visible: window.bridge.email !== ""
-                    enabled: window.accountControlsEnabled
-                    onClicked: window.bridge.logout()
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: window.bridge.registeredAccounts.count > 0
-                ActionButton {
-                    objectName: "chatAddAccount"
-                    Layout.fillWidth: true
-                    text: "Usar otra cuenta"
-                    enabled: window.accountControlsEnabled
-                    onClicked: window.bridge.login(true)
-                }
-                ActionButton {
-                    objectName: "chatRemoveAccount"
-                    text: "Quitar"
-                    visible: window.bridge.activeAccountIndex >= 0
-                    enabled: window.accountControlsEnabled
-                    onClicked: window.requestRemoveAccount()
-                }
-            }
-            ActionButton {
+
+            // Acceso rápido a la ventana de uso / cuotas
+            Button {
+                id: accountUsageBtn
                 objectName: "chatUsageButton"
                 Layout.fillWidth: true
+                implicitHeight: 40
+                padding: 10
+                hoverEnabled: true
                 visible: window.bridge.engineReady
-                text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)"
-                    : window.bridge.provider === "claude" ? "Ver uso de Claude"
-                    : "Ver uso del plan"
                 onClicked: { accountPanel.close(); window.openUsage(); }
-            }
-            Text {
-                Layout.fillWidth: true
-                text: window.bridge.status
-                textFormat: Text.PlainText
-                color: "#bbbbbb"
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                visible: window.bridge.loginBusy
-                ActionButton {
-                    text: "Abrir navegador"
-                    enabled: window.bridge.authUrl !== ""
-                    onClicked: Qt.openUrlExternally(window.bridge.authUrl)
+                contentItem: RowLayout {
+                    spacing: 10
+                    GemaIcon {
+                        name: "usage"
+                        size: 15
+                        color: accountUsageBtn.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: window.bridge.provider === "agy" ? "Ver uso de Antigravity (agy)"
+                            : window.bridge.provider === "claude" ? "Ver uso de Claude"
+                            : "Ver uso del plan"
+                        textFormat: Text.PlainText
+                        color: GemaTheme.textColor
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        text: "›"
+                        color: accountUsageBtn.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.subtleColor
+                        font.pixelSize: 16
+                    }
                 }
-                ActionButton { text: "Cancelar"; onClicked: window.bridge.cancelLogin() }
+                background: GlassPanel {
+                    radius: 11
+                    reflective: false
+                    highlighted: accountUsageBtn.hovered || accountUsageBtn.activeFocus
+                    topColor: accountUsageBtn.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.22) : "#24ffffff")
+                        : "#14ffffff"
+                    bottomColor: "#08ffffff"
+                    edgeColor: accountUsageBtn.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#4cffffff")
+                        : "#26ffffff"
+                }
             }
-            Text { text: "Agent Shell · v" + (window.bridge.appVersion || "…"); color: "#aaaaaa"; font.pixelSize: 10 }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    Layout.fillWidth: true
+                    text: window.bridge.status
+                    textFormat: Text.PlainText
+                    color: GemaTheme.subtleColor
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: "v" + (window.bridge.appVersion || "…")
+                    color: GemaTheme.subtleColor
+                    font.pixelSize: 10
+                }
+            }
         }
     }
 
