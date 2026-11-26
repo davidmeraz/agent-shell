@@ -6,7 +6,7 @@ import AgentShell.Native
 import "../.."
 import "../shared"
 
-// Terminal rápida flotante Gema Glassmorphism para navegar directorios e inicializar Work/App al instante.
+// Terminal estilo Linux integrada en Gema Glassmorphism: prompt en línea, foco automático y colocación simétrica inferior izquierda.
 NativeWindow {
     id: termWin
     objectName: "quickTerminalWindow"
@@ -17,35 +17,32 @@ NativeWindow {
     property string pendingRequestId: ""
     property var commandHistory: []
     property int historyCursor: -1
+    readonly property string userName: NativeApp.env("USER") || "user"
 
     title: "Agent Shell · Terminal"
-    implicitWidth: 680
-    implicitHeight: 440
-    minimumSize: Qt.size(460, 300)
+    implicitWidth: 640
+    implicitHeight: 500
+    minimumSize: Qt.size(440, 320)
     color: "transparent"
     visible: false
     onClosed: termWin.visible = false
 
     ListModel { id: terminalLog }
 
+    function focusPrompt() {
+        if (!termWin.visible) return;
+        if (termWin.contentItem && termWin.contentItem.Window.window)
+            termWin.contentItem.Window.window.requestActivate();
+        if (logList.footerItem && logList.footerItem.focusInput)
+            logList.footerItem.focusInput();
+    }
+
     function openTerminal() {
         if (!cwd) cwd = bridge.workspace || "";
-        if (terminalLog.count === 0) {
-            terminalLog.append({
-                cwd: cwd,
-                command: "",
-                output: "Terminal rápida de Agent Shell · Escribe `cd <ruta>`, `init work [nombre]`, `init app [nombre] [rust]`, `ls` o `help`.",
-                ok: true
-            });
-        }
         visible = true;
-        scheduleCenter();
-        Qt.callLater(function() {
-            if (!termWin.visible) return;
-            cmdInput.forceActiveFocus();
-            if (termWin.contentItem && termWin.contentItem.Window.window)
-                termWin.contentItem.Window.window.requestActivate();
-        });
+        schedulePlacement();
+        Qt.callLater(focusPrompt);
+        focusRetry.restart();
     }
 
     function toggleTerminal() {
@@ -53,9 +50,25 @@ NativeWindow {
         else openTerminal();
     }
 
-    function scheduleCenter() {
-        if (visible && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen")
-            centerDelay.restart();
+    function schedulePlacement() {
+        if (visible && mainWindowTitle
+            && NativeApp.env("HYPRLAND_INSTANCE_SIGNATURE") && NativeApp.env("QT_QPA_PLATFORM") !== "offscreen")
+            placementDelay.restart();
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            Qt.callLater(focusPrompt);
+            focusRetry.restart();
+        } else {
+            placementDelay.stop();
+            focusRetry.stop();
+            placementProcess.running = false;
+        }
+    }
+
+    onActiveChanged: {
+        if (active && visible) Qt.callLater(focusPrompt);
     }
 
     function shortCwd(raw) {
@@ -68,12 +81,16 @@ NativeWindow {
     function runCommand(rawText) {
         const cmd = (rawText || "").trim();
         if (!cmd || runningCommand) return;
-        cmdInput.text = "";
         historyCursor = -1;
         if (!commandHistory.length || commandHistory[commandHistory.length - 1] !== cmd)
             commandHistory = commandHistory.concat([cmd]).slice(-80);
         if (cmd === "clear" || cmd === "cls") {
             terminalLog.clear();
+            Qt.callLater(focusPrompt);
+            return;
+        }
+        if (cmd === "exit" || cmd === "quit") {
+            termWin.visible = false;
             return;
         }
         runningCommand = true;
@@ -85,229 +102,208 @@ NativeWindow {
         function onTerminalResult(data) {
             if (termWin.pendingRequestId && data.request_id && data.request_id !== termWin.pendingRequestId)
                 return;
+            const prevCwd = termWin.cwd || termWin.bridge.workspace;
             termWin.runningCommand = false;
             termWin.pendingRequestId = "";
             if (data.cwd) termWin.cwd = data.cwd;
             terminalLog.append({
-                cwd: data.cwd || termWin.cwd,
+                promptCwd: prevCwd,
                 command: data.command || "",
                 output: (data.output || "").replace(/\s+$/, ""),
                 ok: data.status === "completed" && (data.exit_code === 0 || data.exit_code === null || data.exit_code === undefined)
             });
-            Qt.callLater(() => logList.positionViewAtEnd());
-            if (termWin.visible) cmdInput.forceActiveFocus();
+            Qt.callLater(function() {
+                logList.positionViewAtEnd();
+                termWin.focusPrompt();
+            });
         }
     }
 
     Timer {
-        id: centerDelay
-        interval: 60
+        id: focusRetry
+        interval: 160
+        onTriggered: termWin.focusPrompt()
+    }
+
+    // Coloca la terminal en la columna inferior izquierda (rol 2), simétrica con el chat central.
+    Timer {
+        id: placementDelay
+        interval: 70
         onTriggered: {
-            if (!termWin.visible) return;
-            centerProcess.running = false;
-            centerProcess.command = [
+            if (!termWin.visible || !termWin.mainWindowTitle) return;
+            placementProcess.running = false;
+            placementProcess.command = [
                 NativeApp.pythonExecutable,
                 NativeApp.placementScript,
-                "--center-window",
                 String(NativeApp.processId),
                 termWin.title,
-                String(termWin.width || termWin.implicitWidth),
-                String(termWin.height || termWin.implicitHeight),
+                "2",
                 termWin.mainWindowTitle
             ];
-            centerProcess.running = true;
+            placementProcess.running = true;
         }
     }
 
     NativeProcess {
-        id: centerProcess
+        id: placementProcess
         errorOutput: LineParser { onRead: data => console.warn("Terminal rápida: " + data) }
+        onExited: if (termWin.visible) focusRetry.restart()
     }
 
     MattePanel {
         anchors.fill: parent
         anchors.margins: 1
         radius: 18
-        topColor: "#58141c26"
-        bottomColor: "#6e0c121a"
+        topColor: "#5c121922"
+        bottomColor: "#740a1018"
         edgeColor: "#4cffffff"
     }
 
     GlassToolTipTheme {}
 
-    ColumnLayout {
+    // Clic en cualquier zona vacía enfoca inmediatamente el prompt de la terminal
+    MouseArea {
         anchors.fill: parent
-        anchors.margins: 14
+        onClicked: termWin.focusPrompt()
+    }
+
+    // Flujo continuo estilo terminal Linux real
+    ListView {
+        id: logList
+        objectName: "quickTerminalLog"
+        anchors.fill: parent
+        anchors.leftMargin: 18
+        anchors.rightMargin: 18
+        anchors.topMargin: 16
+        anchors.bottomMargin: 16
+        clip: true
         spacing: 10
+        model: terminalLog
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        // Cabecera: icono, ruta actual y botones rápidos para inicializar Work / App aquí
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
+        delegate: ColumnLayout {
+            required property string promptCwd
+            required property string command
+            required property string output
+            required property bool ok
+            width: logList.width
+            spacing: 4
 
-            GlassPanel {
-                implicitWidth: 28
-                implicitHeight: 28
-                radius: 8
-                reflective: false
-                topColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#22ffffff"
-                bottomColor: "#0cffffff"
-                edgeColor: GemaTheme.synced ? GemaTheme.accentAlpha(0.55) : "#44ffffff"
-                GemaIcon {
-                    anchors.centerIn: parent
-                    name: "terminal"
-                    size: 14
-                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
-                }
-            }
-
-            Text {
+            // Prompt histórico estilo Starship
+            RowLayout {
                 Layout.fillWidth: true
-                text: termWin.shortCwd(termWin.cwd || termWin.bridge.workspace)
-                textFormat: Text.PlainText
-                elide: Text.ElideMiddle
-                color: GemaTheme.textColor
-                font.family: "monospace"
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-                style: Text.Raised
-                styleColor: GemaTheme.textShadow
-            }
-
-            ActionButton {
-                objectName: "terminalInitWorkBtn"
-                text: "+ Work aquí"
-                font.pixelSize: 11
-                implicitHeight: 28
-                horizontalPadding: 10
-                verticalPadding: 0
-                enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
-                ToolTip.visible: hovered
-                ToolTip.delay: 350
-                ToolTip.text: "Inicializar o abrir la carpeta actual como proyecto en Work"
-                onClicked: termWin.runCommand("init work")
-            }
-
-            ActionButton {
-                objectName: "terminalInitAppBtn"
-                text: "+ App aquí"
-                accent: true
-                font.pixelSize: 11
-                implicitHeight: 28
-                horizontalPadding: 10
-                verticalPadding: 0
-                enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
-                ToolTip.visible: hovered
-                ToolTip.delay: 350
-                ToolTip.text: "Inicializar o abrir la carpeta actual como aplicación Gema UI Kit"
-                onClicked: termWin.runCommand("init app")
-            }
-
-            ActionButton {
-                implicitWidth: 28
-                implicitHeight: 28
-                horizontalPadding: 0
-                verticalPadding: 0
-                text: "×"
-                font.pixelSize: 15
-                ToolTip.visible: hovered
-                ToolTip.delay: 350
-                ToolTip.text: "Cerrar terminal (Esc)"
-                onClicked: termWin.visible = false
-            }
-        }
-
-        // Salida de comandos
-        GlassPanel {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: 12
-            reflective: false
-            topColor: "#12080d14"
-            bottomColor: "#18060a10"
-            edgeColor: "#28ffffff"
-
-            ListView {
-                id: logList
-                objectName: "quickTerminalLog"
-                anchors.fill: parent
-                anchors.margins: 10
-                clip: true
-                spacing: 8
-                model: terminalLog
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                delegate: ColumnLayout {
-                    required property string cwd
-                    required property string command
-                    required property string output
-                    required property bool ok
-                    width: logList.width
-                    spacing: 3
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: command.length > 0
-                        spacing: 6
-                        Text {
-                            text: "❯"
-                            color: ok ? (GemaTheme.synced ? GemaTheme.accent : "#7ef5a8") : "#ff8a80"
-                            font.family: "monospace"
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: command
-                            textFormat: Text.PlainText
-                            color: "#ffffff"
-                            font.family: "monospace"
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                            wrapMode: Text.WrapAnywhere
-                        }
-                    }
-
-                    TextEdit {
-                        Layout.fillWidth: true
-                        visible: output.length > 0
-                        text: output
-                        textFormat: TextEdit.PlainText
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.WrapAnywhere
-                        color: ok ? "#cfd8e6" : "#ffb4ab"
-                        font.family: "monospace"
-                        font.pixelSize: 11
-                        selectionColor: "#ffffff"
-                        selectedTextColor: "#000000"
-                    }
+                spacing: 6
+                Text {
+                    text: "◆"
+                    color: GemaTheme.synced ? GemaTheme.accent : "#a8d4ff"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                }
+                Text {
+                    text: termWin.userName
+                    color: GemaTheme.textColor
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: termWin.shortCwd(promptCwd)
+                    textFormat: Text.PlainText
+                    elide: Text.ElideMiddle
+                    color: GemaTheme.synced ? GemaTheme.accentAlpha(0.85) : "#96c2f0"
+                    font.family: "monospace"
+                    font.pixelSize: 12
                 }
             }
-        }
-
-        // Línea de entrada de comandos con historial ↑/↓
-        GlassPanel {
-            Layout.fillWidth: true
-            implicitHeight: 38
-            radius: 11
-            reflective: false
-            highlighted: cmdInput.activeFocus
-            topColor: cmdInput.activeFocus ? "#22ffffff" : "#14ffffff"
-            bottomColor: "#0a060a10"
-            edgeColor: cmdInput.activeFocus
-                ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.70) : "#64ffffff")
-                : "#2cffffff"
 
             RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 8
-                spacing: 8
+                Layout.fillWidth: true
+                spacing: 7
+                Text {
+                    text: "❯"
+                    color: ok ? "#68f098" : "#ff8a80"
+                    font.family: "monospace"
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: command
+                    textFormat: Text.PlainText
+                    color: "#f5f7fa"
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    wrapMode: Text.WrapAnywhere
+                }
+            }
+
+            TextEdit {
+                Layout.fillWidth: true
+                Layout.leftMargin: 14
+                visible: output.length > 0
+                text: output
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                color: ok ? "#cfd8e6" : "#ffb4ab"
+                font.family: "monospace"
+                font.pixelSize: 12
+                selectionColor: "#ffffff"
+                selectedTextColor: "#000000"
+            }
+        }
+
+        // Prompt activo en línea directamente en el flujo de la terminal
+        footer: ColumnLayout {
+            id: livePrompt
+            width: logList.width
+            spacing: 4
+
+            function focusInput() {
+                cmdInput.forceActiveFocus();
+                cmdInput.cursorPosition = cmdInput.length;
+            }
+
+            Item { implicitHeight: logList.count > 0 ? 4 : 0 }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Text {
+                    text: "◆"
+                    color: GemaTheme.synced ? GemaTheme.accent : "#a8d4ff"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                }
+                Text {
+                    text: termWin.userName
+                    color: GemaTheme.textColor
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: termWin.shortCwd(termWin.cwd || termWin.bridge.workspace)
+                    textFormat: Text.PlainText
+                    elide: Text.ElideMiddle
+                    color: GemaTheme.synced ? GemaTheme.accentAlpha(0.88) : "#96c2f0"
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 7
 
                 Text {
                     text: termWin.runningCommand ? "…" : "❯"
-                    color: GemaTheme.synced ? GemaTheme.accent : "#ffffff"
+                    color: termWin.runningCommand
+                           ? (GemaTheme.synced ? GemaTheme.accent : "#ffd080")
+                           : "#68f098"
                     font.family: "monospace"
                     font.pixelSize: 13
                     font.bold: true
@@ -317,19 +313,41 @@ NativeWindow {
                     id: cmdInput
                     objectName: "quickTerminalInput"
                     Layout.fillWidth: true
-                    verticalAlignment: TextInput.AlignVCenter
                     enabled: !termWin.runningCommand
-                    color: "#f5f5f5"
+                    color: "#ffffff"
                     selectionColor: "#ffffff"
                     selectedTextColor: "#000000"
                     font.family: "monospace"
                     font.pixelSize: 12
                     selectByMouse: true
                     clip: true
-                    onAccepted: termWin.runCommand(text)
+                    cursorDelegate: Rectangle {
+                        width: 7
+                        height: cmdInput.cursorRectangle.height > 0 ? cmdInput.cursorRectangle.height : 15
+                        radius: 1.5
+                        color: GemaTheme.synced ? GemaTheme.accent : "#a8d8ff"
+                        opacity: cmdInput.activeFocus ? 0.9 : 0.0
+                        SequentialAnimation on opacity {
+                            running: cmdInput.activeFocus && GemaTheme.animations
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.9; to: 0.25; duration: 500; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 0.25; to: 0.9; duration: 500; easing.type: Easing.InOutSine }
+                        }
+                    }
+                    onAccepted: {
+                        const value = text;
+                        text = "";
+                        termWin.runCommand(value);
+                    }
                     Keys.onPressed: event => {
                         if (event.key === Qt.Key_Escape) {
                             termWin.visible = false;
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier)) {
+                            terminalLog.clear();
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
+                            cmdInput.text = "";
                             event.accepted = true;
                         } else if (event.key === Qt.Key_Up) {
                             if (termWin.commandHistory.length) {
@@ -357,15 +375,67 @@ NativeWindow {
                     Text {
                         anchors.fill: parent
                         verticalAlignment: Text.AlignVCenter
-                        visible: !cmdInput.text
-                        text: "cd ~/Dev/mi-app · init app · init work · ls · help"
-                        color: "#768292"
+                        visible: !cmdInput.text && logList.count === 0
+                        text: "cd ~/Dev/mi-app · init work · init app · ls · help"
+                        color: "#607084"
                         font.family: "monospace"
                         font.pixelSize: 11
                         elide: Text.ElideRight
                     }
                 }
             }
+        }
+    }
+
+    // Acciones discretas flotantes en la esquina superior derecha (+ Work, + App, ×)
+    Row {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 10
+        anchors.rightMargin: 12
+        spacing: 5
+        z: 5
+
+        ActionButton {
+            objectName: "terminalInitWorkBtn"
+            text: "+ Work"
+            font.pixelSize: 10
+            implicitHeight: 24
+            horizontalPadding: 8
+            verticalPadding: 0
+            enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
+            ToolTip.visible: hovered
+            ToolTip.delay: 350
+            ToolTip.text: "Inicializar o abrir esta carpeta en Work"
+            onClicked: termWin.runCommand("init work")
+        }
+
+        ActionButton {
+            objectName: "terminalInitAppBtn"
+            text: "+ App"
+            accent: true
+            font.pixelSize: 10
+            implicitHeight: 24
+            horizontalPadding: 8
+            verticalPadding: 0
+            enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
+            ToolTip.visible: hovered
+            ToolTip.delay: 350
+            ToolTip.text: "Inicializar o abrir esta carpeta en App (Gema UI Kit)"
+            onClicked: termWin.runCommand("init app")
+        }
+
+        ActionButton {
+            implicitWidth: 24
+            implicitHeight: 24
+            horizontalPadding: 0
+            verticalPadding: 0
+            text: "×"
+            font.pixelSize: 13
+            ToolTip.visible: hovered
+            ToolTip.delay: 350
+            ToolTip.text: "Cerrar terminal (Esc)"
+            onClicked: termWin.visible = false
         }
     }
 }
