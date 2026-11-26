@@ -12,6 +12,16 @@ GlassDialog {
     onOpened: {
         directory.text = bridge.workspace;
     }
+    GlassFolderDialog {
+        id: shellFolderPicker
+        bridge: dialog.bridge
+        parent: dialog.parent
+        anchors.centerIn: parent
+        width: Math.min(520, parent ? parent.width - 28 : 520)
+        height: Math.min(520, parent ? parent.height - 36 : 520)
+        title: "Seleccionar carpeta de trabajo"
+        onFolderSelected: path => directory.text = path
+    }
     contentItem: ColumnLayout {
         spacing: 12
         Text {
@@ -20,7 +30,21 @@ GlassDialog {
             color: "#cccccc"
             font.pixelSize: 12
         }
-        Text { text: dialog.bridge.activeArea === "app" ? "Carpeta de la aplicación" : dialog.bridge.activeArea === "work" ? "Carpeta del proyecto" : "Directorio de Chat"; color: "#ffffff"; font.pixelSize: 12 }
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                text: dialog.bridge.activeArea === "app" ? "Carpeta de la aplicación" : dialog.bridge.activeArea === "work" ? "Carpeta del proyecto" : "Directorio de Chat"
+                color: "#ffffff"
+                font.pixelSize: 12
+            }
+            ActionButton {
+                text: "Elegir carpeta"
+                font.pixelSize: 11
+                verticalPadding: 6
+                onClicked: shellFolderPicker.openAt(directory.text.trim() || dialog.bridge.workspace)
+            }
+        }
         GlassPanel {
             Layout.fillWidth: true
             implicitHeight: 76

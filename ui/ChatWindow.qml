@@ -105,6 +105,10 @@ NativeWindow {
     readonly property ImagePreviewWindow imagePreviewWindow: ImagePreviewWindow {
         mainWindowTitle: window.title
     }
+    readonly property QuickTerminalWindow quickTerminalWindow: QuickTerminalWindow {
+        bridge: window.bridge
+        mainWindowTitle: window.title
+    }
     function openUsage() {
         usagePreferred = true;
         if (bridge.unifiedMode) unifiedUsage.open();
@@ -698,6 +702,7 @@ NativeWindow {
                 statusText: window.bridge.status + (window.bridge.busy ? " · " + Performance.duration(window.elapsedMs) : "")
                 onPerformanceRequested: measurement => window.showPerformance(measurement)
                 onImagePreviewRequested: url => window.imagePreviewWindow.openImage(url)
+                onTerminalRequested: window.quickTerminalWindow.toggleTerminal()
             }
         }
     }

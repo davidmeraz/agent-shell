@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import "../.."
 import "../shared"
 
@@ -45,12 +44,17 @@ GlassDialog {
             if (dialog.visible && (currentKey.startsWith("work:") || currentKey.startsWith("app:")) && dialog.bridge.projectId) dialog.close();
         }
     }
-    FolderDialog {
+    GlassFolderDialog {
         id: folderPicker
+        bridge: dialog.bridge
+        parent: dialog.parent
+        anchors.centerIn: parent
+        width: Math.min(520, parent ? parent.width - 28 : 520)
+        height: Math.min(520, parent ? parent.height - 36 : 520)
         title: dialog.isAppMode ? "Carpeta de la aplicación" : "Carpeta del proyecto"
-        onAccepted: {
+        onFolderSelected: path => {
             dialog.customDirectoryEdited = true;
-            directory.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""));
+            directory.text = path;
         }
     }
     contentItem: ColumnLayout {
@@ -119,7 +123,7 @@ GlassDialog {
                 enabled: !dialog.bridge.areaBusy
                 font.pixelSize: 11
                 verticalPadding: 6
-                onClicked: folderPicker.open()
+                onClicked: folderPicker.openAt(directory.text.trim() || dialog.bridge.workspace)
             }
         }
         TextField {

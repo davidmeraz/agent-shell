@@ -2687,6 +2687,217 @@ class HarnessServer:
                     self._finish("failed", str(error) if isinstance(error, ServiceError) else
                                  "No se pudo completar la respuesta con Claude Code.")
 
+    def _run_quick_terminal(self, request: dict) -> None:
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+            request_id = ""
+        raw_cmd = request.get("command")
+        raw_cwd = request.get("cwd")
+        if not isinstance(raw_cmd, str):
+            self._emit("terminal.result", request_id=request_id, cwd=str(self.workspace),
+                       command="", output="Comando inválido.", exit_code=1, status="error")
+            return
+        cmd = raw_cmd.strip()
+        try:
+            cwd = Path(raw_cwd).expanduser().resolve() if isinstance(raw_cwd, str) and raw_cwd.strip() else self.workspace
+            if not cwd.is_dir():
+                cwd = self.workspace
+        except OSError:
+            cwd = self.workspace
+
+        if not cmd:
+            self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                       command="", output="", exit_code=0, status="completed")
+            return
+
+        if cmd in ("help", "ayuda"):
+            help_text = (
+                "Comandos rápidos de Agent Shell Terminal:\n"
+                "  cd <ruta>                  Cambiar de directorio (soporta ~, .., rutas relativas/absolutas)\n"
+                "  init work [nombre]         Inicializar o abrir la carpeta actual como proyecto Work\n"
+                "  init app [nombre] [rust]   Inicializar o abrir la carpeta actual como App Gema UI Kit\n"
+                "  clear                      Limpiar la pantalla\n"
+                "  <cualquier comando>        Ejecutar directamente en la carpeta actual (ls, git, mkdir…)"
+            )
+            self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                       command=cmd, output=help_text, exit_code=0, status="completed")
+            return
+
+        if cmd == "cd" or cmd.startswith("cd "):
+            target_arg = cmd[2:].strip()
+            if not target_arg or target_arg == "~":
+                target = Path.home()
+            else:
+                expanded = Path(os.path.expandvars(target_arg)).expanduser()
+                target = expanded if expanded.is_absolute() else (cwd / expanded)
+            try:
+                resolved = target.resolve(strict=True)
+                if not resolved.is_dir():
+                    raise NotADirectoryError(str(resolved))
+                self._emit("terminal.result", request_id=request_id, cwd=str(resolved),
+                           command=cmd, output=str(resolved), exit_code=0, status="completed")
+            except OSError as exc:
+                self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                           command=cmd, output=f"cd: no se pudo entrar en '{target_arg}': {exc.strerror or exc}",
+                           exit_code=1, status="error")
+            return
+
+        if cmd.startswith("init work") or cmd.startswith("init app"):
+            if self.busy or self.login_pending or self.account_pending:
+                self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                           command=cmd, output="Espera a que termine la operación actual antes de cambiar de espacio.",
+                           exit_code=1, status="error")
+                return
+            is_app = cmd.startswith("init app")
+            rest = cmd[len("init app") if is_app else len("init work"):].strip()
+            engine = "python"
+            tokens = rest.split() if rest else []
+            filtered_tokens = []
+            for tok in tokens:
+                low = tok.lower()
+                if is_app and low in ("rust", "--rust", "python", "--python"):
+                    engine = "rust" if "rust" in low else "python"
+                else:
+                    filtered_tokens.append(tok)
+            name = " ".join(filtered_tokens).strip() or cwd.name or ("Mi App" if is_app else "Mi Proyecto")
+            try:
+                existing = next((row for row in self.projects.list() if row["workdir"] == str(cwd)), None)
+                if existing is not None:
+                    kind = existing.get("kind", "work")
+                    self._select_area(kind, existing["project_id"])
+                    msg = f"Abierto {kind.upper()} existente: {existing['name']} ({cwd})"
+                elif is_app:
+                    folder = scaffold_gema_app(cwd, name, engine)
+                    project = self.projects.create(name, str(folder), kind="app", engine=engine)
+                    self._select_area("app", project["project_id"])
+                    msg = f"Aplicación Gema UI Kit ({engine}) inicializada: {name} ({folder})"
+                else:
+                    project = self.projects.create(name, str(cwd), kind="work")
+                    self._select_area("work", project["project_id"])
+                    msg = f"Proyecto Work inicializado: {name} ({cwd})"
+                self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                           command=cmd, output=msg, exit_code=0, status="completed")
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
+                           command=cmd, output=str(exc), exit_code=1, status="error")
+            return
+
+        def _worker() -> None:
+            result = ShellExecutor(cwd, timeout=min(60, self.limits.shell_timeout)).execute(cmd)
+            self._emit(
+                "terminal.result",
+                request_id=request_id,
+                cwd=str(cwd),
+                command=cmd,
+                output=result.get("output", ""),
+                exit_code=result.get("exit_code"),
+                status=result.get("status", "completed"),
+            )
+
+        self._spawn(_worker)
+
+    def _browse_fs(self, request: dict) -> None:
+        action = request.get("type")
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+            request_id = ""
+        home = Path.home().resolve()
+        try:
+            if action == "fs.mkdir":
+                parent_raw = request.get("parent")
+                name_raw = request.get("name")
+                if not isinstance(parent_raw, str) or not parent_raw.strip():
+                    raise ValueError("Carpeta padre inválida.")
+                if not isinstance(name_raw, str):
+                    raise ValueError("Nombre de carpeta inválido.")
+                name = name_raw.strip()
+                if not name or len(name) > 80 or "/" in name or "\\" in name or "\0" in name or name in (".", ".."):
+                    raise ValueError("Escribe un nombre de carpeta válido (sin barras).")
+                parent_dir = Path(parent_raw).expanduser().resolve(strict=True)
+                if not parent_dir.is_dir():
+                    raise ValueError("La carpeta padre no existe.")
+                new_dir = parent_dir / name
+                new_dir.mkdir(exist_ok=False)
+                target = new_dir.resolve()
+                show_hidden = bool(request.get("show_hidden", False))
+            else:
+                raw_path = request.get("path")
+                show_hidden = bool(request.get("show_hidden", False))
+                candidate = Path(raw_path).expanduser() if isinstance(raw_path, str) and raw_path.strip() else home
+                while not candidate.is_dir() and candidate != candidate.parent:
+                    candidate = candidate.parent
+                target = candidate.resolve() if candidate.is_dir() else home
+
+            entries = []
+            try:
+                with os.scandir(target) as it:
+                    for entry in it:
+                        name = entry.name
+                        if not show_hidden and name.startswith("."):
+                            continue
+                        try:
+                            if not entry.is_dir(follow_symlinks=True):
+                                continue
+                        except OSError:
+                            continue
+                        child_path = target / name
+                        try:
+                            is_gema = (child_path / "shell.qml").is_file() and (child_path / "scripts" / "run.sh").is_file()
+                            has_git = (child_path / ".git").exists()
+                        except OSError:
+                            is_gema = False
+                            has_git = False
+                        entries.append({
+                            "name": name,
+                            "path": str(child_path),
+                            "is_gema_app": is_gema,
+                            "has_git": has_git,
+                        })
+                        if len(entries) >= 500:
+                            break
+            except PermissionError as exc:
+                raise ValueError("Sin permisos para leer esta carpeta.") from exc
+
+            entries.sort(key=lambda item: item["name"].casefold())
+            shortcuts = [{"label": "Inicio", "path": str(home)}]
+            seen_paths = {str(home)}
+            for label, folder in (
+                ("Dev", home / "Dev"),
+                ("Quickshell", home / "Dev" / "quickshell"),
+                ("Proyectos", home / "Proyectos"),
+                ("Projects", home / "Projects"),
+                ("Escritorio", home / "Desktop"),
+                ("Documentos", home / "Documents"),
+            ):
+                if folder.is_dir():
+                    resolved = str(folder.resolve())
+                    if resolved not in seen_paths:
+                        seen_paths.add(resolved)
+                        shortcuts.append({"label": label, "path": resolved})
+            ws_str = str(self.workspace)
+            if self.workspace.is_dir() and ws_str not in seen_paths:
+                shortcuts.append({"label": "Actual", "path": ws_str})
+
+            parent_str = str(target.parent) if target.parent != target else ""
+            self._emit(
+                "fs.listed",
+                request_id=request_id,
+                path=str(target),
+                parent=parent_str,
+                home=str(home),
+                shortcuts=shortcuts,
+                entries=entries,
+                error="",
+            )
+        except FileExistsError:
+            self._emit("fs.error", request_id=request_id, message="Ya existe una carpeta con ese nombre.")
+        except (OSError, ValueError, TypeError) as error:
+            self._emit(
+                "fs.error",
+                request_id=request_id,
+                message=str(error) if isinstance(error, ValueError) else "No se pudo abrir o crear la carpeta.",
+            )
+
     def _explore(self, request: dict) -> None:
         project_id = request.get("project_id")
         request_id = request.get("request_id")
@@ -2894,6 +3105,12 @@ class HarnessServer:
                 return
             if action in ("explorer.list", "explorer.read"):
                 self._explore(request)
+                return
+            if action in ("fs.list", "fs.mkdir"):
+                self._browse_fs(request)
+                return
+            if action == "terminal.exec":
+                self._run_quick_terminal(request)
                 return
             if action in ("git.flow", "git.commit"):
                 self._git_flow(request)

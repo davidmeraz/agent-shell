@@ -108,6 +108,8 @@ QtObject {
     property double firstReceivedAt: 0
     property bool framePending: false
     property int clipboardSequence: 0
+    property int fsSequence: 0
+    property int terminalSequence: 0
     readonly property var modelPerformance: Performance.models(performanceHistory)
     readonly property ListModel messages: ListModel {}
     readonly property ListModel conversations: ListModel {}
@@ -131,6 +133,9 @@ QtObject {
     signal localCommandRequested(string command)
     signal areaChanged(string previousKey, string currentKey)
     signal clipboardResult(var result)
+    signal fsListed(var data)
+    signal fsError(var data)
+    signal terminalResult(var data)
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
@@ -161,6 +166,27 @@ QtObject {
         if (!ready) return "";
         const requestId = "clipboard-" + Date.now() + "-" + (++clipboardSequence);
         sendCommand({ type: "clipboard.paste", request_id: requestId });
+        return requestId;
+    }
+
+    function listFolders(path, showHidden = false) {
+        if (!ready) return "";
+        const requestId = "fs-" + Date.now() + "-" + (++fsSequence);
+        sendCommand({ type: "fs.list", request_id: requestId, path: path || "", show_hidden: !!showHidden });
+        return requestId;
+    }
+
+    function createFolder(parentPath, name, showHidden = false) {
+        if (!ready) return "";
+        const requestId = "fs-" + Date.now() + "-" + (++fsSequence);
+        sendCommand({ type: "fs.mkdir", request_id: requestId, parent: parentPath || "", name: name || "", show_hidden: !!showHidden });
+        return requestId;
+    }
+
+    function execTerminal(command, cwd) {
+        if (!ready) return "";
+        const requestId = "term-" + Date.now() + "-" + (++terminalSequence);
+        sendCommand({ type: "terminal.exec", request_id: requestId, command: command || "", cwd: cwd || workspace || "" });
         return requestId;
     }
 
@@ -606,6 +632,12 @@ QtObject {
             flushPendingText();
         if (event.type === "clipboard.result") {
             clipboardResult(data);
+        } else if (event.type === "fs.listed") {
+            fsListed(data);
+        } else if (event.type === "fs.error") {
+            fsError(data);
+        } else if (event.type === "terminal.result") {
+            terminalResult(data);
         } else if (event.type === "area.state") {
             const previousKey = areaKey;
             activeArea = data.area;

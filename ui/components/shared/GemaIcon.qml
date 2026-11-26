@@ -186,6 +186,15 @@ Item {
                 // Cuadrado redondeado de detención
                 roundedRectPath(7, 7, 10, 10, 2.4);
                 ctx.fill();
+            } else if (root.name === "terminal") {
+                // Prompt de terminal minimalista (>_)
+                ctx.beginPath();
+                ctx.moveTo(5.2, 7.6);
+                ctx.lineTo(10.2, 12.0);
+                ctx.lineTo(5.2, 16.4);
+                ctx.moveTo(12.2, 16.4);
+                ctx.lineTo(18.8, 16.4);
+                ctx.stroke();
             } else if (root.name === "usage") {
                 // Medidor circular minimalista de cuota / crédito
                 ctx.beginPath();

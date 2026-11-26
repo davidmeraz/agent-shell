@@ -29,6 +29,7 @@ GlassPanel {
     }
     signal performanceRequested(var measurement)
     signal imagePreviewRequested(string imageUrl)
+    signal terminalRequested()
     readonly property var contextMeasurement: bridge.latestPerformance
     readonly property string contextModel: unified ? (architect.model || "") : bridge.modelName
     readonly property bool hasContext: !bridge.shellRunning && !!bridge.currentChatId
@@ -837,6 +838,46 @@ GlassPanel {
                 color: prompt.text.length > 16000 ? "#ff8a80" : "#aaaaaa"
                 font.pixelSize: 10
                 Accessible.name: prompt.text.length + " de 16000 caracteres"
+            }
+            Button {
+                id: terminalButton
+                objectName: "chatTerminalButton"
+                implicitWidth: 34
+                implicitHeight: 34
+                padding: 0
+                hoverEnabled: true
+                Layout.alignment: Qt.AlignVCenter
+                enabled: composer.bridge.ready
+                scale: down ? 0.92 : (hovered ? 1.06 : 1.0)
+                Behavior on scale { NumberAnimation { duration: GemaTheme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+                Accessible.name: "Abrir terminal rápida"
+                ToolTip.visible: hovered
+                ToolTip.delay: 380
+                ToolTip.text: "Terminal rápida (navegar directorios, init work / init app)"
+                onClicked: composer.terminalRequested()
+                contentItem: Item {
+                    GemaIcon {
+                        anchors.centerIn: parent
+                        name: "terminal"
+                        size: 16
+                        color: !terminalButton.enabled ? "#666666"
+                             : terminalButton.hovered ? (GemaTheme.synced ? GemaTheme.accent : "#ffffff") : GemaTheme.mutedColor
+                        Behavior on color { ColorAnimation { duration: GemaTheme.animDuration } }
+                    }
+                }
+                background: GlassPanel {
+                    radius: 17
+                    reflective: terminalButton.hovered
+                    highlighted: terminalButton.activeFocus || terminalButton.hovered
+                    topColor: terminalButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.24) : "#26ffffff")
+                        : "#14ffffff"
+                    bottomColor: "#0affffff"
+                    edgeColor: terminalButton.hovered
+                        ? (GemaTheme.synced ? GemaTheme.accentAlpha(0.60) : "#54ffffff")
+                        : "#2cffffff"
+                    opacity: terminalButton.enabled ? 1.0 : 0.45
+                }
             }
             Button {
                 id: sendButton
