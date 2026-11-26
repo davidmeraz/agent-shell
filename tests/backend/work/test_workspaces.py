@@ -481,3 +481,20 @@ class WorkspaceTests(unittest.TestCase):
         self.server.handle({"type": "app.delete", "project_id": app_id})
         self.output.wait_for("project.deleted")
         self.assertFalse(desktop_file.exists())
+
+    def test_quick_terminal_runs_commands_in_own_window_without_touching_chat(self):
+        self.server.handle({"type": "terminal.exec", "request_id": "t-ls", "command": "pwd", "cwd": str(self.folders[0])})
+        res = self.output.wait_for("terminal.result")
+        self.assertEqual(res["request_id"], "t-ls")
+        self.assertEqual(res["exit_code"], 0)
+        self.assertEqual(res["output"].strip(), str(self.folders[0]))
+        self.assertIsNone(self.server.conversation)
+        # Cambiar directorio con cd e inicializar proyecto Work
+        self.server.handle({"type": "terminal.exec", "request_id": "t-cd", "command": f"cd '{self.folders[1]}'", "cwd": str(self.folders[0])})
+        cd_res = self.output.wait_for("terminal.result")
+        self.assertEqual(cd_res["cwd"], str(self.folders[1]))
+        self.server.handle({"type": "terminal.exec", "request_id": "t-init", "command": "init work MiProyectoCLI", "cwd": cd_res["cwd"]})
+        init_res = self.output.wait_for("terminal.result")
+        self.assertEqual(init_res["exit_code"], 0)
+        self.assertEqual(self.server.active_area, "work")
+        self.assertEqual(self.server.project["name"], "MiProyectoCLI")

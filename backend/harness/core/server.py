@@ -2725,6 +2725,8 @@ class HarnessServer:
 
         if cmd == "cd" or cmd.startswith("cd "):
             target_arg = cmd[2:].strip()
+            if len(target_arg) >= 2 and target_arg[0] == target_arg[-1] and target_arg[0] in ("'", '"'):
+                target_arg = target_arg[1:-1]
             if not target_arg or target_arg == "~":
                 target = Path.home()
             else:
@@ -2783,16 +2785,28 @@ class HarnessServer:
             return
 
         def _worker() -> None:
-            result = ShellExecutor(cwd, timeout=min(60, self.limits.shell_timeout)).execute(cmd)
-            self._emit(
-                "terminal.result",
-                request_id=request_id,
-                cwd=str(cwd),
-                command=cmd,
-                output=result.get("output", ""),
-                exit_code=result.get("exit_code"),
-                status=result.get("status", "completed"),
-            )
+            try:
+                control = ShellControl(self._closing)
+                result = ShellExecutor(cwd, timeout=min(60, self.limits.shell_timeout)).execute(cmd, control)
+                self._emit(
+                    "terminal.result",
+                    request_id=request_id,
+                    cwd=str(cwd),
+                    command=cmd,
+                    output=result.get("output", ""),
+                    exit_code=result.get("exit_code"),
+                    status=result.get("status", "completed"),
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                self._emit(
+                    "terminal.result",
+                    request_id=request_id,
+                    cwd=str(cwd),
+                    command=cmd,
+                    output=str(exc) or "Error al ejecutar el comando en la terminal.",
+                    exit_code=1,
+                    status="error",
+                )
 
         self._spawn(_worker)
 
