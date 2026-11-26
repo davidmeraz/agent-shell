@@ -15,6 +15,8 @@ NativeWindow {
     property string cwd: ""
     property bool runningCommand: false
     property string pendingRequestId: ""
+    property string pendingTabId: ""
+    property var tabMatches: []
     property var commandHistory: []
     property int historyCursor: -1
     readonly property string userName: NativeApp.env("USER") || "user"
@@ -80,6 +82,7 @@ NativeWindow {
 
     function runCommand(rawText) {
         const cmd = (rawText || "").trim();
+        tabMatches = [];
         if (!cmd || runningCommand) return;
         historyCursor = -1;
         if (!commandHistory.length || commandHistory[commandHistory.length - 1] !== cmd)
@@ -105,6 +108,7 @@ NativeWindow {
             const prevCwd = termWin.cwd || termWin.bridge.workspace;
             termWin.runningCommand = false;
             termWin.pendingRequestId = "";
+            termWin.tabMatches = [];
             if (data.cwd) termWin.cwd = data.cwd;
             terminalLog.append({
                 promptCwd: prevCwd,
@@ -116,6 +120,15 @@ NativeWindow {
                 logList.positionViewAtEnd();
                 termWin.focusPrompt();
             });
+        }
+        function onTerminalCompleted(data) {
+            if (termWin.pendingTabId && data.request_id && data.request_id !== termWin.pendingTabId)
+                return;
+            termWin.pendingTabId = "";
+            if (logList.footerItem && logList.footerItem.applyCompletion)
+                logList.footerItem.applyCompletion(data.completed_line || "");
+            termWin.tabMatches = data.matches || [];
+            Qt.callLater(() => logList.positionViewAtEnd());
         }
     }
 
@@ -265,6 +278,10 @@ NativeWindow {
                 cmdInput.forceActiveFocus();
                 cmdInput.cursorPosition = cmdInput.length;
             }
+            function applyCompletion(nextLine) {
+                cmdInput.text = nextLine;
+                cmdInput.cursorPosition = cmdInput.length;
+            }
 
             Item { implicitHeight: logList.count > 0 ? 4 : 0 }
 
@@ -340,14 +357,19 @@ NativeWindow {
                         termWin.runCommand(value);
                     }
                     Keys.onPressed: event => {
-                        if (event.key === Qt.Key_Escape) {
+                        if (event.key === Qt.Key_Tab) {
+                            termWin.pendingTabId = termWin.bridge.completeTerminal(cmdInput.text, termWin.cwd || termWin.bridge.workspace);
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_Escape) {
                             termWin.visible = false;
                             event.accepted = true;
                         } else if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier)) {
                             terminalLog.clear();
+                            termWin.tabMatches = [];
                             event.accepted = true;
                         } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
                             cmdInput.text = "";
+                            termWin.tabMatches = [];
                             event.accepted = true;
                         } else if (event.key === Qt.Key_Up) {
                             if (termWin.commandHistory.length) {
@@ -376,7 +398,7 @@ NativeWindow {
                         anchors.fill: parent
                         verticalAlignment: Text.AlignVCenter
                         visible: !cmdInput.text && logList.count === 0
-                        text: "cd ~/Dev/mi-app · init work · init app · ls · help"
+                        text: "cd <carpeta> (Tab) · work [nombre] · app [nombre] [rust] · help"
                         color: "#607084"
                         font.family: "monospace"
                         font.pixelSize: 11
@@ -384,58 +406,47 @@ NativeWindow {
                     }
                 }
             }
+
+            // Sugerencias de autocompletado Tab estilo zsh/bash debajo del prompt
+            Flow {
+                Layout.fillWidth: true
+                Layout.leftMargin: 14
+                Layout.topMargin: 2
+                visible: termWin.tabMatches.length > 0
+                spacing: 12
+                Repeater {
+                    model: termWin.tabMatches
+                    delegate: Text {
+                        required property string modelData
+                        text: modelData
+                        textFormat: Text.PlainText
+                        color: modelData.endsWith("/")
+                               ? (GemaTheme.synced ? GemaTheme.accent : "#96c2f0")
+                               : "#cfd8e6"
+                        font.family: "monospace"
+                        font.pixelSize: 11
+                    }
+                }
+            }
         }
     }
 
-    // Acciones discretas flotantes en la esquina superior derecha (+ Work, + App, ×)
-    Row {
+    // Botón discreto de cierre en la esquina superior derecha
+    ActionButton {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 10
         anchors.rightMargin: 12
-        spacing: 5
         z: 5
-
-        ActionButton {
-            objectName: "terminalInitWorkBtn"
-            text: "+ Work"
-            font.pixelSize: 10
-            implicitHeight: 24
-            horizontalPadding: 8
-            verticalPadding: 0
-            enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
-            ToolTip.visible: hovered
-            ToolTip.delay: 350
-            ToolTip.text: "Inicializar o abrir esta carpeta en Work"
-            onClicked: termWin.runCommand("init work")
-        }
-
-        ActionButton {
-            objectName: "terminalInitAppBtn"
-            text: "+ App"
-            accent: true
-            font.pixelSize: 10
-            implicitHeight: 24
-            horizontalPadding: 8
-            verticalPadding: 0
-            enabled: !termWin.runningCommand && termWin.bridge.canSelectArea
-            ToolTip.visible: hovered
-            ToolTip.delay: 350
-            ToolTip.text: "Inicializar o abrir esta carpeta en App (Gema UI Kit)"
-            onClicked: termWin.runCommand("init app")
-        }
-
-        ActionButton {
-            implicitWidth: 24
-            implicitHeight: 24
-            horizontalPadding: 0
-            verticalPadding: 0
-            text: "×"
-            font.pixelSize: 13
-            ToolTip.visible: hovered
-            ToolTip.delay: 350
-            ToolTip.text: "Cerrar terminal (Esc)"
-            onClicked: termWin.visible = false
-        }
+        implicitWidth: 24
+        implicitHeight: 24
+        horizontalPadding: 0
+        verticalPadding: 0
+        text: "×"
+        font.pixelSize: 13
+        ToolTip.visible: hovered
+        ToolTip.delay: 350
+        ToolTip.text: "Cerrar terminal (Esc)"
+        onClicked: termWin.visible = false
     }
 }

@@ -2713,11 +2713,12 @@ class HarnessServer:
         if cmd in ("help", "ayuda"):
             help_text = (
                 "Comandos rápidos de Agent Shell Terminal:\n"
-                "  cd <ruta>                  Cambiar de directorio (soporta ~, .., rutas relativas/absolutas)\n"
-                "  init work [nombre]         Inicializar o abrir la carpeta actual como proyecto Work\n"
-                "  init app [nombre] [rust]   Inicializar o abrir la carpeta actual como App Gema UI Kit\n"
-                "  clear                      Limpiar la pantalla\n"
-                "  <cualquier comando>        Ejecutar directamente en la carpeta actual (ls, git, mkdir…)"
+                "  cd <ruta>             Cambiar de directorio (Tab autocompleta carpetas)\n"
+                "  work [nombre]         Inicializar o abrir la carpeta actual en Work\n"
+                "  app [nombre] [rust]   Inicializar o abrir la carpeta actual en App (Gema UI Kit)\n"
+                "  clear / Ctrl+L        Limpiar la pantalla\n"
+                "  exit / Esc            Cerrar terminal\n"
+                "  <comando>             Ejecutar directamente en la carpeta actual (ls, git, mkdir…)"
             )
             self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
                        command=cmd, output=help_text, exit_code=0, status="completed")
@@ -2744,14 +2745,21 @@ class HarnessServer:
                            exit_code=1, status="error")
             return
 
-        if cmd.startswith("init work") or cmd.startswith("init app"):
+        is_init_app = cmd == "app" or cmd.startswith("app ") or cmd == "init app" or cmd.startswith("init app ")
+        is_init_work = cmd == "work" or cmd.startswith("work ") or cmd == "init work" or cmd.startswith("init work ")
+        if is_init_work or is_init_app:
             if self.busy or self.login_pending or self.account_pending:
                 self._emit("terminal.result", request_id=request_id, cwd=str(cwd),
                            command=cmd, output="Espera a que termine la operación actual antes de cambiar de espacio.",
                            exit_code=1, status="error")
                 return
-            is_app = cmd.startswith("init app")
-            rest = cmd[len("init app") if is_app else len("init work"):].strip()
+            is_app = is_init_app
+            for prefix in ("init app", "init work", "app", "work"):
+                if cmd == prefix or cmd.startswith(prefix + " "):
+                    rest = cmd[len(prefix):].strip()
+                    break
+            else:
+                rest = ""
             engine = "python"
             tokens = rest.split() if rest else []
             filtered_tokens = []
@@ -2809,6 +2817,99 @@ class HarnessServer:
                 )
 
         self._spawn(_worker)
+
+    def _complete_quick_terminal(self, request: dict) -> None:
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+            request_id = ""
+        line = request.get("line") if isinstance(request.get("line"), str) else ""
+        raw_cwd = request.get("cwd")
+        try:
+            cwd = Path(raw_cwd).expanduser().resolve() if isinstance(raw_cwd, str) and raw_cwd.strip() else self.workspace
+            if not cwd.is_dir():
+                cwd = self.workspace
+        except OSError:
+            cwd = self.workspace
+
+        # Si aún se escribe la primera palabra sin espacios, autocompletar comandos rápidos
+        if " " not in line:
+            builtins = ("cd ", "work", "app", "ls", "mkdir ", "pwd", "clear", "help", "exit")
+            matches = [item for item in builtins if item.startswith(line)]
+            if len(matches) == 1:
+                self._emit("terminal.completed", request_id=request_id, completed_line=matches[0], matches=[])
+            else:
+                self._emit("terminal.completed", request_id=request_id, completed_line=line,
+                           matches=[m.strip() for m in matches])
+            return
+
+        # Autocompletar el último argumento de ruta (carpetas para cd; carpetas y archivos para otros comandos)
+        space_idx = line.rfind(" ")
+        prefix_cmd = line[:space_idx + 1]
+        token = line[space_idx + 1:]
+        quote = ""
+        if token and token[0] in ("'", '"'):
+            quote = token[0]
+            token = token[1:]
+        only_dirs = prefix_cmd.lstrip().startswith("cd ")
+
+        slash_idx = token.rfind("/")
+        if slash_idx >= 0:
+            dir_part = token[:slash_idx + 1]
+            partial = token[slash_idx + 1:]
+            base_dir = Path(os.path.expandvars(dir_part)).expanduser()
+            search_dir = base_dir if base_dir.is_absolute() else (cwd / base_dir)
+        else:
+            dir_part = ""
+            partial = token
+            search_dir = cwd
+
+        show_hidden = partial.startswith(".")
+        candidates: list[tuple[str, bool]] = []
+        try:
+            resolved_search = search_dir.resolve()
+            if resolved_search.is_dir():
+                with os.scandir(resolved_search) as it:
+                    for entry in it:
+                        name = entry.name
+                        if not show_hidden and name.startswith("."):
+                            continue
+                        if not name.startswith(partial):
+                            continue
+                        try:
+                            is_dir = entry.is_dir(follow_symlinks=True)
+                        except OSError:
+                            continue
+                        if only_dirs and not is_dir:
+                            continue
+                        candidates.append((name, is_dir))
+                        if len(candidates) >= 60:
+                            break
+        except OSError:
+            candidates = []
+
+        candidates.sort(key=lambda item: (not item[1], item[0].casefold()))
+        if not candidates:
+            self._emit("terminal.completed", request_id=request_id, completed_line=line, matches=[])
+            return
+
+        names = [name for name, _ in candidates]
+        common = os.path.commonprefix(names)
+        if len(candidates) == 1:
+            name, is_dir = candidates[0]
+            suffix = "/" if is_dir else ""
+            needs_quote = (" " in (dir_part + name)) and not quote
+            if needs_quote:
+                completed_token = '"' + dir_part + name + suffix
+            else:
+                completed_token = quote + dir_part + name + suffix
+            self._emit("terminal.completed", request_id=request_id,
+                       completed_line=prefix_cmd + completed_token, matches=[])
+            return
+
+        completed_line = prefix_cmd + quote + dir_part + common if len(common) > len(partial) else line
+        display_matches = [name + ("/" if is_dir else "") for name, is_dir in candidates[:20]]
+        self._emit("terminal.completed", request_id=request_id,
+                   completed_line=completed_line, matches=display_matches)
 
     def _browse_fs(self, request: dict) -> None:
         action = request.get("type")
@@ -3125,6 +3226,9 @@ class HarnessServer:
                 return
             if action == "terminal.exec":
                 self._run_quick_terminal(request)
+                return
+            if action == "terminal.complete":
+                self._complete_quick_terminal(request)
                 return
             if action in ("git.flow", "git.commit"):
                 self._git_flow(request)

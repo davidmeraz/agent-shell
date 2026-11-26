@@ -493,8 +493,15 @@ class WorkspaceTests(unittest.TestCase):
         self.server.handle({"type": "terminal.exec", "request_id": "t-cd", "command": f"cd '{self.folders[1]}'", "cwd": str(self.folders[0])})
         cd_res = self.output.wait_for("terminal.result")
         self.assertEqual(cd_res["cwd"], str(self.folders[1]))
-        self.server.handle({"type": "terminal.exec", "request_id": "t-init", "command": "init work MiProyectoCLI", "cwd": cd_res["cwd"]})
+        self.server.handle({"type": "terminal.exec", "request_id": "t-init", "command": "work MiProyectoCLI", "cwd": cd_res["cwd"]})
         init_res = self.output.wait_for("terminal.result")
         self.assertEqual(init_res["exit_code"], 0)
         self.assertEqual(self.server.active_area, "work")
         self.assertEqual(self.server.project["name"], "MiProyectoCLI")
+        # Autocompletado con Tab de carpetas
+        sub = self.root / "carpeta-unica"
+        sub.mkdir()
+        self.server.handle({"type": "terminal.complete", "request_id": "t-tab", "line": "cd car", "cwd": str(self.root)})
+        comp = self.output.wait_for("terminal.completed")
+        self.assertEqual(comp["completed_line"], "cd carpeta-unica/")
+        self.assertEqual(comp["matches"], [])

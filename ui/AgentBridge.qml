@@ -136,6 +136,7 @@ QtObject {
     signal fsListed(var data)
     signal fsError(var data)
     signal terminalResult(var data)
+    signal terminalCompleted(var data)
 
     function sendCommand(command) {
         if (backend.running) backend.write(JSON.stringify(command) + "\n");
@@ -187,6 +188,13 @@ QtObject {
         if (!ready) return "";
         const requestId = "term-" + Date.now() + "-" + (++terminalSequence);
         sendCommand({ type: "terminal.exec", request_id: requestId, command: command || "", cwd: cwd || workspace || "" });
+        return requestId;
+    }
+
+    function completeTerminal(line, cwd) {
+        if (!ready) return "";
+        const requestId = "term-tab-" + Date.now() + "-" + (++terminalSequence);
+        sendCommand({ type: "terminal.complete", request_id: requestId, line: line || "", cwd: cwd || workspace || "" });
         return requestId;
     }
 
@@ -638,6 +646,8 @@ QtObject {
             fsError(data);
         } else if (event.type === "terminal.result") {
             terminalResult(data);
+        } else if (event.type === "terminal.completed") {
+            terminalCompleted(data);
         } else if (event.type === "area.state") {
             const previousKey = areaKey;
             activeArea = data.area;
